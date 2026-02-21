@@ -1,0 +1,23 @@
+name: Sync Profile README
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # hourly
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch profile README
+        run: curl -s https://raw.githubusercontent.com/kitaekatt/kitaekatt/main/README.md -o index.md
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.md
+          git diff --staged --quiet || git commit -m "Sync profile README from kitaekatt/kitaekatt"
+          git push
