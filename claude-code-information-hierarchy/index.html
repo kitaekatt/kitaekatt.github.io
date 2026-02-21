@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Information Hierarchy</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0e0e14;
+    --surface: #1e1e28;
+    --surface-raised: #2a2a38;
+    --surface-hover: #343446;
+    --border: #4a4a60;
+    --border-subtle: #3a3a4e;
+    --text: #f5f5f8;
+    --text-muted: #c8c8d6;
+    --text-dim: #a0a0b8;
+    --accent-recall: #ffbe5c;
+    --accent-recall-bg: rgba(255,190,92,0.14);
+    --accent-recall-border: rgba(255,190,92,0.35);
+    --accent-attention: #7cacf8;
+    --accent-attention-bg: rgba(124,172,248,0.14);
+    --accent-attention-border: rgba(124,172,248,0.35);
+    --accent-load: #5eeaa0;
+    --accent-load-bg: rgba(94,234,160,0.14);
+    --accent-load-border: rgba(94,234,160,0.35);
+    --tier-root: #ff8a8a;
+    --tier-root-bg: rgba(255,138,138,0.12);
+    --tier-root-border: rgba(255,138,138,0.35);
+    --tier-subdir: #c9a0f0;
+    --tier-subdir-bg: rgba(201,160,240,0.12);
+    --tier-subdir-border: rgba(201,160,240,0.35);
+    --tier-skill: #62dce8;
+    --tier-skill-bg: rgba(98,220,232,0.12);
+    --tier-skill-border: rgba(98,220,232,0.35);
+    --flow-yes: #5eeaa0;
+    --flow-no: #ff8a8a;
+    --radius: 14px;
+    --radius-sm: 8px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  body {
+    font-family: 'DM Sans', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 80px 32px 120px;
+  }
+
+  /* Header */
+  header {
+    margin-bottom: 72px;
+  }
+
+  header h1 {
+    font-size: 2.4rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.15;
+    margin-bottom: 0;
+    background: linear-gradient(135deg, var(--text) 0%, var(--text-muted) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* Sections */
+  section {
+    margin-bottom: 72px;
+  }
+
+  section > h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin-bottom: 28px;
+  }
+
+  section > p {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    max-width: 640px;
+    margin-bottom: 20px;
+  }
+
+  .stinger {
+    color: var(--text-dim);
+    font-style: italic;
+  }
+
+  .callout {
+    color: var(--text-muted);
+    font-size: 0.88rem;
+    font-style: italic;
+    margin-top: 24px;
+    padding-left: 16px;
+    border-left: 2px solid var(--border);
+  }
+
+  /* Dimensions */
+  .dimensions {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .dimension {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 20px 24px;
+    border-radius: var(--radius);
+    border: 1px solid;
+  }
+
+  .dimension.recall {
+    background: var(--accent-recall-bg);
+    border-color: var(--accent-recall-border);
+  }
+  .dimension.attention {
+    background: var(--accent-attention-bg);
+    border-color: var(--accent-attention-border);
+  }
+  .dimension.load {
+    background: var(--accent-load-bg);
+    border-color: var(--accent-load-border);
+  }
+
+  .dim-number {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 0.8rem;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  .dimension.recall .dim-number { background: rgba(245,166,35,0.2); color: var(--accent-recall); }
+  .dimension.attention .dim-number { background: rgba(74,144,217,0.2); color: var(--accent-attention); }
+  .dimension.load .dim-number { background: rgba(46,204,135,0.2); color: var(--accent-load); }
+
+  .dim-content strong {
+    display: block;
+    font-size: 1rem;
+    margin-bottom: 4px;
+  }
+
+  .dimension.recall .dim-content strong { color: var(--accent-recall); }
+  .dimension.attention .dim-content strong { color: var(--accent-attention); }
+  .dimension.load .dim-content strong { color: var(--accent-load); }
+
+  .dim-content span {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  .dim-content .stinger {
+    display: block;
+    margin-top: 4px;
+    font-size: 0.85rem;
+  }
+
+  /* Hierarchy */
+  .hierarchy {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .tier {
+    border-radius: var(--radius);
+    border: 1px solid;
+    overflow: hidden;
+  }
+
+  .tier.root { border-color: var(--tier-root-border); background: var(--tier-root-bg); }
+  .tier.subdir { border-color: var(--tier-subdir-border); background: var(--tier-subdir-bg); }
+  .tier.skill { border-color: var(--tier-skill-border); background: var(--tier-skill-bg); }
+
+  .tier-header {
+    padding: 18px 24px 14px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+
+  .tier-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+
+  .tier.root .tier-name { color: var(--tier-root); }
+  .tier.subdir .tier-name { color: var(--tier-subdir); }
+  .tier.skill .tier-name { color: var(--tier-skill); }
+
+  .tier-trigger {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+
+  .tier-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--border-subtle);
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .metric {
+    padding: 16px 24px;
+    background: var(--surface);
+  }
+
+  .metric-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 6px;
+  }
+
+  .metric.recall .metric-label { color: var(--accent-recall); }
+  .metric.attention .metric-label { color: var(--accent-attention); }
+  .metric.load .metric-label { color: var(--accent-load); }
+
+  .metric-value {
+    font-size: 0.92rem;
+    font-weight: 500;
+    color: var(--text);
+    line-height: 1.4;
+  }
+
+  .metric-detail {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  /* Progressive Disclosure */
+  .disclosure-layers {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+  }
+
+  .layer {
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 22px 28px;
+    position: relative;
+  }
+
+  .layer:not(:last-child) {
+    margin-bottom: 0;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .layer:not(:first-child) {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    border-top: none;
+  }
+
+  .layer-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+
+  .layer-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    padding: 3px 10px;
+    border-radius: 20px;
+    text-transform: uppercase;
+  }
+
+  .layer:nth-child(1) .layer-badge { background: rgba(42,184,201,0.15); color: var(--tier-skill); }
+  .layer:nth-child(2) .layer-badge { background: rgba(164,114,212,0.15); color: var(--tier-subdir); }
+  .layer:nth-child(3) .layer-badge { background: rgba(224,85,85,0.15); color: var(--tier-root); }
+
+  .layer-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+
+  .layer-desc {
+    color: var(--text-muted);
+    font-size: 0.88rem;
+    padding-left: 0;
+  }
+
+  .layer-cost {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-left: 8px;
+  }
+
+  .layer-arrow {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 1.2rem;
+    line-height: 1;
+    padding: 4px 0;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
+
+  /* Flowcharts */
+  .flowchart {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  .flow-node {
+    border-radius: var(--radius);
+    padding: 16px 28px;
+    text-align: center;
+    font-size: 0.9rem;
+    max-width: 420px;
+    width: 100%;
+    position: relative;
+  }
+
+  .flow-question {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .flow-answer {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 0.88rem;
+    border: 1px solid;
+  }
+
+  .flow-answer.root { background: var(--tier-root-bg); border-color: var(--tier-root-border); color: var(--tier-root); }
+  .flow-answer.subdir { background: var(--tier-subdir-bg); border-color: var(--tier-subdir-border); color: var(--tier-subdir); }
+  .flow-answer.skill { background: var(--tier-skill-bg); border-color: var(--tier-skill-border); color: var(--tier-skill); }
+  .flow-answer.keep { background: var(--surface-raised); border-color: var(--border); color: var(--text-muted); }
+  .flow-answer.ref-doc { background: var(--accent-load-bg); border-color: var(--accent-load-border); color: var(--accent-load); }
+
+  .flow-connector {
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+    max-width: 420px;
+    gap: 0;
+  }
+
+  .flow-branch {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  .flow-line {
+    width: 2px;
+    height: 24px;
+    background: var(--border);
+  }
+
+  .flow-line-h-wrapper {
+    display: flex;
+    align-items: flex-start;
+    width: 100%;
+    max-width: 420px;
+  }
+
+  .flow-branch-pair {
+    display: flex;
+    width: 100%;
+    max-width: 420px;
+  }
+
+  .flow-half {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .flow-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin: 4px 0;
+  }
+
+  .flow-label.yes { color: var(--flow-yes); background: rgba(46,204,135,0.1); }
+  .flow-label.no { color: var(--flow-no); background: rgba(224,85,85,0.1); }
+
+  /* Fork connectors */
+  .fork-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 420px;
+    height: 32px;
+  }
+
+  .fork-wrapper::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 2px;
+    height: 12px;
+    background: var(--border);
+  }
+
+  .fork-wrapper::after {
+    content: '';
+    position: absolute;
+    top: 12px;
+    left: 25%;
+    width: 50%;
+    height: 2px;
+    background: var(--border);
+  }
+
+  .fork-drop-left, .fork-drop-right {
+    position: absolute;
+    top: 12px;
+    width: 2px;
+    height: 20px;
+    background: var(--border);
+  }
+
+  .fork-drop-left { left: 25%; }
+  .fork-drop-right { right: 25%; }
+
+  /* Three-way fork */
+  .fork-three {
+    position: relative;
+    width: 100%;
+    max-width: 420px;
+    height: 32px;
+  }
+
+  .fork-three::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 2px;
+    height: 12px;
+    background: var(--border);
+  }
+
+  .fork-three::after {
+    content: '';
+    position: absolute;
+    top: 12px;
+    left: 16.67%;
+    width: 66.67%;
+    height: 2px;
+    background: var(--border);
+  }
+
+  .fork-three .drop { position: absolute; top: 12px; width: 2px; height: 20px; background: var(--border); }
+  .fork-three .drop-l { left: 16.67%; }
+  .fork-three .drop-c { left: 50%; }
+  .fork-three .drop-r { right: 16.67%; }
+
+  .branch-pair {
+    display: flex;
+    width: 100%;
+    max-width: 420px;
+  }
+
+  .branch-third {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .branch-half {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .flow-node-sm {
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    text-align: center;
+    font-size: 0.82rem;
+    width: 90%;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    border: 1px solid;
+  }
+
+  .flow-node-sm.root { background: var(--tier-root-bg); border-color: var(--tier-root-border); color: var(--tier-root); }
+  .flow-node-sm.subdir { background: var(--tier-subdir-bg); border-color: var(--tier-subdir-border); color: var(--tier-subdir); }
+  .flow-node-sm.skill { background: var(--tier-skill-bg); border-color: var(--tier-skill-border); color: var(--tier-skill); }
+  .flow-node-sm.keep { background: var(--surface-raised); border-color: var(--border); color: var(--text-muted); }
+  .flow-node-sm.ref-doc { background: var(--accent-load-bg); border-color: var(--accent-load-border); color: var(--accent-load); }
+
+  /* Loading triggers table */
+  .trigger-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+  }
+
+  .trigger-table th {
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .trigger-table td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    vertical-align: top;
+  }
+
+  .trigger-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .trigger-table .mechanism {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    font-size: 0.84rem;
+  }
+
+  .trigger-table .mechanism.root { color: var(--tier-root); }
+  .trigger-table .mechanism.subdir { color: var(--tier-subdir); }
+  .trigger-table .mechanism.skill { color: var(--tier-skill); }
+
+  .trigger-table .trigger-who {
+    color: var(--text-muted);
+  }
+
+  /* Summary table */
+  .summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .summary-table th {
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    padding: 12px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .summary-table th.recall { color: var(--accent-recall); }
+  .summary-table th.attention { color: var(--accent-attention); }
+  .summary-table th.load { color: var(--accent-load); }
+
+  .summary-table td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface);
+    color: var(--text-muted);
+  }
+
+  .summary-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .summary-table td:first-child {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    font-size: 0.84rem;
+  }
+
+  .summary-table tr:nth-child(1) td:first-child { color: var(--tier-root); }
+  .summary-table tr:nth-child(2) td:first-child { color: var(--tier-subdir); }
+  .summary-table tr:nth-child(3) td:first-child { color: var(--tier-skill); }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    .container { padding: 48px 20px 80px; }
+    header h1 { font-size: 1.8rem; }
+    .tier-metrics { grid-template-columns: 1fr; }
+    .branch-pair { flex-direction: column; align-items: center; gap: 8px; }
+    .fork-wrapper, .fork-three { display: none; }
+    .branch-pair .flow-node-sm { width: 80%; }
+    .flow-label { font-size: 0.68rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- Header -->
+  <header>
+    <h1>Claude Information<br>Hierarchy</h1>
+  </header>
+
+  <!-- Three Core Dimensions -->
+  <section>
+    <h2>Three Core Dimensions</h2>
+    <p>Every piece of information you give Claude Code can be evaluated on three axes:</p>
+
+    <div class="dimensions">
+      <div class="dimension recall">
+        <div class="dim-number">1</div>
+        <div class="dim-content">
+          <strong>Recall</strong>
+          <span>Likelihood Claude will load this information into context at all.</span>
+          <span class="stinger">Claude can't apply information it doesn't recall.</span>
+        </div>
+      </div>
+      <div class="dimension attention">
+        <div class="dim-number">2</div>
+        <div class="dim-content">
+          <strong>Attention</strong>
+          <span>Likelihood Claude will skillfully apply the information once it's loaded.</span>
+          <span class="stinger">If Claude ignores information, it might as well not recall it.</span>
+        </div>
+      </div>
+      <div class="dimension load">
+        <div class="dim-number">3</div>
+        <div class="dim-content">
+          <strong>Context Load</strong>
+          <span>How much token budget this information consumes.</span>
+          <span class="stinger">Higher context load means higher cost, worse attention, slower speed.</span>
+        </div>
+      </div>
+    </div>
+
+    <p>No single tier of the hierarchy wins on all three dimensions. That's why you need the hierarchy rather than putting everything in one place.</p>
+  </section>
+
+  <!-- The Hierarchy -->
+  <section>
+    <h2>The Hierarchy</h2>
+
+    <div class="hierarchy">
+      <!-- Root CLAUDE.md -->
+      <div class="tier root">
+        <div class="tier-header">
+          <span class="tier-name">Root CLAUDE.md</span>
+          <span class="tier-trigger">Always in context</span>
+        </div>
+        <div class="tier-metrics">
+          <div class="metric recall">
+            <div class="metric-label">Recall</div>
+            <div class="metric-value">Highest</div>
+            <div class="metric-detail">Always loaded</div>
+          </div>
+          <div class="metric attention">
+            <div class="metric-label">Attention</div>
+            <div class="metric-value">Degrades</div>
+            <div class="metric-detail">Worsens with context size</div>
+          </div>
+          <div class="metric load">
+            <div class="metric-label">Context Load</div>
+            <div class="metric-value">High</div>
+            <div class="metric-detail">Always consuming tokens</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sub-dir CLAUDE.md -->
+      <div class="tier subdir">
+        <div class="tier-header">
+          <span class="tier-name">Sub-dir CLAUDE.md</span>
+          <span class="tier-trigger">Loaded on file access in that directory</span>
+        </div>
+        <div class="tier-metrics">
+          <div class="metric recall">
+            <div class="metric-label">Recall</div>
+            <div class="metric-value">High</div>
+            <div class="metric-detail">Loaded on file access</div>
+          </div>
+          <div class="metric attention">
+            <div class="metric-label">Attention</div>
+            <div class="metric-value">Higher</div>
+            <div class="metric-detail">Less noise than root</div>
+          </div>
+          <div class="metric load">
+            <div class="metric-label">Context Load</div>
+            <div class="metric-value">Medium</div>
+            <div class="metric-detail">Only when relevant</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Skills -->
+      <div class="tier skill">
+        <div class="tier-header">
+          <span class="tier-name">Skills</span>
+          <span class="tier-trigger">Loaded only when invoked</span>
+        </div>
+        <div class="tier-metrics">
+          <div class="metric recall">
+            <div class="metric-label">Recall</div>
+            <div class="metric-value">Lower</div>
+            <div class="metric-detail">But user can manually invoke</div>
+          </div>
+          <div class="metric attention">
+            <div class="metric-label">Attention</div>
+            <div class="metric-value">Highest</div>
+            <div class="metric-detail">Fresh, focused context</div>
+          </div>
+          <div class="metric load">
+            <div class="metric-label">Context Load</div>
+            <div class="metric-value">Lowest</div>
+            <div class="metric-detail">On-demand only</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Loading Triggers -->
+  <section>
+    <h2>Loading Triggers</h2>
+    <table class="trigger-table">
+      <thead>
+        <tr>
+          <th>Mechanism</th>
+          <th>When It's Loaded</th>
+          <th>Who Triggers It</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="mechanism root">Root CLAUDE.md</td>
+          <td>Always</td>
+          <td class="trigger-who">Automatic</td>
+        </tr>
+        <tr>
+          <td class="mechanism subdir">Sub-dir CLAUDE.md</td>
+          <td>Claude reads a file in that directory or below</td>
+          <td class="trigger-who">Claude's file access</td>
+        </tr>
+        <tr>
+          <td class="mechanism skill">Skill (claude-invoked)</td>
+          <td>Claude decides the skill is valuable based on its description</td>
+          <td class="trigger-who">Claude's judgment</td>
+        </tr>
+        <tr>
+          <td class="mechanism skill">Skill (user-invoked)</td>
+          <td>User runs a command</td>
+          <td class="trigger-who">User</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Progressive Disclosure -->
+  <section>
+    <h2>Progressive Disclosure (Skills)</h2>
+    <p>Skills can contain reference documents that are conditionally loaded into context, adding further efficiency within the most efficient tier:</p>
+
+    <div class="disclosure-layers">
+      <div class="layer">
+        <div class="layer-header">
+          <span class="layer-badge">Layer 1</span>
+          <span class="layer-title">Skill Description</span>
+          <span class="layer-cost">cheap</span>
+        </div>
+        <div class="layer-desc">Always visible to Claude for routing decisions</div>
+      </div>
+      <div class="layer-arrow">↓</div>
+      <div class="layer">
+        <div class="layer-header">
+          <span class="layer-badge">Layer 2</span>
+          <span class="layer-title">Skill Content</span>
+          <span class="layer-cost">moderate</span>
+        </div>
+        <div class="layer-desc">Loaded when skill is invoked</div>
+      </div>
+      <div class="layer-arrow">↓</div>
+      <div class="layer">
+        <div class="layer-header">
+          <span class="layer-badge">Layer 3</span>
+          <span class="layer-title">Referenced Documents</span>
+          <span class="layer-cost">expensive</span>
+        </div>
+        <div class="layer-desc">Loaded only if Claude decides the reference is valuable</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Practical Decision Flow -->
+  <section>
+    <h2>Practical Decision Flow</h2>
+    <p>When adding new information, ask:</p>
+
+    <div class="flowchart">
+      <div class="flow-node flow-question">Does Claude need this on MOST interactions?</div>
+
+      <div class="fork-wrapper">
+        <div class="fork-drop-left"></div>
+        <div class="fork-drop-right"></div>
+      </div>
+
+      <div class="branch-pair">
+        <div class="branch-half">
+          <span class="flow-label yes">YES</span>
+          <div class="flow-node-sm root">Root CLAUDE.md</div>
+        </div>
+        <div class="branch-half">
+          <span class="flow-label no">NO</span>
+          <div class="flow-line" style="height: 8px;"></div>
+          <div class="flow-node flow-question" style="font-size: 0.84rem; padding: 12px 16px; width: 90%;">Does Claude need this to work with MOST files in this directory?</div>
+
+          <div style="position: relative; width: 90%; height: 32px;">
+            <div style="position: absolute; top: 0; left: 50%; width: 2px; height: 12px; background: var(--border);"></div>
+            <div style="position: absolute; top: 12px; left: 25%; width: 50%; height: 2px; background: var(--border);"></div>
+            <div style="position: absolute; top: 12px; left: 25%; width: 2px; height: 20px; background: var(--border);"></div>
+            <div style="position: absolute; top: 12px; right: 25%; width: 2px; height: 20px; background: var(--border);"></div>
+          </div>
+
+          <div style="display: flex; width: 90%;">
+            <div class="branch-half">
+              <span class="flow-label yes">YES</span>
+              <div class="flow-node-sm subdir">Sub-dir CLAUDE.md</div>
+            </div>
+            <div class="branch-half">
+              <span class="flow-label no">NO</span>
+              <div class="flow-node-sm skill">Skill</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CLAUDE.md Maintenance -->
+  <section>
+    <h2>CLAUDE.md Maintenance</h2>
+
+    <div class="flowchart">
+      <div class="flow-node flow-question" style="background: var(--tier-root-bg); border-color: var(--tier-root-border);">CLAUDE.md grows too large</div>
+
+      <div class="flow-line"></div>
+
+      <div class="flow-node flow-question">Audit: For each item, ask "always needed?"</div>
+
+      <div class="fork-three">
+        <div class="drop drop-l"></div>
+        <div class="drop drop-c"></div>
+        <div class="drop drop-r"></div>
+      </div>
+
+      <div class="branch-pair">
+        <div class="branch-third">
+          <span class="flow-label no">NO, directory</span>
+          <div class="flow-node-sm subdir">Sub-dir CLAUDE.md</div>
+        </div>
+        <div class="branch-third">
+          <span class="flow-label no">NO, workflow</span>
+          <div class="flow-node-sm skill">Skill</div>
+        </div>
+        <div class="branch-third">
+          <span class="flow-label yes">YES</span>
+          <div class="flow-node-sm keep">Keep in root</div>
+        </div>
+      </div>
+    </div>
+
+    <p class="callout">Sub-dir CLAUDE.md files are loaded less often, so are lower priority to optimize.</p>
+  </section>
+
+  <!-- Skill Maintenance -->
+  <section>
+    <h2>Skill Maintenance</h2>
+
+    <div class="flowchart">
+      <div class="flow-node flow-question" style="background: var(--tier-skill-bg); border-color: var(--tier-skill-border);">Skill grows too large</div>
+
+      <div class="flow-line"></div>
+
+      <div class="flow-node flow-question">Audit: For each item, ask "always needed when this skill is invoked?"</div>
+
+      <div class="fork-wrapper">
+        <div class="fork-drop-left"></div>
+        <div class="fork-drop-right"></div>
+      </div>
+
+      <div class="branch-pair">
+        <div class="branch-half">
+          <span class="flow-label no">NO</span>
+          <div class="flow-node-sm ref-doc">Referenced document</div>
+        </div>
+        <div class="branch-half">
+          <span class="flow-label yes">YES</span>
+          <div class="flow-node-sm keep">Keep in skill</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Key Tradeoff Summary -->
+  <section>
+    <h2>Key Tradeoff Summary</h2>
+    <table class="summary-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th class="recall">Recall</th>
+          <th class="attention">Attention</th>
+          <th class="load">Context Load</th>
+          <th>Design Effort</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Root CLAUDE.md</td>
+          <td>Highest — always in context</td>
+          <td>Degrades with context size</td>
+          <td>High — always loaded</td>
+          <td>Low</td>
+        </tr>
+        <tr>
+          <td>Sub-dir CLAUDE.md</td>
+          <td>High — loaded on file access</td>
+          <td>Higher — less noise</td>
+          <td>Medium</td>
+          <td>Low</td>
+        </tr>
+        <tr>
+          <td>Skills</td>
+          <td>Lower — but user can manually invoke</td>
+          <td>Highest — fresh, focused</td>
+          <td>Lowest — on-demand</td>
+          <td>Highest</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+</div>
+
+</body>
+</html>
