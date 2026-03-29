@@ -277,19 +277,19 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         const targetTps = parseInt(speedSlider.value);
         speedLabel.style.color = (playing && targetTps > fps * 1.15) ? '#ff6b6b' : '#aaa';
 
-        /* Profiling */
+        /* Profiling — top 3 systems by time */
         var sysNames = ['rewind','start_of_turn','app_start','movement','attack','despawn','spawn','app_stop','history'];
         var sysCount = engine.getSystemCount();
         var totalMs = engine.getTotalTime();
-        var collectMs = engine.getCollectTime();
-        var parts = [];
+        var entries = [];
         for (var s = 0; s < sysCount && s < sysNames.length; s++) {
-            var t = engine.getSystemTime(s);
-            if (t > 0.05) parts.push(sysNames[s] + ':' + t.toFixed(1));
+            entries.push({name: sysNames[s], ms: engine.getSystemTime(s)});
         }
-        if (collectMs > 0.05) parts.push('collect:' + collectMs.toFixed(1));
-        parts.push('total:' + totalMs.toFixed(1) + 'ms');
-        document.getElementById('profile').textContent = parts.join('  ');
+        var collectMs = engine.getCollectTime();
+        if (collectMs > 0) entries.push({name: 'collect', ms: collectMs});
+        entries.sort(function(a, b) { return b.ms - a.ms; });
+        var top3 = entries.slice(0, 3).map(function(e) { return e.name + ' ' + e.ms.toFixed(1) + 'ms'; });
+        document.getElementById('profile').textContent = top3.join(', ') + '  (' + totalMs.toFixed(1) + 'ms total)';
 
         /* Status */
         statusEl.innerHTML = `Turn ${turn} &nbsp;|&nbsp; <span class="red">Archers: ${archerCount}</span> &nbsp;|&nbsp; <span class="blue">Knights: ${knightCount}</span> &nbsp;|&nbsp; ${mapW}x${mapH} &nbsp;|&nbsp; ${fps} fps`;
