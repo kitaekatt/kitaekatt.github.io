@@ -158,6 +158,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span>&#8594;: Step</span>
         <span>&#8592;: Rewind</span>
     </div>
+    <div id="profile" style="font-family:monospace;font-size:0.75em;color:#666;margin-top:4px;"></div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -275,6 +276,20 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         const fps = avgMs > 0 ? Math.round(1000 / avgMs) : 0;
         const targetTps = parseInt(speedSlider.value);
         speedLabel.style.color = (playing && targetTps > fps * 1.15) ? '#ff6b6b' : '#aaa';
+
+        /* Profiling */
+        var sysNames = ['rewind','start_of_turn','app_start','movement','attack','despawn','spawn','app_stop','history'];
+        var sysCount = engine.getSystemCount();
+        var totalMs = engine.getTotalTime();
+        var collectMs = engine.getCollectTime();
+        var parts = [];
+        for (var s = 0; s < sysCount && s < sysNames.length; s++) {
+            var t = engine.getSystemTime(s);
+            if (t > 0.05) parts.push(sysNames[s] + ':' + t.toFixed(1));
+        }
+        if (collectMs > 0.05) parts.push('collect:' + collectMs.toFixed(1));
+        parts.push('total:' + totalMs.toFixed(1) + 'ms');
+        document.getElementById('profile').textContent = parts.join('  ');
 
         /* Status */
         statusEl.innerHTML = `Turn ${turn} &nbsp;|&nbsp; <span class="red">Archers: ${archerCount}</span> &nbsp;|&nbsp; <span class="blue">Knights: ${knightCount}</span> &nbsp;|&nbsp; ${mapW}x${mapH} &nbsp;|&nbsp; ${fps} fps`;
@@ -455,6 +470,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 rewind: M.cwrap('wasm_rewind', 'number', ['number']),
                 reset: M.cwrap('wasm_reset', 'number', []),
                 free: M.cwrap('wasm_free', null, []),
+                getSystemCount: M.cwrap('wasm_get_system_count', 'number', []),
+                getSystemTime: M.cwrap('wasm_get_system_time', 'number', ['number']),
+                getCollectTime: M.cwrap('wasm_get_collect_time', 'number', []),
+                getTotalTime: M.cwrap('wasm_get_total_time', 'number', []),
             };
 
             if (!engine.init()) {
