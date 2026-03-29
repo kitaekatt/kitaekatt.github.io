@@ -6,6 +6,7 @@
 <title>Archers vs Knights</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; overflow: hidden; }
 body {
     background: #1a1a2e;
     color: #e0e0e0;
@@ -13,8 +14,25 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    min-height: 100vh;
+    height: 100vh;
     padding: 8px;
+}
+#game-area {
+    flex: 4;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    width: 100%;
+}
+#ui-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
 }
 h1 {
     font-size: 1.4em;
@@ -113,29 +131,33 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     </div>
 </div>
 
-<div style="width:100%;text-align:left;"><a href="../" style="color:#666;text-decoration:none;font-size:0.85em;">&larr; Games</a></div>
-<h1>Archers vs Knights</h1>
-<div id="status">Initializing...</div>
-<div id="game-over-msg"></div>
-<canvas id="canvas"></canvas>
-<div id="controls">
-    <button id="btn-play" title="Space">Play</button>
-    <button id="btn-step" title="Right Arrow">Step</button>
-    <button id="btn-rewind" title="Left Arrow">Rewind</button>
-    <button id="btn-new">New Game</button>
-    <div id="speed-group">
-        <label>Speed</label>
-        <input type="range" id="speed-slider" min="1" max="240" value="240">
-        <span id="speed-label">240 tps</span>
-    </div>
+<div id="game-area">
+    <div style="width:100%;text-align:left;"><a href="../" style="color:#666;text-decoration:none;font-size:0.85em;">&larr; Games</a></div>
+    <h1>Archers vs Knights</h1>
+    <div id="status">Initializing...</div>
+    <div id="game-over-msg"></div>
+    <canvas id="canvas"></canvas>
 </div>
-<div id="legend">
-    <span class="red">&#9632; Archer</span>
-    <span class="blue">&#9632; Knight</span>
-    <span class="white">&#9632; Hit</span>
-    <span>Space: Play/Pause</span>
-    <span>&#8594;: Step</span>
-    <span>&#8592;: Rewind</span>
+<div id="ui-area">
+    <div id="controls">
+        <button id="btn-play" title="Space">Play</button>
+        <button id="btn-step" title="Right Arrow">Step</button>
+        <button id="btn-rewind" title="Left Arrow">Rewind</button>
+        <button id="btn-new">New Game</button>
+        <div id="speed-group">
+            <label>Speed</label>
+            <input type="range" id="speed-slider" min="1" max="240" value="240">
+            <span id="speed-label">240 tps</span>
+        </div>
+    </div>
+    <div id="legend">
+        <span class="red">&#9632; Archer</span>
+        <span class="blue">&#9632; Knight</span>
+        <span class="white">&#9632; Hit</span>
+        <span>Space: Play/Pause</span>
+        <span>&#8594;: Step</span>
+        <span>&#8592;: Rewind</span>
+    </div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -172,10 +194,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const BORDER_COLOR = '#333355';
 
     function resizeCanvas() {
-        const pad = 32;
-        const controlsH = 80;
-        const availW = window.innerWidth - pad;
-        const availH = window.innerHeight - controlsH - pad;
+        const gameArea = document.getElementById('game-area');
+        const headerH = 60; /* title + status + game-over */
+        const availW = gameArea.clientWidth - 16;
+        const availH = gameArea.clientHeight - headerH;
         CELL_W = Math.max(2, Math.floor(availW / mapW));
         CELL_H = Math.max(2, Math.floor(availH / mapH));
         canvas.width = mapW * CELL_W;
