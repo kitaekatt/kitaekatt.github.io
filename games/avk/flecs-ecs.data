@@ -70,11 +70,12 @@ Tuning levers:
 - Map size: configured by the client via MapSize component on the Map entity
 name: archer
 description: "Red archers vs blue knights on a bounded grid map"
-archers: 219
-knights: 725
+archers: 876
+knights: 2900
+
 map_size:
-  x: 160
-  y: 72
+  x: 320
+  y: 144
 max_turns: 1000
 templates:
   components: [Health, MovementSpeed, MovementType, AttackRange, AttackDamage, RedFaction, BlueFaction, Location, MapSize, SpawnRequest, TookDamage]
@@ -239,7 +240,7 @@ static void archer_start_of_turn(Engine *engine) {
     if (!td) return;
 
     /* Collect entities to remove TookDamage from (can't modify during iteration) */
-    ecs_entity_t to_clear[2048];
+    ecs_entity_t to_clear[4096];
     int clear_count = 0;
 
     ecs_query_t *q = ecs_query(engine->world, {
@@ -248,7 +249,7 @@ static void archer_start_of_turn(Engine *engine) {
     });
     ecs_iter_t it = ecs_query_iter(engine->world, q);
     while (ecs_query_next(&it)) {
-        for (int i = 0; i < it.count && clear_count < 2048; i++) {
+        for (int i = 0; i < it.count && clear_count < 4096; i++) {
             to_clear[clear_count++] = it.entities[i];
         }
     }
@@ -335,14 +336,14 @@ static void archer_movement(Engine *engine) {
         if (ms) { mx = *(const int32_t *)ms; my = *((const int32_t *)ms + 1); }
     }
 
-    UnitData units[2048];
-    int count = collect_units(engine, units, 2048);
+    UnitData units[4096];
+    int count = collect_units(engine, units, 4096);
     if (count == 0) return;
 
     ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
 
     /* Split units by faction for fast enemy lookups */
-    int faction0[2048], faction1[2048];
+    int faction0[4096], faction1[4096];
     int n0 = 0, n1 = 0;
     for (int i = 0; i < count; i++) {
         if (units[i].faction == 0) faction0[n0++] = i;
@@ -506,8 +507,8 @@ static void archer_movement(Engine *engine) {
 
 static void archer_attack(Engine *engine) {
     if (is_simulation_paused(engine)) return;
-    UnitData units[2048];
-    int count = collect_units(engine, units, 2048);
+    UnitData units[4096];
+    int count = collect_units(engine, units, 4096);
 
     ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
     ecs_entity_t td_comp = ensure_took_damage_comp(engine);
@@ -549,7 +550,7 @@ static void archer_despawn(Engine *engine) {
     if (!hp_comp) return;
 
     /* Collect entities to delete (can't delete during iteration) */
-    ecs_entity_t to_delete[2048];
+    ecs_entity_t to_delete[4096];
     int del_count = 0;
 
     ecs_query_t *q = ecs_query(engine->world, {
@@ -560,7 +561,7 @@ static void archer_despawn(Engine *engine) {
     while (ecs_query_next(&it)) {
         for (int i = 0; i < it.count; i++) {
             const int32_t *hp = (const int32_t *)ecs_get_id(engine->world, it.entities[i], hp_comp);
-            if (hp && *hp <= 0 && del_count < 2048)
+            if (hp && *hp <= 0 && del_count < 4096)
                 to_delete[del_count++] = it.entities[i];
         }
     }
@@ -580,7 +581,7 @@ static void archer_spawn(Engine *engine) {
 
     /* Collect spawn requests */
     typedef struct { ecs_entity_t eid; char template[64]; int x, y; } SpawnReq;
-    SpawnReq reqs[2048];
+    SpawnReq reqs[4096];
     int req_count = 0;
 
     ecs_query_t *q = ecs_query(engine->world, {
@@ -589,7 +590,7 @@ static void archer_spawn(Engine *engine) {
     });
     ecs_iter_t it = ecs_query_iter(engine->world, q);
     while (ecs_query_next(&it)) {
-        for (int i = 0; i < it.count && req_count < 2048; i++) {
+        for (int i = 0; i < it.count && req_count < 4096; i++) {
             ecs_entity_t eid = it.entities[i];
             const void *sr = ecs_get_id(engine->world, eid, sr_comp);
             const void *loc = ecs_get_id(engine->world, eid, loc_comp);

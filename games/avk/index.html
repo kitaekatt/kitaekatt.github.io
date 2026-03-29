@@ -146,8 +146,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <button id="btn-new">New Game</button>
         <div id="speed-group">
             <label>Speed</label>
-            <input type="range" id="speed-slider" min="1" max="240" value="240">
-            <span id="speed-label">240 tps</span>
+            <input type="range" id="speed-slider" min="1" max="240" value="60">
+            <span id="speed-label">60 tps</span>
         </div>
     </div>
     <div id="legend">
@@ -277,7 +277,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         speedLabel.style.color = (playing && targetTps > fps * 1.15) ? '#ff6b6b' : '#aaa';
 
         /* Status */
-        statusEl.innerHTML = `Turn ${turn} &nbsp;|&nbsp; <span class="red">Archers: ${archerCount}</span> &nbsp;|&nbsp; <span class="blue">Knights: ${knightCount}</span> &nbsp;|&nbsp; ${fps} fps`;
+        statusEl.innerHTML = `Turn ${turn} &nbsp;|&nbsp; <span class="red">Archers: ${archerCount}</span> &nbsp;|&nbsp; <span class="blue">Knights: ${knightCount}</span> &nbsp;|&nbsp; ${mapW}x${mapH} &nbsp;|&nbsp; ${fps} fps`;
 
         if (gameOver) {
             const msg = engine.getMessage();
