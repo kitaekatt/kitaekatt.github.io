@@ -70,11 +70,11 @@ Tuning levers:
 - Map size: configured by the client via MapSize component on the Map entity
 name: archer
 description: "Red archers vs blue knights on a bounded grid map"
-archers: 261
-knights: 919
+archers: 219
+knights: 725
 map_size:
   x: 160
-  y: 90
+  y: 72
 max_turns: 1000
 templates:
   components: [Health, MovementSpeed, MovementType, AttackRange, AttackDamage, RedFaction, BlueFaction, Location, MapSize, SpawnRequest, TookDamage]
