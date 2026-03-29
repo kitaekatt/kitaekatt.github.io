@@ -1,0 +1,1022 @@
+# Archer Game (Archers vs Knights)
+
+Grid-based auto-battler. Red archers (ranged) vs blue knights (melee) fight on a bounded map until one faction is eliminated.
+
+## Native Systems
+
+All systems implemented in C at `native/systems.c`. Execution order defined in `app.yaml`:
+
+| Order | System | Purpose |
+|-------|--------|---------|
+| 1 | `start_of_turn` | Removes `TookDamage` marker from all entities (per-turn flag cleanup) |
+| 2 | `app_start` | Spawns initial armies with random positions, then **disables itself** |
+| 3 | `movement` | Moves each unit one step toward/away from enemies based on faction strategy |
+| 4 | `attack` | Each unit attacks one enemy in range, reduces Health, adds TookDamage marker |
+| 5 | `despawn` | Deletes entities with Health <= 0 (batch-collects then deletes outside iterator) |
+| 6 | `spawn` | Processes SpawnRequest components, calls `engine_entity_spawn()` |
+| 7 | `app_stop` | Checks if either faction has 0 living units, sets `engine->game_over` |
+
+## Key Behaviors
+
+**app_start** (runs once on turn 1):
+- Reads MapSize from the Map entity for bounds
+- Seeds RNG: `srand(time(NULL) + seed_offset++)` -- this is the ONLY source of randomness
+- Creates SpawnRequest entities with random Location for each unit
+- Unit counts: 120 Archers, 470 Knights (overridable via `FLECS_ARCHERS`/`FLECS_KNIGHTS` env vars)
+- Calls `engine_system_disable(engine, "app_start")` -- never runs again
+
+**movement**:
+- Knights: move toward nearest enemy (melee engage)
+- Archers: kite away from nearest enemy if too close, approach if too far (maintain range)
+- Speed is always 1 (one cell per turn). Speed > 1 causes infinite oscillation.
+- Tiebreaking: uses EntityId (lower ID has priority) with momentum tiebreaker to prevent oscillation
+
+**attack**:
+- Each unit attacks the lowest-EntityId enemy within its AttackRange
+- Reduces target's Health.base by attacker's AttackDamage.base
+- Adds TookDamage marker to target (rendered as white in client)
+
+**despawn**:
+- Uses batch-delete pattern: collect entities to delete in array during query, delete after query finishes
+- This avoids modifying the world during Flecs iteration
+
+## Components
+
+Defined in `templates/components/`. Mutable per-turn components:
+- `Location { x: i32, y: i32 }` -- modified by movement
+- `Health { base: i32 }` -- modified by attack
+
+Immutable (set at spawn from prefab, never changed):
+- `MovementSpeed { base: i32, energy: i32 }` -- always base=1
+- `AttackDamage { base: i32 }`, `AttackRange { base: i32 }`
+- `MovementType` (enum: kite, hold, etc.)
+- `RedFaction` / `BlueFaction` (marker tags)
+- `TookDamage` (marker, added/removed each turn)
+
+## SimulationPaused
+
+Systems check for the `SimulationPaused` marker component and early-return if present. This is used by the rewind feature to freeze simulation state while browsing history.
+
+**Paused systems** (check via `is_simulation_paused(engine)` from `engine/history.h`):
+`start_of_turn`, `movement`, `attack`, `despawn`, `spawn`, `app_stop`
+
+**Unaffected**: `app_start` (already disabled after turn 1), `history_capture` (skips when paused), `rewind` (runs regardless — it creates the pause)
+
+## Balancing
+
+Tuning levers:
+- Army sizes: `FLECS_KNIGHTS` / `FLECS_ARCHERS` env vars (default 470/120)
+- Prefab stats in `templates/entities/`: Health, AttackDamage, AttackRange, MovementType
+- Map size: configured by the client via MapSize component on the Map entity
+name: archer
+description: "Red archers vs blue knights on a bounded grid map"
+archers: 261
+knights: 919
+map_size:
+  x: 160
+  y: 90
+max_turns: 1000
+templates:
+  components: [Health, MovementSpeed, MovementType, AttackRange, AttackDamage, RedFaction, BlueFaction, Location, MapSize, SpawnRequest, TookDamage]
+  entities: [Archer, Knight]
+  systems: [start_of_turn, app_start, movement, attack, despawn, spawn, app_stop]
+system_order:
+  - rewind
+  - start_of_turn
+  - app_start
+  - movement
+  - attack
+  - despawn
+  - spawn
+  - app_stop
+  - history_capture
+#include "systems.h"
+#include "engine/systems.h"
+#include "engine/components.h"
+#include "engine/templates.h"
+#include "engine/history.h"
+#include "engine/app.h"
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#include <time.h>
+
+/* ── Helpers ─────────────────────────────────────────────────────────── */
+
+typedef struct {
+    ecs_entity_t eid;
+    int entity_id;
+    int x, y;
+    int health;
+    int speed, energy;
+    int range, damage;
+    int faction;  /* enum index: 0=red, 1=blue */
+    int move_type; /* enum index: 0=kite, 1=charge */
+} UnitData;
+
+static int manhattan(int x1, int y1, int x2, int y2) {
+    return abs(x1 - x2) + abs(y1 - y2);
+}
+
+/* Collect living units from query into array, return count */
+static int collect_units(Engine *engine, UnitData *units, int max_units) {
+    ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
+    ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
+    ecs_entity_t spd_comp = ecs_lookup(engine->world, "MovementSpeed");
+    ecs_entity_t rng_comp = ecs_lookup(engine->world, "AttackRange");
+    ecs_entity_t dmg_comp = ecs_lookup(engine->world, "AttackDamage");
+    ecs_entity_t red_comp = ecs_lookup(engine->world, "RedFaction");
+    ecs_entity_t blue_comp = ecs_lookup(engine->world, "BlueFaction");
+    ecs_entity_t mt_comp = ecs_lookup(engine->world, "MovementType");
+
+    if (!loc_comp || !hp_comp) return 0;
+
+    ecs_query_t *q = ecs_query(engine->world, {
+        .terms = {
+            { .id = loc_comp },
+            { .id = hp_comp },
+            { .id = engine->user_entity_tag },
+        },
+        .cache_kind = EcsQueryCacheNone
+    });
+
+    int count = 0;
+    ecs_iter_t it = ecs_query_iter(engine->world, q);
+    while (ecs_query_next(&it)) {
+        for (int i = 0; i < it.count && count < max_units; i++) {
+            ecs_entity_t eid = it.entities[i];
+
+            /* Read Health */
+            const int32_t *hp = (const int32_t *)ecs_get_id(engine->world, eid, hp_comp);
+            if (!hp || *hp <= 0) continue;
+
+            UnitData *u = &units[count];
+            u->eid = eid;
+            u->health = *hp;
+
+            /* EntityId */
+            const int32_t *eid_val = (const int32_t *)ecs_get_id(engine->world, eid, engine->entity_id_comp);
+            u->entity_id = eid_val ? *eid_val : 0;
+
+            /* Location */
+            const void *loc_data = ecs_get_id(engine->world, eid, loc_comp);
+            if (loc_data) {
+                u->x = *(const int32_t *)loc_data;
+                u->y = *((const int32_t *)loc_data + 1);
+            }
+            /* MovementSpeed */
+            if (spd_comp && ecs_has_id(engine->world, eid, spd_comp)) {
+                const void *spd_data = ecs_get_id(engine->world, eid, spd_comp);
+                if (spd_data) {
+                    u->speed = *(const int32_t *)spd_data;
+                    u->energy = u->speed;
+                }
+            }
+
+            /* AttackRange */
+            if (rng_comp && ecs_has_id(engine->world, eid, rng_comp)) {
+                const int32_t *r = (const int32_t *)ecs_get_id(engine->world, eid, rng_comp);
+                if (r) u->range = *r;
+            }
+
+            /* AttackDamage */
+            if (dmg_comp && ecs_has_id(engine->world, eid, dmg_comp)) {
+                const int32_t *d = (const int32_t *)ecs_get_id(engine->world, eid, dmg_comp);
+                if (d) u->damage = *d;
+            }
+
+            /* Faction (marker components) */
+            if (red_comp && ecs_has_id(engine->world, eid, red_comp))
+                u->faction = 0; /* red */
+            else if (blue_comp && ecs_has_id(engine->world, eid, blue_comp))
+                u->faction = 1; /* blue */
+
+            /* MovementType (enum) */
+            if (mt_comp && ecs_has_id(engine->world, eid, mt_comp)) {
+                const int32_t *m = (const int32_t *)ecs_get_id(engine->world, eid, mt_comp);
+                if (m) u->move_type = *m;
+            }
+
+            count++;
+        }
+    }
+    ecs_query_fini(q);
+
+    /* Sort by entity_id */
+    for (int i = 0; i < count - 1; i++)
+        for (int j = i + 1; j < count; j++)
+            if (units[j].entity_id < units[i].entity_id) {
+                UnitData tmp = units[i]; units[i] = units[j]; units[j] = tmp;
+            }
+
+    return count;
+}
+
+/* ── Helper: ensure TookDamage component exists ──────────────────────── */
+
+static ecs_entity_t ensure_took_damage_comp(Engine *engine) {
+    ecs_entity_t td = ecs_lookup(engine->world, "TookDamage");
+    if (td) return td;
+
+    /* Register it */
+    td = ecs_entity(engine->world, { .name = "TookDamage" });
+    ecs_set(engine->world, td, EcsComponent, {
+        .size = sizeof(ecs_bool_t), .alignment = ECS_ALIGNOF(ecs_bool_t)
+    });
+    ecs_struct(engine->world, {
+        .entity = td,
+        .members = {{ .name = "value", .type = ecs_id(ecs_bool_t) }}
+    });
+    return td;
+}
+
+/* ── start_of_turn ──────────────────────────────────────────────────── */
+
+static void archer_start_of_turn(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+    ecs_entity_t td = ecs_lookup(engine->world, "TookDamage");
+    if (!td) return;
+
+    /* Collect entities to remove TookDamage from (can't modify during iteration) */
+    ecs_entity_t to_clear[2048];
+    int clear_count = 0;
+
+    ecs_query_t *q = ecs_query(engine->world, {
+        .terms = {{ .id = td }, { .id = engine->user_entity_tag }},
+        .cache_kind = EcsQueryCacheNone
+    });
+    ecs_iter_t it = ecs_query_iter(engine->world, q);
+    while (ecs_query_next(&it)) {
+        for (int i = 0; i < it.count && clear_count < 2048; i++) {
+            to_clear[clear_count++] = it.entities[i];
+        }
+    }
+    ecs_query_fini(q);
+
+    for (int i = 0; i < clear_count; i++) {
+        ecs_remove_id(engine->world, to_clear[i], td);
+    }
+}
+
+/* ── game_start ──────────────────────────────────────────────────────── */
+
+static void archer_app_start(Engine *engine) {
+    /* Find Map entity for bounds */
+    ecs_entity_t map = ecs_lookup(engine->world, "Map");
+    if (!map) return;
+
+    ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
+    if (!ms_comp) return;
+    const void *ms_data = ecs_get_id(engine->world, map, ms_comp);
+    if (!ms_data) return;
+    int mx = *(const int32_t *)ms_data;
+    int my = *((const int32_t *)ms_data + 1);
+    if (mx == 0 && my == 0) return;
+
+    { static int seed_offset = 0; srand((unsigned)time(NULL) + seed_offset++); }
+
+    ecs_entity_t sr_comp = ecs_lookup(engine->world, "SpawnRequest");
+    ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
+    if (!sr_comp || !loc_comp) return;
+
+    /* Read unit counts from app.yaml (use --overrides for balance testing) */
+    StoredApp *app = engine_app_get(engine, engine->sandbox_name);
+    if (!app || app->archers <= 0 || app->knights <= 0) {
+        fprintf(stderr, "Error: archers/knights not set in app.yaml\n");
+        return;
+    }
+    int num_archers = app->archers;
+    int num_knights = app->knights;
+
+    fprintf(stderr, "Spawning %dA vs %dK\n", num_archers, num_knights);
+
+    /* knights */
+    for (int k = 0; k < num_knights; k++) {
+        char name[32]; snprintf(name, sizeof(name), "sk%d", k + 1);
+        ecs_entity_t e = engine_entity_create(engine, name);
+        if (!e) continue;
+        ecs_add_id(engine->world, e, sr_comp);
+        void *sr = ecs_get_mut_id(engine->world, e, sr_comp);
+        if (sr) { *(char **)sr = ecs_os_strdup("Knight"); ecs_modified_id(engine->world, e, sr_comp); }
+
+        ecs_add_id(engine->world, e, loc_comp);
+        int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, e, loc_comp);
+        if (loc) { loc[0] = rand() % (mx + 1); loc[1] = rand() % (my + 1); ecs_modified_id(engine->world, e, loc_comp); }
+    }
+
+    /* archers */
+    for (int a = 0; a < num_archers; a++) {
+        char name[32]; snprintf(name, sizeof(name), "sa%d", a + 1);
+        ecs_entity_t e = engine_entity_create(engine, name);
+        if (!e) continue;
+        ecs_add_id(engine->world, e, sr_comp);
+        void *sr = ecs_get_mut_id(engine->world, e, sr_comp);
+        if (sr) { *(char **)sr = ecs_os_strdup("Archer"); ecs_modified_id(engine->world, e, sr_comp); }
+
+        ecs_add_id(engine->world, e, loc_comp);
+        int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, e, loc_comp);
+        if (loc) { loc[0] = rand() % (mx + 1); loc[1] = rand() % (my + 1); ecs_modified_id(engine->world, e, loc_comp); }
+    }
+
+    engine_system_disable(engine, "app_start");
+}
+
+/* ── movement ────────────────────────────────────────────────────────── */
+
+static void archer_movement(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+    /* Get map bounds */
+    ecs_entity_t map = ecs_lookup(engine->world, "Map");
+    ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
+    int mx = 10, my = 10;
+    if (map && ms_comp) {
+        const void *ms = ecs_get_id(engine->world, map, ms_comp);
+        if (ms) { mx = *(const int32_t *)ms; my = *((const int32_t *)ms + 1); }
+    }
+
+    UnitData units[2048];
+    int count = collect_units(engine, units, 2048);
+    if (count == 0) return;
+
+    ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
+
+    /* Split units by faction for fast enemy lookups */
+    int faction0[2048], faction1[2048];
+    int n0 = 0, n1 = 0;
+    for (int i = 0; i < count; i++) {
+        if (units[i].faction == 0) faction0[n0++] = i;
+        else faction1[n1++] = i;
+    }
+
+    /* Set energy */
+    for (int i = 0; i < count; i++) units[i].energy = units[i].speed;
+
+    static const int dirs[][2] = {{0,-1},{0,1},{-1,0},{1,0},{0,0}};
+
+    bool moved = true;
+    while (moved) {
+        moved = false;
+        for (int i = 0; i < count; i++) {
+            UnitData *ent = &units[i];
+            if (ent->energy <= 0) continue;
+
+            /* Enemy list for this unit's faction */
+            int *enemies = (ent->faction == 0) ? faction1 : faction0;
+            int nenemy = (ent->faction == 0) ? n1 : n0;
+            if (nenemy == 0) { ent->energy = 0; continue; }
+
+            /* Collect candidates with scores */
+            int cand_x[5], cand_y[5], cand_score[5], ncand = 0;
+            int best_score = -999999;
+
+            for (int d = 0; d < 5; d++) {
+                int nx = ent->x + dirs[d][0];
+                int ny = ent->y + dirs[d][1];
+
+                /* Bounds */
+                if (nx < 0 || nx > mx || ny < 0 || ny > my) continue;
+
+                /* Occupancy (skip self) */
+                bool occ = false;
+                if (d != 4) {
+                    for (int j = 0; j < count; j++) {
+                        if (j != i && units[j].x == nx && units[j].y == ny) {
+                            occ = true; break;
+                        }
+                    }
+                }
+                if (occ) continue;
+
+                /* Score this square against enemies only */
+                int score;
+                if (ent->move_type == 1) {
+                    /* Knight (charge): distance to closest enemy (lower = better) */
+                    int closest = 999999;
+                    for (int e = 0; e < nenemy; e++) {
+                        int dd = manhattan(nx, ny, units[enemies[e]].x, units[enemies[e]].y);
+                        if (dd < closest) closest = dd;
+                    }
+                    score = -closest;
+                } else {
+                    /* Archer (kite): best if no knights within 3, at least one within 4 */
+                    int min_enemy_dist = 999999;
+                    int in_range = 0;
+                    for (int e = 0; e < nenemy; e++) {
+                        int dd = manhattan(nx, ny, units[enemies[e]].x, units[enemies[e]].y);
+                        if (dd < min_enemy_dist) min_enemy_dist = dd;
+                        if (dd <= ent->range) in_range++;
+                    }
+                    bool safe = (min_enemy_dist > ent->range - 1);
+                    if (safe && in_range > 0)
+                        score = 20000 + in_range;
+                    else if (safe)
+                        score = -min_enemy_dist;
+                    else
+                        score = min_enemy_dist * 1000;
+                }
+
+                cand_x[ncand] = nx;
+                cand_y[ncand] = ny;
+                cand_score[ncand] = score;
+                ncand++;
+                if (score > best_score) best_score = score;
+            }
+
+            /* Tiebreaker 1 (knights only): prefer square backed by an ally.
+               If I'm at (x,y) moving to (nx,ny), check if ally at (2x-nx, 2y-ny). */
+            int best_backed = 0;
+            if (ent->move_type == 1) { /* knight */
+                for (int c = 0; c < ncand; c++) {
+                    if (cand_score[c] != best_score) continue;
+                    int bk_x = 2 * ent->x - cand_x[c];
+                    int bk_y = 2 * ent->y - cand_y[c];
+                    for (int j = 0; j < count; j++) {
+                        if (j != i && units[j].faction == ent->faction &&
+                            units[j].x == bk_x && units[j].y == bk_y) {
+                            best_backed = 1; break;
+                        }
+                    }
+                    if (best_backed) break;
+                }
+            }
+
+            /* Tiebreaker 2: most central among remaining tied candidates */
+            int best_cdist = 999999;
+            for (int c = 0; c < ncand; c++) {
+                if (cand_score[c] != best_score) continue;
+                if (ent->move_type == 1 && best_backed) {
+                    int bk_x = 2 * ent->x - cand_x[c];
+                    int bk_y = 2 * ent->y - cand_y[c];
+                    bool backed = false;
+                    for (int j = 0; j < count; j++) {
+                        if (j != i && units[j].faction == ent->faction &&
+                            units[j].x == bk_x && units[j].y == bk_y) {
+                            backed = true; break;
+                        }
+                    }
+                    if (!backed) continue;
+                }
+                int cd = abs(cand_x[c] - mx / 2) + abs(cand_y[c] - my / 2);
+                if (cd < best_cdist) best_cdist = cd;
+            }
+
+            /* Pick first candidate matching all tiebreakers */
+            int bx = ent->x, by = ent->y;
+            bool found = false;
+            for (int c = 0; c < ncand; c++) {
+                if (cand_score[c] != best_score) continue;
+                if (ent->move_type == 1 && best_backed) {
+                    int bk_x = 2 * ent->x - cand_x[c];
+                    int bk_y = 2 * ent->y - cand_y[c];
+                    bool backed = false;
+                    for (int j = 0; j < count; j++) {
+                        if (j != i && units[j].faction == ent->faction &&
+                            units[j].x == bk_x && units[j].y == bk_y) {
+                            backed = true; break;
+                        }
+                    }
+                    if (!backed) continue;
+                }
+                int cd = abs(cand_x[c] - mx / 2) + abs(cand_y[c] - my / 2);
+                if (cd != best_cdist) continue;
+                bx = cand_x[c]; by = cand_y[c];
+                found = true;
+                break;
+            }
+
+            if (found && (bx != ent->x || by != ent->y)) {
+                ent->x = bx; ent->y = by;
+                ent->energy--;
+
+                /* Write back to ECS */
+                int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, ent->eid, loc_comp);
+                if (loc) { loc[0] = ent->x; loc[1] = ent->y; ecs_modified_id(engine->world, ent->eid, loc_comp); }
+                moved = true;
+            } else if (!found) {
+                /* Truly stuck (all directions blocked or out of bounds) */
+                ent->energy = 0;
+            }
+            /* else: best move is stay put because blocker might move — keep energy for retry */
+        }
+    }
+}
+
+/* ── attack ──────────────────────────────────────────────────────────── */
+
+static void archer_attack(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+    UnitData units[2048];
+    int count = collect_units(engine, units, 2048);
+
+    ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
+    ecs_entity_t td_comp = ensure_took_damage_comp(engine);
+    if (!hp_comp) return;
+
+    for (int i = 0; i < count; i++) {
+        if (units[i].health <= 0) continue;
+
+        /* Find lowest entity_id enemy in range */
+        UnitData *target = NULL;
+        for (int j = 0; j < count; j++) {
+            if (units[j].health <= 0 || units[j].faction == units[i].faction) continue;
+            if (manhattan(units[i].x, units[i].y, units[j].x, units[j].y) <= units[i].range) {
+                if (!target || units[j].entity_id < target->entity_id)
+                    target = &units[j];
+            }
+        }
+
+        if (target) {
+            target->health -= units[i].damage;
+            int32_t *hp = (int32_t *)ecs_get_mut_id(engine->world, target->eid, hp_comp);
+            if (hp) { *hp = target->health; ecs_modified_id(engine->world, target->eid, hp_comp); }
+
+            /* Flash white on hit */
+            if (td_comp) {
+                ecs_add_id(engine->world, target->eid, td_comp);
+                ecs_bool_t *td = (ecs_bool_t *)ecs_get_mut_id(engine->world, target->eid, td_comp);
+                if (td) { *td = true; ecs_modified_id(engine->world, target->eid, td_comp); }
+            }
+        }
+    }
+}
+
+/* ── despawn ─────────────────────────────────────────────────────────── */
+
+static void archer_despawn(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+    ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
+    if (!hp_comp) return;
+
+    /* Collect entities to delete (can't delete during iteration) */
+    ecs_entity_t to_delete[2048];
+    int del_count = 0;
+
+    ecs_query_t *q = ecs_query(engine->world, {
+        .terms = {{ .id = hp_comp }, { .id = engine->user_entity_tag }},
+        .cache_kind = EcsQueryCacheNone
+    });
+    ecs_iter_t it = ecs_query_iter(engine->world, q);
+    while (ecs_query_next(&it)) {
+        for (int i = 0; i < it.count; i++) {
+            const int32_t *hp = (const int32_t *)ecs_get_id(engine->world, it.entities[i], hp_comp);
+            if (hp && *hp <= 0 && del_count < 2048)
+                to_delete[del_count++] = it.entities[i];
+        }
+    }
+    ecs_query_fini(q);
+
+    for (int i = 0; i < del_count; i++)
+        ecs_delete(engine->world, to_delete[i]);
+}
+
+/* ── spawn ───────────────────────────────────────────────────────────── */
+
+static void archer_spawn(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+    ecs_entity_t sr_comp = ecs_lookup(engine->world, "SpawnRequest");
+    ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
+    if (!sr_comp || !loc_comp) return;
+
+    /* Collect spawn requests */
+    typedef struct { ecs_entity_t eid; char template[64]; int x, y; } SpawnReq;
+    SpawnReq reqs[2048];
+    int req_count = 0;
+
+    ecs_query_t *q = ecs_query(engine->world, {
+        .terms = {{ .id = sr_comp }, { .id = loc_comp }},
+        .cache_kind = EcsQueryCacheNone
+    });
+    ecs_iter_t it = ecs_query_iter(engine->world, q);
+    while (ecs_query_next(&it)) {
+        for (int i = 0; i < it.count && req_count < 2048; i++) {
+            ecs_entity_t eid = it.entities[i];
+            const void *sr = ecs_get_id(engine->world, eid, sr_comp);
+            const void *loc = ecs_get_id(engine->world, eid, loc_comp);
+            if (!sr || !loc) continue;
+
+            const char *tmpl = *(const char *const *)sr;
+            if (!tmpl) continue;
+
+            reqs[req_count].eid = eid;
+            snprintf(reqs[req_count].template, 64, "%s", tmpl);
+            reqs[req_count].x = *(const int32_t *)loc;
+            reqs[req_count].y = *((const int32_t *)loc + 1);
+            req_count++;
+        }
+    }
+    ecs_query_fini(q);
+
+    /* Process */
+    for (int i = 0; i < req_count; i++) {
+        ecs_entity_t spawned = engine_entity_spawn(engine, reqs[i].template, NULL);
+        if (spawned && loc_comp) {
+            ecs_add_id(engine->world, spawned, loc_comp);
+            int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, spawned, loc_comp);
+            if (loc) {
+                loc[0] = reqs[i].x; loc[1] = reqs[i].y;
+                ecs_modified_id(engine->world, spawned, loc_comp);
+            }
+        }
+        ecs_delete(engine->world, reqs[i].eid);
+    }
+}
+
+/* ── game_over ───────────────────────────────────────────────────────── */
+
+static void archer_app_stop(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+    ecs_entity_t red_comp = ecs_lookup(engine->world, "RedFaction");
+    ecs_entity_t blue_comp = ecs_lookup(engine->world, "BlueFaction");
+    ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
+    if (!red_comp || !blue_comp || !hp_comp) return;
+
+    bool has_red = false, has_blue = false;
+
+    /* Check for living red units */
+    ecs_query_t *qr = ecs_query(engine->world, {
+        .terms = {{ .id = red_comp }, { .id = hp_comp }, { .id = engine->user_entity_tag }},
+        .cache_kind = EcsQueryCacheNone
+    });
+    ecs_iter_t itr = ecs_query_iter(engine->world, qr);
+    while (ecs_query_next(&itr)) {
+        for (int i = 0; i < itr.count; i++) {
+            const int32_t *hp = (const int32_t *)ecs_get_id(engine->world, itr.entities[i], hp_comp);
+            if (hp && *hp > 0) { has_red = true; break; }
+        }
+        if (has_red) { ecs_iter_fini(&itr); break; }
+    }
+    ecs_query_fini(qr);
+
+    /* Check for living blue units */
+    ecs_query_t *qb = ecs_query(engine->world, {
+        .terms = {{ .id = blue_comp }, { .id = hp_comp }, { .id = engine->user_entity_tag }},
+        .cache_kind = EcsQueryCacheNone
+    });
+    ecs_iter_t itb = ecs_query_iter(engine->world, qb);
+    while (ecs_query_next(&itb)) {
+        for (int i = 0; i < itb.count; i++) {
+            const int32_t *hp = (const int32_t *)ecs_get_id(engine->world, itb.entities[i], hp_comp);
+            if (hp && *hp > 0) { has_blue = true; break; }
+        }
+        if (has_blue) { ecs_iter_fini(&itb); break; }
+    }
+    ecs_query_fini(qb);
+
+    if (!has_red) {
+        engine->game_over = true;
+        snprintf(engine->game_over_message, sizeof(engine->game_over_message), "Knights Win");
+    }
+    if (!has_blue) {
+        engine->game_over = true;
+        snprintf(engine->game_over_message, sizeof(engine->game_over_message), "Archers Win");
+    }
+}
+
+/* ── Registration ────────────────────────────────────────────────────── */
+
+void archer_register_native_systems(Engine *engine) {
+    /* Ensure TookDamage component exists */
+    ensure_took_damage_comp(engine);
+
+    engine_system_register_native(engine, "start_of_turn", archer_start_of_turn);
+    engine_system_register_native(engine, "app_start", archer_app_start);
+    engine_system_register_native(engine, "movement", archer_movement);
+    engine_system_register_native(engine, "attack", archer_attack);
+    engine_system_register_native(engine, "despawn", archer_despawn);
+    engine_system_register_native(engine, "spawn", archer_spawn);
+    engine_system_register_native(engine, "app_stop", archer_app_stop);
+}
+#ifndef ARCHER_SYSTEMS_H
+#define ARCHER_SYSTEMS_H
+
+#include "engine/engine.h"
+
+/* Register all native archer systems on an engine.
+   Replaces Lua systems with C implementations for the same names. */
+void archer_register_native_systems(Engine *engine);
+
+#endif
+name: AttackDamage
+kind: component
+fields:
+  base: { type: i32 }
+name: AttackRange
+kind: component
+fields:
+  base: { type: i32 }
+name: BlueFaction
+kind: marker
+name: Health
+kind: component
+fields:
+  base: { type: i32 }
+name: Location
+kind: component
+fields:
+  x: { type: i32 }
+  y: { type: i32 }
+name: MapSize
+kind: component
+fields:
+  x: { type: i32 }
+  y: { type: i32 }
+name: MovementSpeed
+kind: component
+fields:
+  base: { type: i32 }
+  energy: { type: i32 }
+name: MovementType
+kind: enum
+variants:
+  - kite
+  - charge
+name: RedFaction
+kind: marker
+name: SpawnRequest
+kind: component
+fields:
+  template: { type: string }
+name: TookDamage
+kind: component
+fields:
+  value: { type: bool }
+name: Archer
+abstract: true
+components:
+  Health: { base: 10 }
+  MovementSpeed: { base: 1, energy: 0 }
+  MovementType: kite
+  AttackRange: { base: 3 }
+  AttackDamage: { base: 5 }
+  RedFaction: true
+name: Knight
+abstract: true
+components:
+  Health: { base: 35 }
+  MovementSpeed: { base: 1, energy: 0 }
+  MovementType: charge
+  AttackRange: { base: 1 }
+  AttackDamage: { base: 5 }
+  BlueFaction: true
+name: app_start
+enabled: true
+name: app_stop
+enabled: true
+name: attack
+enabled: true
+name: despawn
+enabled: true
+name: movement
+enabled: true
+name: spawn
+enabled: true
+name: start_of_turn
+enabled: true
+#include "test.h"
+#include "../src/engine/engine.h"
+#include "../src/engine/simulation.h"
+#include "../src/engine/app.h"
+#include "../src/engine/history.h"
+#include "../src/engine/components.h"
+
+static Engine *engine;
+
+static void count_factions(int *archers, int *knights) {
+    *archers = 0; *knights = 0;
+    ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
+    ecs_entity_t red_comp = ecs_lookup(engine->world, "RedFaction");
+    ecs_entity_t blue_comp = ecs_lookup(engine->world, "BlueFaction");
+    if (!hp_comp) return;
+    EntityList list = engine_entity_list(engine);
+    for (int i = 0; i < list.count; i++) {
+        ecs_entity_t eid = list.items[i].id;
+        const int32_t *hp = (const int32_t *)ecs_get_id(engine->world, eid, hp_comp);
+        if (!hp || *hp <= 0) continue;
+        if (red_comp && ecs_has_id(engine->world, eid, red_comp)) (*archers)++;
+        else if (blue_comp && ecs_has_id(engine->world, eid, blue_comp)) (*knights)++;
+    }
+    engine_entity_list_free(&list);
+}
+
+static void setup_game(int map_size) {
+    engine = engine_init(NULL);
+    snprintf(engine->sandboxes_dir, sizeof(engine->sandboxes_dir), "./sandboxes/");
+    engine_sandbox_select(engine, "archer");
+    AppStartResult asr;
+    engine_app_start(engine, &asr);
+    ecs_entity_t map = engine_entity_create(engine, "Map");
+    char vals[64];
+    snprintf(vals, sizeof(vals), "x: %d, y: %d", map_size, map_size);
+    engine_entity_add_component(engine, map, "MapSize", vals);
+}
+
+static void advance(int turns) {
+    for (int i = 0; i < turns; i++) {
+        TurnResult tr;
+        if (!engine_sim_turn(engine, &tr)) break;
+        engine_turn_result_free(&tr);
+    }
+}
+
+static void unpause(void) {
+    ecs_entity_t gs = ecs_lookup(engine->world, "GameState");
+    ecs_entity_t sp = ecs_lookup(engine->world, "SimulationPaused");
+    if (gs && sp) ecs_remove_id(engine->world, gs, sp);
+}
+
+/* ── Rewind basics ──────────────────────────────────────────────────── */
+
+TEST(rewind_restores_turn_counter) {
+    setup_game(100);
+    advance(10);
+    ASSERT_EQ(engine->turn_counter, 10);
+
+    engine_sim_rewind(engine, 5);
+    ASSERT_EQ(engine->turn_counter, 5);
+    ASSERT(is_simulation_paused(engine));
+
+    engine_fini(engine);
+}
+
+TEST(rewind_clears_game_over) {
+    setup_game(100);  /* Large enough to last several turns */
+    advance(300);
+    ASSERT(engine->game_over);
+
+    /* Rewind to a turn that exists in history (before game ended) */
+    int oldest = history_oldest_turn(engine);
+    ASSERT(oldest > 0);
+
+    engine_sim_rewind(engine, oldest);
+    ASSERT(!engine->game_over);
+    ASSERT_EQ(engine->turn_counter, oldest);
+
+    engine_fini(engine);
+}
+
+TEST(rewind_out_of_range_fails) {
+    setup_game(100);
+    advance(5);
+
+    ASSERT(!engine_sim_rewind(engine, 0));   /* before history */
+    ASSERT(!engine_sim_rewind(engine, 99));  /* after history */
+    ASSERT_EQ(engine->turn_counter, 5);      /* unchanged */
+
+    engine_fini(engine);
+}
+
+/* ── Determinism: rewind to N, advance to M, verify counts match ──── */
+
+TEST(determinism_rewind_and_replay) {
+    setup_game(100);
+    advance(10);
+
+    int a_target, k_target;
+    count_factions(&a_target, &k_target);
+    int target_turn = engine->turn_counter;
+    ASSERT(a_target > 0);  /* both factions still alive */
+    ASSERT(k_target > 0);
+
+    /* Rewind to 5, advance to 10 — should match */
+    engine_sim_rewind(engine, 5);
+    unpause();
+    advance(5);
+
+    int a, k;
+    count_factions(&a, &k);
+    ASSERT_EQ(engine->turn_counter, target_turn);
+    ASSERT_EQ(a, a_target);
+    ASSERT_EQ(k, k_target);
+
+    engine_fini(engine);
+}
+
+TEST(determinism_repeated_rewind_cycles) {
+    setup_game(100);
+    advance(10);
+
+    int a_target, k_target;
+    count_factions(&a_target, &k_target);
+
+    /* Rewind 5, advance 5, repeat 5 times — every iteration should match */
+    for (int trial = 0; trial < 5; trial++) {
+        engine_sim_rewind(engine, 5);
+        unpause();
+        advance(5);
+
+        int a, k;
+        count_factions(&a, &k);
+        ASSERT_EQ(a, a_target);
+        ASSERT_EQ(k, k_target);
+    }
+
+    engine_fini(engine);
+}
+
+TEST(determinism_rewind_to_start) {
+    setup_game(100);
+    advance(10);
+
+    int a_target, k_target;
+    count_factions(&a_target, &k_target);
+    int target_turn = engine->turn_counter;
+
+    /* Rewind to turn 1, replay all the way to target */
+    engine_sim_rewind(engine, 1);
+    unpause();
+    advance(target_turn - 1);
+
+    int a, k;
+    count_factions(&a, &k);
+    ASSERT_EQ(engine->turn_counter, target_turn);
+    ASSERT_EQ(a, a_target);
+    ASSERT_EQ(k, k_target);
+
+    engine_fini(engine);
+}
+
+/* ── Pause behavior ─────────────────────────────────────────────────── */
+
+TEST(paused_turn_does_not_advance) {
+    setup_game(100);
+    advance(5);
+
+    int a_before, k_before;
+    count_factions(&a_before, &k_before);
+
+    engine_sim_rewind(engine, 3);
+    /* Still paused — run a turn, nothing should change */
+    TurnResult tr;
+    engine_sim_turn(engine, &tr);
+    engine_turn_result_free(&tr);
+
+    ASSERT_EQ(engine->turn_counter, 3);
+    ASSERT(is_simulation_paused(engine));
+
+    engine_fini(engine);
+}
+
+TEST(unpause_resumes_simulation) {
+    setup_game(100);
+    advance(5);
+
+    engine_sim_rewind(engine, 3);
+    ASSERT(is_simulation_paused(engine));
+
+    unpause();
+    ASSERT(!is_simulation_paused(engine));
+
+    /* Advance should work now */
+    TurnResult tr;
+    engine_sim_turn(engine, &tr);
+    engine_turn_result_free(&tr);
+    ASSERT_EQ(engine->turn_counter, 4);
+
+    engine_fini(engine);
+}
+
+/* ── History query ──────────────────────────────────────────────────── */
+
+TEST(history_tracks_turns) {
+    setup_game(100);
+    advance(10);
+
+    ASSERT_EQ(history_newest_turn(engine), 10);
+    ASSERT_EQ(history_oldest_turn(engine), 1);
+
+    engine_fini(engine);
+}
+
+TEST(history_truncated_on_rewind) {
+    setup_game(100);
+    advance(10);
+    ASSERT_EQ(history_newest_turn(engine), 10);
+
+    engine_sim_rewind(engine, 5);
+    ASSERT_EQ(history_newest_turn(engine), 5);
+
+    engine_fini(engine);
+}
+
+int main(void) {
+    TEST_SUITE("Rewind Basics");
+    RUN(rewind_restores_turn_counter);
+    RUN(rewind_clears_game_over);
+    RUN(rewind_out_of_range_fails);
+
+    TEST_SUITE("Rewind Determinism");
+    RUN(determinism_rewind_and_replay);
+    RUN(determinism_repeated_rewind_cycles);
+    RUN(determinism_rewind_to_start);
+
+    TEST_SUITE("Pause Behavior");
+    RUN(paused_turn_does_not_advance);
+    RUN(unpause_resumes_simulation);
+
+    TEST_SUITE("History");
+    RUN(history_tracks_turns);
+    RUN(history_truncated_on_rewind);
+
+    TEST_RESULTS();
+}

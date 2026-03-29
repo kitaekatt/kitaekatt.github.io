@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Archers vs Knights</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 8px;
+}
+h1 {
+    font-size: 1.4em;
+    margin-bottom: 8px;
+    color: #f0f0f0;
+}
+#status {
+    font-size: 0.95em;
+    margin-bottom: 8px;
+    height: 1.4em;
+    color: #aaa;
+}
+#game-over-msg {
+    font-size: 1.1em;
+    font-weight: bold;
+    color: #ffd700;
+    height: 1.4em;
+    margin-bottom: 4px;
+}
+canvas {
+    border: 1px solid #333;
+    border-radius: 4px;
+    image-rendering: pixelated;
+}
+#controls {
+    margin-top: 12px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+button {
+    background: #2a2a4a;
+    color: #e0e0e0;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-size: 0.9em;
+    cursor: pointer;
+    min-width: 70px;
+}
+button:hover { background: #3a3a5a; }
+button:active { background: #4a4a6a; }
+button.active { background: #4a6a4a; border-color: #6a8a6a; }
+#speed-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 8px;
+}
+#speed-group label { font-size: 0.85em; color: #aaa; }
+#speed-label { font-size: 0.85em; min-width: 56px; text-align: right; }
+#speed-slider { width: 100px; }
+#loading {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: #1a1a2e;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    z-index: 100;
+}
+#loading-title { font-size: 1.4em; color: #f0f0f0; }
+#loading-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 0.9em;
+    font-family: monospace;
+}
+.load-step { color: #555; }
+.load-step.active { color: #4dabf7; }
+.load-step.done { color: #69db7c; }
+.load-step .elapsed { color: #888; margin-left: 8px; font-size: 0.85em; }
+#legend {
+    margin-top: 8px;
+    font-size: 0.8em;
+    color: #888;
+}
+#legend span { margin: 0 8px; }
+.red { color: #ff6b6b; }
+.blue { color: #4dabf7; }
+.white { color: #ffffff; }
+</style>
+</head>
+<body>
+
+<div id="loading">
+    <div id="loading-title">Archers vs Knights</div>
+    <div id="loading-steps">
+        <div class="load-step" id="step-load">1. Download and compile engine</div>
+        <div class="load-step" id="step-init">2. Initialize game world</div>
+    </div>
+</div>
+
+<div style="width:100%;text-align:left;"><a href="../" style="color:#666;text-decoration:none;font-size:0.85em;">&larr; Games</a></div>
+<h1>Archers vs Knights</h1>
+<div id="status">Initializing...</div>
+<div id="game-over-msg"></div>
+<canvas id="canvas"></canvas>
+<div id="controls">
+    <button id="btn-play" title="Space">Play</button>
+    <button id="btn-step" title="Right Arrow">Step</button>
+    <button id="btn-rewind" title="Left Arrow">Rewind</button>
+    <button id="btn-new">New Game</button>
+    <div id="speed-group">
+        <label>Speed</label>
+        <input type="range" id="speed-slider" min="1" max="240" value="240">
+        <span id="speed-label">240 tps</span>
+    </div>
+</div>
+<div id="legend">
+    <span class="red">&#9632; Archer</span>
+    <span class="blue">&#9632; Knight</span>
+    <span class="white">&#9632; Hit</span>
+    <span>Space: Play/Pause</span>
+    <span>&#8594;: Step</span>
+    <span>&#8592;: Rewind</span>
+</div>
+
+<script src="flecs-ecs.js"></script>
+<script>
+(function() {
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const gameOverEl = document.getElementById('game-over-msg');
+    const btnPlay = document.getElementById('btn-play');
+    const btnStep = document.getElementById('btn-step');
+    const btnRewind = document.getElementById('btn-rewind');
+    const btnNew = document.getElementById('btn-new');
+    const speedSlider = document.getElementById('speed-slider');
+    const speedLabel = document.getElementById('speed-label');
+    const loadingEl = document.getElementById('loading');
+
+    let engine = null;
+    let playing = false;
+    let playInterval = null;
+    let mapW = 150, mapH = 48;
+    let CELL_W = 6, CELL_H = 6;
+    const frameTimes = [];
+    let lastFrameTime = 0;
+    let heldKey = null;
+    let heldInterval = null;
+
+    /* Colors */
+    const BG_COLOR = '#0f0f23';
+    const GRID_COLOR = '#1a1a30';
+    const ARCHER_COLOR = '#ff6b6b';
+    const KNIGHT_COLOR = '#4dabf7';
+    const HIT_COLOR = '#ffffff';
+    const BORDER_COLOR = '#333355';
+
+    function resizeCanvas() {
+        const pad = 32;
+        const controlsH = 80;
+        const availW = window.innerWidth - pad;
+        const availH = window.innerHeight - controlsH - pad;
+        CELL_W = Math.max(2, Math.floor(availW / mapW));
+        CELL_H = Math.max(2, Math.floor(availH / mapH));
+        canvas.width = mapW * CELL_W;
+        canvas.height = mapH * CELL_H;
+    }
+
+    window.addEventListener('resize', function() {
+        resizeCanvas();
+        if (engine) render();
+    });
+
+    function render() {
+        if (!engine) return;
+
+        const unitCount = engine.getUnitCount();
+        const turn = engine.getTurn();
+        const gameOver = engine.isGameOver();
+
+        /* Clear */
+        ctx.fillStyle = BG_COLOR;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        /* Grid lines (subtle) */
+        ctx.strokeStyle = GRID_COLOR;
+        ctx.lineWidth = 0.5;
+        for (let x = 0; x <= mapW; x += 10) {
+            ctx.beginPath();
+            ctx.moveTo(x * CELL_W, 0);
+            ctx.lineTo(x * CELL_W, canvas.height);
+            ctx.stroke();
+        }
+        for (let y = 0; y <= mapH; y += 10) {
+            ctx.beginPath();
+            ctx.moveTo(0, y * CELL_H);
+            ctx.lineTo(canvas.width, y * CELL_H);
+            ctx.stroke();
+        }
+
+        /* Border */
+        ctx.strokeStyle = BORDER_COLOR;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(0, 0, canvas.width, canvas.height);
+
+        /* Draw units */
+        let archerCount = 0, knightCount = 0;
+
+        for (let i = 0; i < unitCount; i++) {
+            const x = engine.getUnitX(i);
+            const y = engine.getUnitY(i);
+            const faction = engine.getUnitFaction(i);
+            const tookDamage = engine.getUnitDamaged(i);
+
+            if (faction === 0) archerCount++;
+            else if (faction === 1) knightCount++;
+
+            if (tookDamage) {
+                ctx.fillStyle = HIT_COLOR;
+            } else if (faction === 0) {
+                ctx.fillStyle = ARCHER_COLOR;
+            } else {
+                ctx.fillStyle = KNIGHT_COLOR;
+            }
+
+            ctx.fillRect(x * CELL_W + 1, y * CELL_H + 1, CELL_W - 1, CELL_H - 1);
+        }
+
+        /* FPS */
+        const now = performance.now();
+        if (lastFrameTime > 0) {
+            frameTimes.push(now - lastFrameTime);
+            if (frameTimes.length > 5) frameTimes.shift();
+        }
+        lastFrameTime = now;
+        const avgMs = frameTimes.length ? frameTimes.reduce((a,b) => a+b) / frameTimes.length : 0;
+        const fps = avgMs > 0 ? Math.round(1000 / avgMs) : 0;
+        const targetTps = parseInt(speedSlider.value);
+        speedLabel.style.color = (playing && targetTps > fps * 1.15) ? '#ff6b6b' : '#aaa';
+
+        /* Status */
+        statusEl.innerHTML = `Turn ${turn} &nbsp;|&nbsp; <span class="red">Archers: ${archerCount}</span> &nbsp;|&nbsp; <span class="blue">Knights: ${knightCount}</span> &nbsp;|&nbsp; ${fps} fps`;
+
+        if (gameOver) {
+            const msg = engine.getMessage();
+            gameOverEl.textContent = msg;
+            stopPlaying();
+        } else {
+            gameOverEl.textContent = '';
+        }
+    }
+
+    function tick() {
+        if (!engine) return;
+        if (engine.isGameOver()) return;
+        engine.turn();
+        render();
+    }
+
+    function step() {
+        if (playing) stopPlaying();
+        tick();
+    }
+
+    function startPlaying() {
+        if (playing) return;
+        playing = true;
+        btnPlay.textContent = 'Pause';
+        btnPlay.classList.add('active');
+        schedulePlay();
+    }
+
+    function stopPlaying() {
+        playing = false;
+        btnPlay.textContent = 'Play';
+        btnPlay.classList.remove('active');
+        if (playInterval) {
+            clearInterval(playInterval);
+            playInterval = null;
+        }
+    }
+
+    function schedulePlay() {
+        if (playInterval) clearInterval(playInterval);
+        const tps = parseInt(speedSlider.value);
+        const ms = Math.max(16, Math.round(1000 / tps));
+        playInterval = setInterval(() => {
+            if (!playing || !engine) { stopPlaying(); return; }
+            tick();
+            if (engine.isGameOver()) stopPlaying();
+        }, ms);
+    }
+
+    function togglePlay() {
+        if (playing) { stopPlaying(); return; }
+        if (engine && engine.isGameOver()) { newGame(); startPlaying(); return; }
+        startPlaying();
+    }
+
+    function rewind() {
+        if (!engine) return;
+        if (playing) stopPlaying();
+        const turn = engine.getTurn();
+        if (turn <= 1) return;
+        engine.rewind(turn - 1);
+        render();
+    }
+
+    function newGame() {
+        if (!engine) return;
+        stopPlaying();
+        engine.reset();
+        /* Run turn 1 to trigger app_start and get initial positions */
+        engine.turn();
+        render();
+        gameOverEl.textContent = '';
+    }
+
+    /* Controls */
+    btnPlay.addEventListener('click', togglePlay);
+    btnStep.addEventListener('click', step);
+    btnRewind.addEventListener('click', rewind);
+    btnNew.addEventListener('click', newGame);
+    function updateSpeedLabel() {
+        const tps = parseInt(speedSlider.value);
+        speedLabel.textContent = tps + ' tps';
+    }
+
+    speedSlider.addEventListener('input', () => {
+        updateSpeedLabel();
+        if (playing) schedulePlay();
+    });
+
+    /* Keyboard — single step on press, fast-forward after 500ms hold */
+    let heldTimeout = null;
+
+    function doRewind() {
+        if (!engine) return;
+        var turn = engine.getTurn();
+        if (turn <= 1) return;
+        engine.rewind(turn - 1);
+        render();
+    }
+
+    function startHold(key, fn) {
+        if (heldKey === key) return;
+        stopHold();
+        heldKey = key;
+        fn();
+        heldTimeout = setTimeout(function() {
+            var tps = parseInt(speedSlider.value);
+            var ms = Math.max(4, Math.round(1000 / tps));
+            heldInterval = setInterval(fn, ms);
+        }, 500);
+    }
+
+    function stopHold() {
+        heldKey = null;
+        if (heldTimeout) { clearTimeout(heldTimeout); heldTimeout = null; }
+        if (heldInterval) { clearInterval(heldInterval); heldInterval = null; }
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') { e.preventDefault(); e.stopPropagation(); togglePlay(); }
+        else if (e.code === 'ArrowRight' || e.code === 'Period') {
+            e.preventDefault(); e.stopPropagation();
+            if (playing) stopPlaying();
+            startHold('right', tick);
+        }
+        else if (e.code === 'ArrowLeft') {
+            e.preventDefault(); e.stopPropagation();
+            if (playing) stopPlaying();
+            startHold('left', doRewind);
+        }
+    }, true);
+
+    document.addEventListener('keyup', (e) => {
+        if (e.code === 'ArrowRight' || e.code === 'Period' || e.code === 'ArrowLeft') {
+            stopHold();
+        }
+    }, true);
+
+    /* Init */
+    const stepLoad = document.getElementById('step-load');
+    const stepInit = document.getElementById('step-init');
+    const loadStart = Date.now();
+
+    function elapsed() { return ((Date.now() - loadStart) / 1000).toFixed(1); }
+
+    function markActive(el) { el.className = 'load-step active'; }
+    function markDone(el) {
+        el.className = 'load-step done';
+        el.innerHTML = el.textContent + '<span class="elapsed">' + elapsed() + 's</span>';
+    }
+
+    markActive(stepLoad);
+
+    FlecsECS().then(function(M) {
+        window.WasmModule = M;
+        markDone(stepLoad);
+        markActive(stepInit);
+
+        try {
+            engine = {
+                init: M.cwrap('wasm_init', 'number', []),
+                turn: M.cwrap('wasm_turn', 'number', []),
+                getTurn: M.cwrap('wasm_get_turn', 'number', []),
+                getUnitCount: M.cwrap('wasm_get_unit_count', 'number', []),
+                getUnitX: M.cwrap('wasm_get_unit_x', 'number', ['number']),
+                getUnitY: M.cwrap('wasm_get_unit_y', 'number', ['number']),
+                getUnitFaction: M.cwrap('wasm_get_unit_faction', 'number', ['number']),
+                getUnitDamaged: M.cwrap('wasm_get_unit_took_damage', 'number', ['number']),
+                getMapX: M.cwrap('wasm_get_map_x', 'number', []),
+                getMapY: M.cwrap('wasm_get_map_y', 'number', []),
+                isGameOver: M.cwrap('wasm_is_game_over', 'number', []),
+                getMessage: M.cwrap('wasm_get_game_over_message', 'string', []),
+                rewind: M.cwrap('wasm_rewind', 'number', ['number']),
+                reset: M.cwrap('wasm_reset', 'number', []),
+                free: M.cwrap('wasm_free', null, []),
+            };
+
+            if (!engine.init()) {
+                stepInit.textContent = '2. Engine init returned false';
+                stepInit.style.color = '#ff6b6b';
+                return;
+            }
+
+            /* Run first turn to trigger app_start (creates Map, spawns units) */
+            engine.turn();
+
+            /* Read map size (Map entity exists after first turn) */
+            mapW = engine.getMapX() || 150;
+            mapH = engine.getMapY() || 48;
+
+            resizeCanvas();
+            render();
+
+            markDone(stepInit);
+
+            setTimeout(function() {
+                loadingEl.style.display = 'none';
+                statusEl.textContent = 'Turn 1  |  Ready - press Play or Space';
+            }, 500);
+        } catch(e) {
+            stepInit.textContent = '2. Error: ' + e.message;
+            stepInit.style.color = '#ff6b6b';
+            console.error('Init error:', e);
+        }
+    }).catch(function(e) {
+        stepLoad.textContent = '1. Error: ' + e.message;
+        stepLoad.style.color = '#ff6b6b';
+        console.error('Load error:', e);
+    });
+
+})();
+</script>
+</body>
+</html>
