@@ -359,10 +359,9 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 
         /* Scrub bar */
         if (turn > maxTurnReached) maxTurnReached = turn;
-        if (!scrubbing && maxTurnReached > 0) {
+        if (maxTurnReached > 0) {
             var scrubPct = (turn / maxTurnReached) * 100;
-            var fillPct = 100; /* bar always full width = history extent */
-            document.getElementById('scrub-fill').style.width = fillPct + '%';
+            document.getElementById('scrub-fill').style.width = '100%';
             document.getElementById('scrub-head').style.left = scrubPct + '%';
             document.getElementById('scrub-label').textContent = 'Turn ' + turn + ' / ' + maxTurnReached;
         }
