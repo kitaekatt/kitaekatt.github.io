@@ -208,7 +208,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.23 (91570df)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.24 (91570df)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -272,10 +272,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const BORDER_COLOR = '#333355';
 
     function resizeCanvas() {
-        var pad = 32;
-        var controlsH = 80;
+        var pad = 16;
+        var controlsH = 120;
         var availW = window.innerWidth - pad;
-        var availH = window.innerHeight - controlsH - pad;
+        var availH = window.innerHeight - controlsH;
         CELL_W = Math.max(2, Math.floor(availW / mapW));
         CELL_H = Math.max(2, Math.floor(availH / mapH));
         canvas.width = mapW * CELL_W;
