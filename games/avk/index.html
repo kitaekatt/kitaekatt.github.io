@@ -208,7 +208,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.29 (749c0d5)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.30 (2f8db48)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -273,8 +273,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         CELL_H = Math.max(1, Math.floor(availH / mapH));
         canvas.width = mapW * CELL_W;
         canvas.height = mapH * CELL_H;
-        /* CSS constraint as safety net */
-        canvas.style.maxHeight = availH + 'px';
     }
 
     window.addEventListener('resize', function() {
@@ -334,9 +332,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 ctx.fillStyle = KNIGHT_COLOR;
             }
 
-            var gapW = CELL_W > 2 ? 1 : 0;
-            var gapH = CELL_H > 2 ? 1 : 0;
-            ctx.fillRect(x * CELL_W + gapW, y * CELL_H + gapH, CELL_W - gapW, CELL_H - gapH);
+            ctx.fillRect(x * CELL_W, y * CELL_H, CELL_W, CELL_H);
         }
 
         /* FPS */
