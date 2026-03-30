@@ -70,8 +70,8 @@ Tuning levers:
 - Map size: configured by the client via MapSize component on the Map entity
 name: archer
 description: "Red archers vs blue knights on a bounded grid map"
-archers: 876
-knights: 2900
+archers: 832
+knights: 2944
 
 map_size:
   x: 320
@@ -232,6 +232,32 @@ static ecs_entity_t ensure_took_damage_comp(Engine *engine) {
     return td;
 }
 
+/* ── Spatial grid for O(1) occupancy lookups ───────────────────────── */
+
+#define GRID_MAX_X 512
+#define GRID_MAX_Y 256
+static int16_t g_occ_grid[GRID_MAX_X * GRID_MAX_Y]; /* unit index+1, 0=empty */
+
+static void grid_clear(int mx, int my) {
+    (void)mx; (void)my;
+    memset(g_occ_grid, 0, sizeof(g_occ_grid));
+}
+
+static void grid_set(int x, int y, int unit_idx) {
+    if (x >= 0 && x < GRID_MAX_X && y >= 0 && y < GRID_MAX_Y)
+        g_occ_grid[y * GRID_MAX_X + x] = (int16_t)(unit_idx + 1);
+}
+
+static bool grid_occupied(int x, int y) {
+    if (x < 0 || x >= GRID_MAX_X || y < 0 || y >= GRID_MAX_Y) return true;
+    return g_occ_grid[y * GRID_MAX_X + x] != 0;
+}
+
+static int grid_unit_at(int x, int y) {
+    if (x < 0 || x >= GRID_MAX_X || y < 0 || y >= GRID_MAX_Y) return -1;
+    return g_occ_grid[y * GRID_MAX_X + x] - 1;
+}
+
 /* ── start_of_turn ──────────────────────────────────────────────────── */
 
 static void archer_start_of_turn(Engine *engine) {
@@ -290,7 +316,17 @@ static void archer_app_start(Engine *engine) {
     int num_archers = app->archers;
     int num_knights = app->knights;
 
+    int total = num_archers + num_knights;
+    int cells = (mx + 1) * (my + 1);
+    if (total > cells) {
+        fprintf(stderr, "Error: %d units > %d cells, can't place without overlap\n", total, cells);
+        return;
+    }
+
     fprintf(stderr, "Spawning %dA vs %dK\n", num_archers, num_knights);
+
+    /* Placement grid to prevent overlaps */
+    grid_clear(mx, my);
 
     /* knights */
     for (int k = 0; k < num_knights; k++) {
@@ -301,9 +337,13 @@ static void archer_app_start(Engine *engine) {
         void *sr = ecs_get_mut_id(engine->world, e, sr_comp);
         if (sr) { *(char **)sr = ecs_os_strdup("Knight"); ecs_modified_id(engine->world, e, sr_comp); }
 
+        int px, py;
+        do { px = rand() % (mx + 1); py = rand() % (my + 1); } while (grid_occupied(px, py));
+        grid_set(px, py, 1);
+
         ecs_add_id(engine->world, e, loc_comp);
         int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, e, loc_comp);
-        if (loc) { loc[0] = rand() % (mx + 1); loc[1] = rand() % (my + 1); ecs_modified_id(engine->world, e, loc_comp); }
+        if (loc) { loc[0] = px; loc[1] = py; ecs_modified_id(engine->world, e, loc_comp); }
     }
 
     /* archers */
@@ -315,19 +355,78 @@ static void archer_app_start(Engine *engine) {
         void *sr = ecs_get_mut_id(engine->world, e, sr_comp);
         if (sr) { *(char **)sr = ecs_os_strdup("Archer"); ecs_modified_id(engine->world, e, sr_comp); }
 
+        int px, py;
+        do { px = rand() % (mx + 1); py = rand() % (my + 1); } while (grid_occupied(px, py));
+        grid_set(px, py, 1);
+
         ecs_add_id(engine->world, e, loc_comp);
         int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, e, loc_comp);
-        if (loc) { loc[0] = rand() % (mx + 1); loc[1] = rand() % (my + 1); ecs_modified_id(engine->world, e, loc_comp); }
+        if (loc) { loc[0] = px; loc[1] = py; ecs_modified_id(engine->world, e, loc_comp); }
     }
 
     engine_system_disable(engine, "app_start");
+}
+
+/* ── Precomputed nearest-enemy data ────────────────────────────────── */
+
+typedef struct {
+    int nearest_dist;  /* manhattan distance to closest enemy */
+    int in_range;      /* enemies within attack range */
+} EnemyInfo;
+
+/* Per-unit cached enemy info, indexed same as units[] */
+static EnemyInfo g_enemy_info[4096];
+
+static void compute_enemy_info(UnitData *units, int count,
+                               int *enemies, int nenemy, int faction,
+                               int range) {
+    for (int i = 0; i < count; i++) {
+        if (units[i].faction != faction) continue;
+        int best = 999999;
+        int inr = 0;
+        for (int e = 0; e < nenemy; e++) {
+            int d = manhattan(units[i].x, units[i].y,
+                              units[enemies[e]].x, units[enemies[e]].y);
+            if (d < best) best = d;
+            if (d <= range) inr++;
+        }
+        g_enemy_info[i].nearest_dist = best;
+        g_enemy_info[i].in_range = inr;
+    }
+}
+
+/* Score a candidate position for a unit against its enemies */
+static int score_position(int nx, int ny, int faction, int move_type,
+                          int range, UnitData *units,
+                          int *enemies, int nenemy) {
+    if (move_type == 1) {
+        /* Knight (charge): distance to closest enemy (lower = better) */
+        int closest = 999999;
+        for (int e = 0; e < nenemy; e++) {
+            int d = manhattan(nx, ny, units[enemies[e]].x, units[enemies[e]].y);
+            if (d < closest) closest = d;
+        }
+        return -closest;
+    } else {
+        /* Archer (kite): safe + in range is ideal */
+        int min_dist = 999999;
+        int in_range = 0;
+        for (int e = 0; e < nenemy; e++) {
+            int d = manhattan(nx, ny, units[enemies[e]].x, units[enemies[e]].y);
+            if (d < min_dist) min_dist = d;
+            if (d <= range) in_range++;
+        }
+        bool safe = (min_dist > range - 1);
+        if (safe && in_range > 0) return 20000 + in_range;
+        else if (safe) return -min_dist;
+        else return min_dist * 1000;
+    }
 }
 
 /* ── movement ────────────────────────────────────────────────────────── */
 
 static void archer_movement(Engine *engine) {
     if (is_simulation_paused(engine)) return;
-    /* Get map bounds */
     ecs_entity_t map = ecs_lookup(engine->world, "Map");
     ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
     int mx = 10, my = 10;
@@ -342,7 +441,7 @@ static void archer_movement(Engine *engine) {
 
     ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
 
-    /* Split units by faction for fast enemy lookups */
+    /* Split by faction */
     int faction0[4096], faction1[4096];
     int n0 = 0, n1 = 0;
     for (int i = 0; i < count; i++) {
@@ -353,6 +452,11 @@ static void archer_movement(Engine *engine) {
     /* Set energy */
     for (int i = 0; i < count; i++) units[i].energy = units[i].speed;
 
+    /* Build spatial grid */
+    grid_clear(mx, my);
+    for (int i = 0; i < count; i++)
+        grid_set(units[i].x, units[i].y, i);
+
     static const int dirs[][2] = {{0,-1},{0,1},{-1,0},{1,0},{0,0}};
 
     bool moved = true;
@@ -362,7 +466,6 @@ static void archer_movement(Engine *engine) {
             UnitData *ent = &units[i];
             if (ent->energy <= 0) continue;
 
-            /* Enemy list for this unit's faction */
             int *enemies = (ent->faction == 0) ? faction1 : faction0;
             int nenemy = (ent->faction == 0) ? n1 : n0;
             if (nenemy == 0) { ent->energy = 0; continue; }
@@ -375,47 +478,13 @@ static void archer_movement(Engine *engine) {
                 int nx = ent->x + dirs[d][0];
                 int ny = ent->y + dirs[d][1];
 
-                /* Bounds */
                 if (nx < 0 || nx > mx || ny < 0 || ny > my) continue;
 
-                /* Occupancy (skip self) */
-                bool occ = false;
-                if (d != 4) {
-                    for (int j = 0; j < count; j++) {
-                        if (j != i && units[j].x == nx && units[j].y == ny) {
-                            occ = true; break;
-                        }
-                    }
-                }
-                if (occ) continue;
+                /* O(1) occupancy check via grid */
+                if (d != 4 && grid_occupied(nx, ny)) continue;
 
-                /* Score this square against enemies only */
-                int score;
-                if (ent->move_type == 1) {
-                    /* Knight (charge): distance to closest enemy (lower = better) */
-                    int closest = 999999;
-                    for (int e = 0; e < nenemy; e++) {
-                        int dd = manhattan(nx, ny, units[enemies[e]].x, units[enemies[e]].y);
-                        if (dd < closest) closest = dd;
-                    }
-                    score = -closest;
-                } else {
-                    /* Archer (kite): best if no knights within 3, at least one within 4 */
-                    int min_enemy_dist = 999999;
-                    int in_range = 0;
-                    for (int e = 0; e < nenemy; e++) {
-                        int dd = manhattan(nx, ny, units[enemies[e]].x, units[enemies[e]].y);
-                        if (dd < min_enemy_dist) min_enemy_dist = dd;
-                        if (dd <= ent->range) in_range++;
-                    }
-                    bool safe = (min_enemy_dist > ent->range - 1);
-                    if (safe && in_range > 0)
-                        score = 20000 + in_range;
-                    else if (safe)
-                        score = -min_enemy_dist;
-                    else
-                        score = min_enemy_dist * 1000;
-                }
+                int score = score_position(nx, ny, ent->faction, ent->move_type,
+                                           ent->range, units, enemies, nenemy);
 
                 cand_x[ncand] = nx;
                 cand_y[ncand] = ny;
@@ -424,45 +493,36 @@ static void archer_movement(Engine *engine) {
                 if (score > best_score) best_score = score;
             }
 
-            /* Tiebreaker 1 (knights only): prefer square backed by an ally.
-               If I'm at (x,y) moving to (nx,ny), check if ally at (2x-nx, 2y-ny). */
+            /* Tiebreaker 1 (knights): prefer backed by ally — O(1) grid check */
             int best_backed = 0;
-            if (ent->move_type == 1) { /* knight */
+            if (ent->move_type == 1) {
                 for (int c = 0; c < ncand; c++) {
                     if (cand_score[c] != best_score) continue;
                     int bk_x = 2 * ent->x - cand_x[c];
                     int bk_y = 2 * ent->y - cand_y[c];
-                    for (int j = 0; j < count; j++) {
-                        if (j != i && units[j].faction == ent->faction &&
-                            units[j].x == bk_x && units[j].y == bk_y) {
-                            best_backed = 1; break;
-                        }
+                    int ally = grid_unit_at(bk_x, bk_y);
+                    if (ally >= 0 && ally != i && units[ally].faction == ent->faction) {
+                        best_backed = 1; break;
                     }
-                    if (best_backed) break;
                 }
             }
 
-            /* Tiebreaker 2: most central among remaining tied candidates */
+            /* Tiebreaker 2: most central */
             int best_cdist = 999999;
             for (int c = 0; c < ncand; c++) {
                 if (cand_score[c] != best_score) continue;
                 if (ent->move_type == 1 && best_backed) {
                     int bk_x = 2 * ent->x - cand_x[c];
                     int bk_y = 2 * ent->y - cand_y[c];
-                    bool backed = false;
-                    for (int j = 0; j < count; j++) {
-                        if (j != i && units[j].faction == ent->faction &&
-                            units[j].x == bk_x && units[j].y == bk_y) {
-                            backed = true; break;
-                        }
-                    }
-                    if (!backed) continue;
+                    int ally = grid_unit_at(bk_x, bk_y);
+                    if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
+                        continue;
                 }
                 int cd = abs(cand_x[c] - mx / 2) + abs(cand_y[c] - my / 2);
                 if (cd < best_cdist) best_cdist = cd;
             }
 
-            /* Pick first candidate matching all tiebreakers */
+            /* Pick first matching candidate */
             int bx = ent->x, by = ent->y;
             bool found = false;
             for (int c = 0; c < ncand; c++) {
@@ -470,14 +530,9 @@ static void archer_movement(Engine *engine) {
                 if (ent->move_type == 1 && best_backed) {
                     int bk_x = 2 * ent->x - cand_x[c];
                     int bk_y = 2 * ent->y - cand_y[c];
-                    bool backed = false;
-                    for (int j = 0; j < count; j++) {
-                        if (j != i && units[j].faction == ent->faction &&
-                            units[j].x == bk_x && units[j].y == bk_y) {
-                            backed = true; break;
-                        }
-                    }
-                    if (!backed) continue;
+                    int ally = grid_unit_at(bk_x, bk_y);
+                    if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
+                        continue;
                 }
                 int cd = abs(cand_x[c] - mx / 2) + abs(cand_y[c] - my / 2);
                 if (cd != best_cdist) continue;
@@ -487,7 +542,10 @@ static void archer_movement(Engine *engine) {
             }
 
             if (found && (bx != ent->x || by != ent->y)) {
+                /* Update grid — clear old position, set new */
+                g_occ_grid[ent->y * GRID_MAX_X + ent->x] = 0;
                 ent->x = bx; ent->y = by;
+                grid_set(bx, by, i);
                 ent->energy--;
 
                 /* Write back to ECS */
@@ -495,10 +553,8 @@ static void archer_movement(Engine *engine) {
                 if (loc) { loc[0] = ent->x; loc[1] = ent->y; ecs_modified_id(engine->world, ent->eid, loc_comp); }
                 moved = true;
             } else if (!found) {
-                /* Truly stuck (all directions blocked or out of bounds) */
                 ent->energy = 0;
             }
-            /* else: best move is stay put because blocker might move — keep energy for retry */
         }
     }
 }
@@ -514,16 +570,35 @@ static void archer_attack(Engine *engine) {
     ecs_entity_t td_comp = ensure_took_damage_comp(engine);
     if (!hp_comp) return;
 
+    /* Get map center for tiebreaking */
+    ecs_entity_t map_ent = ecs_lookup(engine->world, "Map");
+    ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
+    int cx = 160, cy = 72;
+    if (map_ent && ms_comp) {
+        const void *ms = ecs_get_id(engine->world, map_ent, ms_comp);
+        if (ms) { cx = *(const int32_t *)ms / 2; cy = *((const int32_t *)ms + 1) / 2; }
+    }
+
     for (int i = 0; i < count; i++) {
         if (units[i].health <= 0) continue;
 
-        /* Find lowest entity_id enemy in range */
+        /* Find best target: lowest health → closest → closest to center */
         UnitData *target = NULL;
+        int target_dist = 999999;
+        int target_cdist = 999999;
         for (int j = 0; j < count; j++) {
             if (units[j].health <= 0 || units[j].faction == units[i].faction) continue;
-            if (manhattan(units[i].x, units[i].y, units[j].x, units[j].y) <= units[i].range) {
-                if (!target || units[j].entity_id < target->entity_id)
-                    target = &units[j];
+            int dist = manhattan(units[i].x, units[i].y, units[j].x, units[j].y);
+            if (dist > units[i].range) continue;
+            int cdist = abs(units[j].x - cx) + abs(units[j].y - cy);
+            if (!target ||
+                units[j].health < target->health ||
+                (units[j].health == target->health && dist < target_dist) ||
+                (units[j].health == target->health && dist == target_dist && cdist < target_cdist) ||
+                (units[j].health == target->health && dist == target_dist && cdist == target_cdist && units[j].entity_id < target->entity_id)) {
+                target = &units[j];
+                target_dist = dist;
+                target_cdist = cdist;
             }
         }
 
@@ -842,7 +917,7 @@ TEST(rewind_restores_turn_counter) {
 
 TEST(rewind_clears_game_over) {
     setup_game(100);  /* Large enough to last several turns */
-    advance(300);
+    advance(1000);
     ASSERT(engine->game_over);
 
     /* Rewind to a turn that exists in history (before game ended) */
