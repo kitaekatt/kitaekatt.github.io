@@ -70,8 +70,8 @@ Tuning levers:
 - Map size: configured by the client via MapSize component on the Map entity
 name: archer
 description: "Red archers vs blue knights on a bounded grid map"
-archers: 823
-knights: 2953
+archers: 1127
+knights: 2649
 
 map_size:
   x: 320
@@ -619,20 +619,18 @@ static void archer_attack(Engine *engine) {
         if (units[i].health <= 0) continue;
         int range = units[i].range;
 
-        /* Scan cells within attack range for enemies (distance-field score 0 = enemy present) */
         UnitData *target = NULL;
         int target_dist = 999999;
         int target_cdist = 999999;
 
         for (int dy = -range; dy <= range; dy++) {
-            int ax = range - abs(dy); /* manhattan constraint */
+            int ax = range - abs(dy);
             for (int dx = -ax; dx <= ax; dx++) {
                 int tx = units[i].x + dx;
                 int ty = units[i].y + dy;
                 int ui = grid_unit_at(tx, ty);
                 if (ui < 0) continue;
-                if (units[ui].health <= 0) continue;
-                if (units[ui].faction == units[i].faction) continue;
+                if (units[ui].health <= 0 || units[ui].faction == units[i].faction) continue;
 
                 int dist = abs(dx) + abs(dy);
                 int cdist = abs(tx - cx) + abs(ty - cy);
@@ -655,8 +653,6 @@ static void archer_attack(Engine *engine) {
 
             if (td_comp) {
                 ecs_add_id(engine->world, target->eid, td_comp);
-                ecs_bool_t *td = (ecs_bool_t *)ecs_get_mut_id(engine->world, target->eid, td_comp);
-                if (td) { *td = true; ecs_modified_id(engine->world, target->eid, td_comp); }
             }
         }
     }
