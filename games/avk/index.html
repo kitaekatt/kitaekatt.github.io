@@ -204,7 +204,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.8 (a76fafb)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.9 (a76fafb)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -336,7 +336,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 ctx.fillStyle = KNIGHT_COLOR;
             }
 
-            ctx.fillRect(x * CELL_W + 1, y * CELL_H + 1, CELL_W - 1, CELL_H - 1);
+            var pad = (CELL_W > 2 && CELL_H > 2) ? 1 : 0;
+            ctx.fillRect(x * CELL_W + pad, y * CELL_H + pad, CELL_W - pad, CELL_H - pad);
         }
 
         /* FPS */
