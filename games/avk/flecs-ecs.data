@@ -70,8 +70,8 @@ Tuning levers:
 - Map size: configured by the client via MapSize component on the Map entity
 name: archer
 description: "Red archers vs blue knights on a bounded grid map"
-archers: 832
-knights: 2944
+archers: 822
+knights: 2954
 
 map_size:
   x: 320
@@ -367,59 +367,77 @@ static void archer_app_start(Engine *engine) {
     engine_system_disable(engine, "app_start");
 }
 
-/* ── Precomputed nearest-enemy data ────────────────────────────────── */
+/* ── BFS distance fields ───────────────────────────────────────────── */
+/*
+ * dist_to_red[y][x] = manhattan distance to nearest red (archer) unit
+ * dist_to_blue[y][x] = manhattan distance to nearest blue (knight) unit
+ * Built via BFS flood-fill from all enemy positions: O(cells) not O(units²).
+ * A cell with distance 0 contains an enemy — the movement target and attack condition.
+ */
 
-typedef struct {
-    int nearest_dist;  /* manhattan distance to closest enemy */
-    int in_range;      /* enemies within attack range */
-} EnemyInfo;
+static int16_t g_dist_to_red[GRID_MAX_Y * GRID_MAX_X];
+static int16_t g_dist_to_blue[GRID_MAX_Y * GRID_MAX_X];
 
-/* Per-unit cached enemy info, indexed same as units[] */
-static EnemyInfo g_enemy_info[4096];
+/* BFS queue — max cells = GRID_MAX_X * GRID_MAX_Y */
+#define BFS_MAX (GRID_MAX_X * GRID_MAX_Y)
+static int32_t g_bfs_queue[BFS_MAX];
 
-static void compute_enemy_info(UnitData *units, int count,
-                               int *enemies, int nenemy, int faction,
-                               int range) {
+static void build_distance_field(int16_t *dist, UnitData *units, int count,
+                                 int faction, int mx, int my) {
+    int w = mx + 1, h = my + 1;
+    /* Init all to -1 (unvisited) */
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+            dist[y * GRID_MAX_X + x] = -1;
+
+    /* Seed BFS with all units of the target faction */
+    int head = 0, tail = 0;
     for (int i = 0; i < count; i++) {
         if (units[i].faction != faction) continue;
-        int best = 999999;
-        int inr = 0;
-        for (int e = 0; e < nenemy; e++) {
-            int d = manhattan(units[i].x, units[i].y,
-                              units[enemies[e]].x, units[enemies[e]].y);
-            if (d < best) best = d;
-            if (d <= range) inr++;
+        int x = units[i].x, y = units[i].y;
+        if (x >= 0 && x < w && y >= 0 && y < h && dist[y * GRID_MAX_X + x] < 0) {
+            dist[y * GRID_MAX_X + x] = 0;
+            g_bfs_queue[tail++] = y * w + x;
         }
-        g_enemy_info[i].nearest_dist = best;
-        g_enemy_info[i].in_range = inr;
+    }
+
+    /* BFS flood fill */
+    static const int dx[] = {0, 0, -1, 1};
+    static const int dy[] = {-1, 1, 0, 0};
+    while (head < tail) {
+        int pos = g_bfs_queue[head++];
+        int cy = pos / w, cx = pos % w;
+        int16_t d = dist[cy * GRID_MAX_X + cx];
+        for (int dir = 0; dir < 4; dir++) {
+            int nx = cx + dx[dir], ny = cy + dy[dir];
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+            if (dist[ny * GRID_MAX_X + nx] >= 0) continue;
+            dist[ny * GRID_MAX_X + nx] = d + 1;
+            g_bfs_queue[tail++] = ny * w + nx;
+        }
     }
 }
 
-/* Score a candidate position for a unit against its enemies */
-static int score_position(int nx, int ny, int faction, int move_type,
-                          int range, UnitData *units,
-                          int *enemies, int nenemy) {
+static int dist_field_get(int16_t *dist, int x, int y) {
+    if (x < 0 || x >= GRID_MAX_X || y < 0 || y >= GRID_MAX_Y) return 9999;
+    int16_t v = dist[y * GRID_MAX_X + x];
+    return v >= 0 ? v : 9999;
+}
+
+/* Score a cell for movement using distance fields */
+static int score_cell(int nx, int ny, int move_type, int range, int16_t *enemy_dist) {
+    int d = dist_field_get(enemy_dist, nx, ny);
     if (move_type == 1) {
-        /* Knight (charge): distance to closest enemy (lower = better) */
-        int closest = 999999;
-        for (int e = 0; e < nenemy; e++) {
-            int d = manhattan(nx, ny, units[enemies[e]].x, units[enemies[e]].y);
-            if (d < closest) closest = d;
-        }
-        return -closest;
+        /* Knight: minimize distance to nearest enemy */
+        return -d;
     } else {
-        /* Archer (kite): safe + in range is ideal */
-        int min_dist = 999999;
-        int in_range = 0;
-        for (int e = 0; e < nenemy; e++) {
-            int d = manhattan(nx, ny, units[enemies[e]].x, units[enemies[e]].y);
-            if (d < min_dist) min_dist = d;
-            if (d <= range) in_range++;
-        }
-        bool safe = (min_dist > range - 1);
-        if (safe && in_range > 0) return 20000 + in_range;
-        else if (safe) return -min_dist;
-        else return min_dist * 1000;
+        /* Archer: ideal is safe (d >= range) with enemies reachable (d <= range) */
+        if (d >= range && d <= range + 1)
+            return 20000 + (range + 1 - d); /* perfect kite range */
+        else if (d >= range)
+            return -d; /* safe but too far, approach */
+        else
+            return d * 1000; /* too close, flee (higher d = further from danger = better) */
     }
 }
 
@@ -441,14 +459,6 @@ static void archer_movement(Engine *engine) {
 
     ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
 
-    /* Split by faction */
-    int faction0[4096], faction1[4096];
-    int n0 = 0, n1 = 0;
-    for (int i = 0; i < count; i++) {
-        if (units[i].faction == 0) faction0[n0++] = i;
-        else faction1[n1++] = i;
-    }
-
     /* Set energy */
     for (int i = 0; i < count; i++) units[i].energy = units[i].speed;
 
@@ -457,7 +467,12 @@ static void archer_movement(Engine *engine) {
     for (int i = 0; i < count; i++)
         grid_set(units[i].x, units[i].y, i);
 
+    /* Build distance fields — O(cells) via BFS */
+    build_distance_field(g_dist_to_red, units, count, 0, mx, my);
+    build_distance_field(g_dist_to_blue, units, count, 1, mx, my);
+
     static const int dirs[][2] = {{0,-1},{0,1},{-1,0},{1,0},{0,0}};
+    int half_mx = mx / 2, half_my = my / 2;
 
     bool moved = true;
     while (moved) {
@@ -466,11 +481,10 @@ static void archer_movement(Engine *engine) {
             UnitData *ent = &units[i];
             if (ent->energy <= 0) continue;
 
-            int *enemies = (ent->faction == 0) ? faction1 : faction0;
-            int nenemy = (ent->faction == 0) ? n1 : n0;
-            if (nenemy == 0) { ent->energy = 0; continue; }
+            /* Enemy distance field for this unit */
+            int16_t *enemy_dist = (ent->faction == 0) ? g_dist_to_blue : g_dist_to_red;
 
-            /* Collect candidates with scores */
+            /* Collect candidates with scores — O(1) per direction via distance field */
             int cand_x[5], cand_y[5], cand_score[5], ncand = 0;
             int best_score = -999999;
 
@@ -479,12 +493,9 @@ static void archer_movement(Engine *engine) {
                 int ny = ent->y + dirs[d][1];
 
                 if (nx < 0 || nx > mx || ny < 0 || ny > my) continue;
-
-                /* O(1) occupancy check via grid */
                 if (d != 4 && grid_occupied(nx, ny)) continue;
 
-                int score = score_position(nx, ny, ent->faction, ent->move_type,
-                                           ent->range, units, enemies, nenemy);
+                int score = score_cell(nx, ny, ent->move_type, ent->range, enemy_dist);
 
                 cand_x[ncand] = nx;
                 cand_y[ncand] = ny;
@@ -518,7 +529,7 @@ static void archer_movement(Engine *engine) {
                     if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
                         continue;
                 }
-                int cd = abs(cand_x[c] - mx / 2) + abs(cand_y[c] - my / 2);
+                int cd = abs(cand_x[c] - half_mx) + abs(cand_y[c] - half_my);
                 if (cd < best_cdist) best_cdist = cd;
             }
 
@@ -534,7 +545,7 @@ static void archer_movement(Engine *engine) {
                     if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
                         continue;
                 }
-                int cd = abs(cand_x[c] - mx / 2) + abs(cand_y[c] - my / 2);
+                int cd = abs(cand_x[c] - half_mx) + abs(cand_y[c] - half_my);
                 if (cd != best_cdist) continue;
                 bx = cand_x[c]; by = cand_y[c];
                 found = true;
@@ -542,13 +553,11 @@ static void archer_movement(Engine *engine) {
             }
 
             if (found && (bx != ent->x || by != ent->y)) {
-                /* Update grid — clear old position, set new */
                 g_occ_grid[ent->y * GRID_MAX_X + ent->x] = 0;
                 ent->x = bx; ent->y = by;
                 grid_set(bx, by, i);
                 ent->energy--;
 
-                /* Write back to ECS */
                 int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, ent->eid, loc_comp);
                 if (loc) { loc[0] = ent->x; loc[1] = ent->y; ecs_modified_id(engine->world, ent->eid, loc_comp); }
                 moved = true;
@@ -570,35 +579,51 @@ static void archer_attack(Engine *engine) {
     ecs_entity_t td_comp = ensure_took_damage_comp(engine);
     if (!hp_comp) return;
 
-    /* Get map center for tiebreaking */
+    /* Get map bounds for center tiebreaking */
     ecs_entity_t map_ent = ecs_lookup(engine->world, "Map");
     ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
-    int cx = 160, cy = 72;
+    int mx = 320, my = 144;
     if (map_ent && ms_comp) {
         const void *ms = ecs_get_id(engine->world, map_ent, ms_comp);
-        if (ms) { cx = *(const int32_t *)ms / 2; cy = *((const int32_t *)ms + 1) / 2; }
+        if (ms) { mx = *(const int32_t *)ms; my = *((const int32_t *)ms + 1); }
     }
+    int cx = mx / 2, cy = my / 2;
+
+    /* Build occupancy grid if not already built by movement */
+    grid_clear(mx, my);
+    for (int i = 0; i < count; i++)
+        grid_set(units[i].x, units[i].y, i);
 
     for (int i = 0; i < count; i++) {
         if (units[i].health <= 0) continue;
+        int range = units[i].range;
 
-        /* Find best target: lowest health → closest → closest to center */
+        /* Scan cells within attack range for enemies (distance-field score 0 = enemy present) */
         UnitData *target = NULL;
         int target_dist = 999999;
         int target_cdist = 999999;
-        for (int j = 0; j < count; j++) {
-            if (units[j].health <= 0 || units[j].faction == units[i].faction) continue;
-            int dist = manhattan(units[i].x, units[i].y, units[j].x, units[j].y);
-            if (dist > units[i].range) continue;
-            int cdist = abs(units[j].x - cx) + abs(units[j].y - cy);
-            if (!target ||
-                units[j].health < target->health ||
-                (units[j].health == target->health && dist < target_dist) ||
-                (units[j].health == target->health && dist == target_dist && cdist < target_cdist) ||
-                (units[j].health == target->health && dist == target_dist && cdist == target_cdist && units[j].entity_id < target->entity_id)) {
-                target = &units[j];
-                target_dist = dist;
-                target_cdist = cdist;
+
+        for (int dy = -range; dy <= range; dy++) {
+            int ax = range - abs(dy); /* manhattan constraint */
+            for (int dx = -ax; dx <= ax; dx++) {
+                int tx = units[i].x + dx;
+                int ty = units[i].y + dy;
+                int ui = grid_unit_at(tx, ty);
+                if (ui < 0) continue;
+                if (units[ui].health <= 0) continue;
+                if (units[ui].faction == units[i].faction) continue;
+
+                int dist = abs(dx) + abs(dy);
+                int cdist = abs(tx - cx) + abs(ty - cy);
+                if (!target ||
+                    units[ui].health < target->health ||
+                    (units[ui].health == target->health && dist < target_dist) ||
+                    (units[ui].health == target->health && dist == target_dist && cdist < target_cdist) ||
+                    (units[ui].health == target->health && dist == target_dist && cdist == target_cdist && units[ui].entity_id < target->entity_id)) {
+                    target = &units[ui];
+                    target_dist = dist;
+                    target_cdist = cdist;
+                }
             }
         }
 
@@ -607,7 +632,6 @@ static void archer_attack(Engine *engine) {
             int32_t *hp = (int32_t *)ecs_get_mut_id(engine->world, target->eid, hp_comp);
             if (hp) { *hp = target->health; ecs_modified_id(engine->world, target->eid, hp_comp); }
 
-            /* Flash white on hit */
             if (td_comp) {
                 ecs_add_id(engine->world, target->eid, td_comp);
                 ecs_bool_t *td = (ecs_bool_t *)ecs_get_mut_id(engine->world, target->eid, td_comp);
