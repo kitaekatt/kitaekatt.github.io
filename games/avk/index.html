@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <title>Archers vs Knights</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -203,7 +204,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.1 (1bf979a)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.1 (a76fafb)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -541,6 +542,11 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 if (engine.isGameOver()) break;
             }
         }
+        /* Force scrub head update */
+        var turn = engine.getTurn();
+        var headPct = maxTurnReached > 0 ? (turn / maxTurnReached) * 100 : 0;
+        document.getElementById('scrub-head').style.left = headPct + '%';
+        document.getElementById('scrub-label').textContent = 'Turn ' + turn + ' / ' + maxTurnReached;
         render();
     }
 
