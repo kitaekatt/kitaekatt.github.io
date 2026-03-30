@@ -86,6 +86,35 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 }
 #speed-group label { font-size: 0.85em; color: #aaa; }
 #speed-label { font-size: 0.85em; min-width: 56px; text-align: right; }
+#fps-bar-outer {
+    width: 200px;
+    height: 16px;
+    background: #2a2a4a;
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+    margin-top: 4px;
+}
+#fps-bar-inner {
+    height: 100%;
+    background: #4dabf7;
+    border-radius: 3px;
+    width: 0%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: width 0.15s ease, background 0.15s ease;
+    min-width: 0;
+}
+#fps-text {
+    font-size: 0.7em;
+    font-family: monospace;
+    color: #fff;
+    position: absolute;
+    left: 0; right: 0;
+    text-align: center;
+    line-height: 16px;
+}
 #speed-slider { width: 100px; }
 #loading {
     position: fixed;
@@ -157,6 +186,9 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span>Space: Play/Pause</span>
         <span>&#8594;: Step</span>
         <span>&#8592;: Rewind</span>
+    </div>
+    <div id="fps-bar-outer">
+        <div id="fps-bar-inner"><span id="fps-text"></span></div>
     </div>
     <div id="profile" style="font-family:monospace;font-size:0.75em;color:#666;margin-top:4px;"></div>
 </div>
@@ -277,6 +309,14 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         const targetTps = parseInt(speedSlider.value);
         speedLabel.style.color = (playing && targetTps > fps * 1.15) ? '#ff6b6b' : '#aaa';
 
+        /* FPS bar */
+        var fpsBar = document.getElementById('fps-bar-inner');
+        var fpsText = document.getElementById('fps-text');
+        var pct = Math.min(100, targetTps > 0 ? (fps / targetTps) * 100 : 0);
+        fpsBar.style.width = pct + '%';
+        fpsBar.style.background = (pct < 85) ? '#ff6b6b' : '#4dabf7';
+        fpsText.textContent = fps + ' fps';
+
         /* Profiling — top 3 systems by time */
         var sysNames = ['rewind','start_of_turn','app_start','movement','attack','despawn','spawn','app_stop','history'];
         var sysCount = engine.getSystemCount();
@@ -292,7 +332,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         document.getElementById('profile').textContent = top3.join(', ') + '  (' + totalMs.toFixed(1) + 'ms total)';
 
         /* Status */
-        statusEl.innerHTML = `Turn ${turn} &nbsp;|&nbsp; <span class="red">Archers: ${archerCount}</span> &nbsp;|&nbsp; <span class="blue">Knights: ${knightCount}</span> &nbsp;|&nbsp; ${mapW}x${mapH} &nbsp;|&nbsp; ${fps} fps`;
+        statusEl.innerHTML = `Turn ${turn} &nbsp;|&nbsp; <span class="red">Archers: ${archerCount}</span> &nbsp;|&nbsp; <span class="blue">Knights: ${knightCount}</span> &nbsp;|&nbsp; ${mapW}x${mapH}`;
 
         if (gameOver) {
             const msg = engine.getMessage();
