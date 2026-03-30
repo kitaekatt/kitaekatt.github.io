@@ -58,6 +58,9 @@ canvas {
     border: 1px solid #333;
     border-radius: 4px;
     image-rendering: pixelated;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
 }
 #controls {
     margin-top: 12px;
@@ -205,7 +208,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.16 (b569a7f)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.17 (b569a7f)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -269,13 +272,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const BORDER_COLOR = '#333355';
 
     function resizeCanvas() {
-        /* Temporarily shrink canvas so it doesn't inflate the container */
-        canvas.style.height = '0px';
-        var gameArea = document.getElementById('game-area');
-        var availW = gameArea.clientWidth - 16;
-        var availH = gameArea.clientHeight - 8;
-        canvas.style.height = '';
-        if (availH < 50) availH = window.innerHeight * 0.5;
+        const gameArea = document.getElementById('game-area');
+        const headerH = 60;
+        const availW = gameArea.clientWidth - 16;
+        const availH = gameArea.clientHeight - headerH;
         CELL_W = Math.max(2, Math.floor(availW / mapW));
         CELL_H = Math.max(2, Math.floor(availH / mapH));
         canvas.width = mapW * CELL_W;
