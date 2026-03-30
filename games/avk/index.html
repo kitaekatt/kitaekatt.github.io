@@ -7,7 +7,7 @@
 <title>Archers vs Knights</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { height: 100%; overflow: hidden; }
+html, body { height: 100%; overflow: hidden; margin: 0; }
 body {
     background: #1a1a2e;
     color: #e0e0e0;
@@ -204,7 +204,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.11 (15e9bb2)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.12 (15e9bb2)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -268,17 +268,12 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const BORDER_COLOR = '#333355';
 
     function resizeCanvas() {
-        /* Collapse canvas so flexbox gives game-area its natural size */
-        canvas.width = 1;
-        canvas.height = 1;
-        /* Measure non-canvas content height inside game-area */
-        var gameArea = document.getElementById('game-area');
-        var otherH = 0;
-        for (var c = gameArea.children, i = 0; i < c.length; i++) {
-            if (c[i] !== canvas) otherH += c[i].offsetHeight;
-        }
-        var availW = gameArea.clientWidth - 16;
-        var availH = gameArea.clientHeight - otherH - 8;
+        /* Use viewport minus fixed UI heights */
+        var uiArea = document.getElementById('ui-area');
+        var uiH = uiArea ? uiArea.offsetHeight : 100;
+        var availW = window.innerWidth - 16;
+        var availH = window.innerHeight - uiH - 100; /* 100 = title+status+scrub+version+padding */
+        if (availH < 100) availH = 100;
         CELL_W = Math.max(2, Math.floor(availW / mapW));
         CELL_H = Math.max(2, Math.floor(availH / mapH));
         canvas.width = mapW * CELL_W;
