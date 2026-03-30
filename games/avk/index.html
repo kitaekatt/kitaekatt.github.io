@@ -204,7 +204,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.5 (a76fafb)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.6 (a76fafb)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -268,16 +268,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const BORDER_COLOR = '#333355';
 
     function resizeCanvas() {
-        /* Hide canvas to measure remaining space */
-        var prev = canvas.style.cssText;
-        canvas.style.cssText = 'width:0;height:0;display:block;';
-        var gameArea = document.getElementById('game-area');
-        var rect = gameArea.getBoundingClientRect();
-        var canvasTop = canvas.getBoundingClientRect().top;
-        var availW = rect.width - 8;
-        var availH = rect.bottom - canvasTop - 40; /* 40 for scrub+label+version below canvas */
-        canvas.style.cssText = prev;
-        if (availW < 10 || availH < 10) { availW = window.innerWidth - 24; availH = window.innerHeight * 0.6; }
+        var availW = window.innerWidth - 24;
+        var availH = window.innerHeight * 0.65;
         CELL_W = Math.max(1, Math.floor(availW / mapW));
         CELL_H = Math.max(1, Math.floor(availH / mapH));
         canvas.width = mapW * CELL_W;
