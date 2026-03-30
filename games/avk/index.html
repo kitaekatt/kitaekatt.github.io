@@ -204,7 +204,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.6 (a76fafb)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.7 (a76fafb)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -617,6 +617,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             mapH = engine.getMapY() || 48;
 
             resizeCanvas();
+            console.log('canvas:', canvas.width, 'x', canvas.height, 'cells:', CELL_W, 'x', CELL_H, 'map:', mapW, 'x', mapH, 'units:', engine.getUnitCount());
             render();
 
             markDone(stepInit);
