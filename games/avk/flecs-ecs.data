@@ -70,8 +70,8 @@ Tuning levers:
 - Map size: configured by the client via MapSize component on the Map entity
 name: archer
 description: "Red archers vs blue knights on a bounded grid map"
-archers: 822
-knights: 2954
+archers: 823
+knights: 2953
 
 map_size:
   x: 320
@@ -424,20 +424,40 @@ static int dist_field_get(int16_t *dist, int x, int y) {
     return v >= 0 ? v : 9999;
 }
 
-/* Score a cell for movement using distance fields */
-static int score_cell(int nx, int ny, int move_type, int range, int16_t *enemy_dist) {
+/* Count enemies within manhattan range of (cx,cy) using the occupancy grid */
+static int count_enemies_in_range(int cx, int cy, int range, int my_faction,
+                                  UnitData *units) {
+    int count = 0;
+    for (int dy = -range; dy <= range; dy++) {
+        int ax = range - abs(dy);
+        for (int dx = -ax; dx <= ax; dx++) {
+            int ui = grid_unit_at(cx + dx, cy + dy);
+            if (ui >= 0 && units[ui].faction != my_faction && units[ui].health > 0)
+                count++;
+        }
+    }
+    return count;
+}
+
+/* Score a cell for movement using distance fields + grid */
+static int score_cell(int nx, int ny, int move_type, int range,
+                      int16_t *enemy_dist, int faction, UnitData *units) {
     int d = dist_field_get(enemy_dist, nx, ny);
     if (move_type == 1) {
         /* Knight: minimize distance to nearest enemy */
         return -d;
     } else {
-        /* Archer: ideal is safe (d >= range) with enemies reachable (d <= range) */
-        if (d >= range && d <= range + 1)
-            return 20000 + (range + 1 - d); /* perfect kite range */
-        else if (d >= range)
-            return -d; /* safe but too far, approach */
-        else
-            return d * 1000; /* too close, flee (higher d = further from danger = better) */
+        /* Archer: safe with targets in range is ideal */
+        bool safe = (d >= range);
+        if (safe) {
+            int in_range = count_enemies_in_range(nx, ny, range, faction, units);
+            if (in_range > 0)
+                return 20000 + in_range;
+            else
+                return -d; /* safe but nothing to shoot, approach */
+        } else {
+            return d * 1000; /* too close, flee */
+        }
     }
 }
 
@@ -495,7 +515,8 @@ static void archer_movement(Engine *engine) {
                 if (nx < 0 || nx > mx || ny < 0 || ny > my) continue;
                 if (d != 4 && grid_occupied(nx, ny)) continue;
 
-                int score = score_cell(nx, ny, ent->move_type, ent->range, enemy_dist);
+                int score = score_cell(nx, ny, ent->move_type, ent->range,
+                                       enemy_dist, ent->faction, units);
 
                 cand_x[ncand] = nx;
                 cand_y[ncand] = ny;
