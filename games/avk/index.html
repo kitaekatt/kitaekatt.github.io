@@ -208,7 +208,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.27 (9ea66bf)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.28 (6a53947)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -216,6 +216,9 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <button id="btn-step" title="Right Arrow">Step</button>
         <button id="btn-rewind" title="Left Arrow">Rewind</button>
         <button id="btn-new">New Game</button>
+        <div id="fps-bar-outer">
+            <div id="fps-bar-inner"><span id="fps-text"></span></div>
+        </div>
     </div>
     <div id="legend">
         <span class="red">&#9632; Archer</span>
@@ -224,9 +227,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span>Space: Play/Pause</span>
         <span>&#8594;: Step</span>
         <span>&#8592;: Rewind</span>
-    </div>
-    <div id="fps-bar-outer">
-        <div id="fps-bar-inner"><span id="fps-text"></span></div>
     </div>
     <div id="profile" style="font-family:monospace;font-size:0.75em;color:#666;margin-top:4px;"></div>
 </div>
