@@ -245,7 +245,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.32 (dfd1346)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.33 (92b5cc8)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -306,11 +306,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         var controlsH = 120;
         var availW = window.innerWidth - pad;
         var availH = window.innerHeight - controlsH;
-        CELL_W = Math.max(2, Math.floor(availW / mapW));
-        CELL_H = Math.max(2, Math.floor(availH / mapH));
-        /* Limit cell aspect ratio — don't let cells stretch beyond 2:1 */
-        if (CELL_W > CELL_H * 2) CELL_W = CELL_H * 2;
-        if (CELL_H > CELL_W * 2) CELL_H = CELL_W * 2;
+        /* Square cells — use the smaller dimension to fit */
+        var cell = Math.max(1, Math.min(Math.floor(availW / mapW), Math.floor(availH / mapH)));
+        CELL_W = cell;
+        CELL_H = cell;
         canvas.width = mapW * CELL_W;
         canvas.height = mapH * CELL_H;
     }
