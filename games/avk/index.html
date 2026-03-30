@@ -7,7 +7,7 @@
 <title>Archers vs Knights</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { height: 100%; overflow: hidden; margin: 0; }
+html, body { height: 100%; overflow: hidden; }
 body {
     background: #1a1a2e;
     color: #e0e0e0;
@@ -16,21 +16,12 @@ body {
     flex-direction: column;
     align-items: center;
     height: 100vh;
-    padding: 8px;
+    padding: 4px 8px;
 }
-#game-area {
-    flex: 4;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 0;
-    width: 100%;
-}
-#ui-area {
+#canvas-wrap {
     flex: 1;
+    min-height: 0;
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
     width: 100%;
@@ -196,41 +187,36 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     </div>
 </div>
 
-<div id="game-area">
-    <div style="width:100%;text-align:left;"><a href="../" style="color:#666;text-decoration:none;font-size:0.85em;">&larr; Games</a></div>
-    <h1>Archers vs Knights</h1>
-    <div id="status">Initializing...</div>
-    <div id="game-over-msg"></div>
-    <canvas id="canvas"></canvas>
-    <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
-    <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.12 (15e9bb2)</div>
+<div style="width:100%;text-align:left;"><a href="../" style="color:#666;text-decoration:none;font-size:0.85em;">&larr; Games</a></div>
+<h1>Archers vs Knights</h1>
+<div id="status">Initializing...</div>
+<div id="game-over-msg"></div>
+<div id="canvas-wrap"><canvas id="canvas"></canvas></div>
+<div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
+<div id="controls">
+    <button id="btn-play" title="Space">Play</button>
+    <button id="btn-step" title="Right Arrow">Step</button>
+    <button id="btn-rewind" title="Left Arrow">Rewind</button>
+    <button id="btn-new">New Game</button>
+    <div id="speed-group">
+        <label>Speed</label>
+        <input type="range" id="speed-slider" min="1" max="240" value="60">
+        <span id="speed-label">60 tps</span>
+    </div>
 </div>
-<div id="ui-area">
-    <div id="controls">
-        <button id="btn-play" title="Space">Play</button>
-        <button id="btn-step" title="Right Arrow">Step</button>
-        <button id="btn-rewind" title="Left Arrow">Rewind</button>
-        <button id="btn-new">New Game</button>
-        <div id="speed-group">
-            <label>Speed</label>
-            <input type="range" id="speed-slider" min="1" max="240" value="60">
-            <span id="speed-label">60 tps</span>
-        </div>
-    </div>
-    <div id="legend">
-        <span class="red">&#9632; Archer</span>
-        <span class="blue">&#9632; Knight</span>
-        <span class="white">&#9632; Hit</span>
-        <span>Space: Play/Pause</span>
-        <span>&#8594;: Step</span>
-        <span>&#8592;: Rewind</span>
-    </div>
-    <div id="fps-bar-outer">
-        <div id="fps-bar-inner"><span id="fps-text"></span></div>
-    </div>
-    <div id="profile" style="font-family:monospace;font-size:0.75em;color:#666;margin-top:4px;"></div>
+<div id="legend">
+    <span class="red">&#9632; Archer</span>
+    <span class="blue">&#9632; Knight</span>
+    <span class="white">&#9632; Hit</span>
+    <span>Space: Play/Pause</span>
+    <span>&#8594;: Step</span>
+    <span>&#8592;: Rewind</span>
 </div>
+<div id="fps-bar-outer">
+    <div id="fps-bar-inner"><span id="fps-text"></span></div>
+</div>
+<div id="profile" style="font-family:monospace;font-size:0.75em;color:#666;margin-top:4px;"></div>
+<div id="version" style="font-size:0.6em;color:#555;margin-top:2px;">0.0.13 (15e9bb2)</div>
 
 <script src="flecs-ecs.js"></script>
 <script>
@@ -268,14 +254,12 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const BORDER_COLOR = '#333355';
 
     function resizeCanvas() {
-        /* Use viewport minus fixed UI heights */
-        var uiArea = document.getElementById('ui-area');
-        var uiH = uiArea ? uiArea.offsetHeight : 100;
-        var availW = window.innerWidth - 16;
-        var availH = window.innerHeight - uiH - 100; /* 100 = title+status+scrub+version+padding */
-        if (availH < 100) availH = 100;
-        CELL_W = Math.max(2, Math.floor(availW / mapW));
-        CELL_H = Math.max(2, Math.floor(availH / mapH));
+        /* canvas-wrap has flex:1, so it fills remaining space after all other elements */
+        var wrap = document.getElementById('canvas-wrap');
+        var availW = wrap.clientWidth;
+        var availH = wrap.clientHeight;
+        CELL_W = Math.max(1, Math.floor(availW / mapW));
+        CELL_H = Math.max(1, Math.floor(availH / mapH));
         canvas.width = mapW * CELL_W;
         canvas.height = mapH * CELL_H;
     }
