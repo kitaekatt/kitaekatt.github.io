@@ -204,7 +204,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.9 (a76fafb)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.10 (a76fafb)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -268,15 +268,14 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const BORDER_COLOR = '#333355';
 
     function resizeCanvas() {
-        var availW = window.innerWidth - 24;
-        var availH = window.innerHeight * 0.65;
+        const gameArea = document.getElementById('game-area');
+        const headerH = 60;
+        const availW = gameArea.clientWidth - 16;
+        const availH = gameArea.clientHeight - headerH;
         CELL_W = Math.max(2, Math.floor(availW / mapW));
         CELL_H = Math.max(2, Math.floor(availH / mapH));
         canvas.width = mapW * CELL_W;
         canvas.height = mapH * CELL_H;
-        /* Constrain canvas to viewport if cells overflow */
-        if (canvas.width > availW) { CELL_W = Math.max(1, Math.floor(availW / mapW)); canvas.width = mapW * CELL_W; }
-        if (canvas.height > availH) { CELL_H = Math.max(1, Math.floor(availH / mapH)); canvas.height = mapH * CELL_H; }
     }
 
     window.addEventListener('resize', function() {
@@ -336,8 +335,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 ctx.fillStyle = KNIGHT_COLOR;
             }
 
-            var pad = (CELL_W > 2 && CELL_H > 2) ? 1 : 0;
-            ctx.fillRect(x * CELL_W + pad, y * CELL_H + pad, CELL_W - pad, CELL_H - pad);
+            ctx.fillRect(x * CELL_W + 1, y * CELL_H + 1, CELL_W - 1, CELL_H - 1);
         }
 
         /* FPS */
