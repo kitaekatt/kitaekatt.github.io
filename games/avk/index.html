@@ -208,7 +208,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.25 (91570df)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.26 (be961ec)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -354,12 +354,12 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         const targetTps = parseInt(speedSlider.value);
         speedLabel.style.color = (playing && targetTps > fps * 1.15) ? '#ff6b6b' : '#aaa';
 
-        /* FPS bar */
+        /* FPS bar — fill represents actual fps on 0-240 scale */
         var fpsBar = document.getElementById('fps-bar-inner');
         var fpsText = document.getElementById('fps-text');
-        var pct = Math.min(100, targetTps > 0 ? (fps / targetTps) * 100 : 0);
-        fpsBar.style.width = pct + '%';
-        fpsBar.style.background = (pct < 85) ? '#ff6b6b' : '#4dabf7';
+        var fpsPct = Math.min(100, (fps / 240) * 100);
+        fpsBar.style.width = fpsPct + '%';
+        fpsBar.style.background = (fps > targetTps) ? '#ff6b6b' : '#4dabf7';
         fpsText.textContent = fps + ' fps';
 
         /* Scrub bar */
@@ -386,7 +386,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         document.getElementById('profile').textContent = top3.join(', ') + '  (' + totalMs.toFixed(1) + 'ms total)';
 
         /* Status */
-        statusEl.innerHTML = `Turn ${turn} &nbsp;|&nbsp; <span class="red">Archers: ${archerCount}</span> &nbsp;|&nbsp; <span class="blue">Knights: ${knightCount}</span> &nbsp;|&nbsp; ${fps} fps`;
+        statusEl.innerHTML = `Turn ${turn} &nbsp;|&nbsp; <span class="red">Archers: ${archerCount}</span> &nbsp;|&nbsp; <span class="blue">Knights: ${knightCount}</span>`;
 
         if (gameOver) {
             const msg = engine.getMessage();
