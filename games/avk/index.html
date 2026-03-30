@@ -204,7 +204,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.7 (a76fafb)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.8 (a76fafb)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -270,10 +270,13 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     function resizeCanvas() {
         var availW = window.innerWidth - 24;
         var availH = window.innerHeight * 0.65;
-        CELL_W = Math.max(1, Math.floor(availW / mapW));
-        CELL_H = Math.max(1, Math.floor(availH / mapH));
+        CELL_W = Math.max(2, Math.floor(availW / mapW));
+        CELL_H = Math.max(2, Math.floor(availH / mapH));
         canvas.width = mapW * CELL_W;
         canvas.height = mapH * CELL_H;
+        /* Constrain canvas to viewport if cells overflow */
+        if (canvas.width > availW) { CELL_W = Math.max(1, Math.floor(availW / mapW)); canvas.width = mapW * CELL_W; }
+        if (canvas.height > availH) { CELL_H = Math.max(1, Math.floor(availH / mapH)); canvas.height = mapH * CELL_H; }
     }
 
     window.addEventListener('resize', function() {
