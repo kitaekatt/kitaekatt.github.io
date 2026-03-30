@@ -208,7 +208,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.26 (be961ec)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.27 (9ea66bf)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -216,11 +216,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <button id="btn-step" title="Right Arrow">Step</button>
         <button id="btn-rewind" title="Left Arrow">Rewind</button>
         <button id="btn-new">New Game</button>
-        <div id="speed-group">
-            <label>Speed</label>
-            <input type="range" id="speed-slider" min="1" max="240" value="60">
-            <span id="speed-label">60 tps</span>
-        </div>
     </div>
     <div id="legend">
         <span class="red">&#9632; Archer</span>
@@ -247,8 +242,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const btnStep = document.getElementById('btn-step');
     const btnRewind = document.getElementById('btn-rewind');
     const btnNew = document.getElementById('btn-new');
-    const speedSlider = document.getElementById('speed-slider');
-    const speedLabel = document.getElementById('speed-label');
     const loadingEl = document.getElementById('loading');
 
     let engine = null;
@@ -351,15 +344,11 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         lastFrameTime = now;
         const avgMs = frameTimes.length ? frameTimes.reduce((a,b) => a+b) / frameTimes.length : 0;
         const fps = avgMs > 0 ? Math.round(1000 / avgMs) : 0;
-        const targetTps = parseInt(speedSlider.value);
-        speedLabel.style.color = (playing && targetTps > fps * 1.15) ? '#ff6b6b' : '#aaa';
 
-        /* FPS bar — fill represents actual fps on 0-240 scale */
+        /* FPS bar — always blue, full = 240 fps */
         var fpsBar = document.getElementById('fps-bar-inner');
         var fpsText = document.getElementById('fps-text');
-        var fpsPct = Math.min(100, (fps / 240) * 100);
-        fpsBar.style.width = fpsPct + '%';
-        fpsBar.style.background = (fps > targetTps) ? '#ff6b6b' : '#4dabf7';
+        fpsBar.style.width = Math.min(100, (fps / 240) * 100) + '%';
         fpsText.textContent = fps + ' fps';
 
         /* Scrub bar */
@@ -429,8 +418,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 
     function schedulePlay() {
         if (playInterval) clearInterval(playInterval);
-        const tps = parseInt(speedSlider.value);
-        const ms = Math.max(16, Math.round(1000 / tps));
+        const ms = 0;
         playInterval = setInterval(() => {
             if (!playing || !engine) { stopPlaying(); return; }
             tick();
@@ -468,15 +456,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     btnStep.addEventListener('click', step);
     btnRewind.addEventListener('click', rewind);
     btnNew.addEventListener('click', newGame);
-    function updateSpeedLabel() {
-        const tps = parseInt(speedSlider.value);
-        speedLabel.textContent = tps + ' tps';
-    }
-
-    speedSlider.addEventListener('input', () => {
-        updateSpeedLabel();
-        if (playing) schedulePlay();
-    });
 
     /* Keyboard — single step on press, fast-forward after 500ms hold */
     let heldTimeout = null;
@@ -495,9 +474,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         heldKey = key;
         fn();
         heldTimeout = setTimeout(function() {
-            var tps = parseInt(speedSlider.value);
-            var ms = Math.max(4, Math.round(1000 / tps));
-            heldInterval = setInterval(fn, ms);
+            heldInterval = setInterval(fn, 0);
         }, 500);
     }
 
