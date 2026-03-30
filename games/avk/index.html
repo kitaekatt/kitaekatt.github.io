@@ -208,7 +208,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <canvas id="canvas"></canvas>
     <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
     <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.20 (91570df)</div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.21 (91570df)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -273,7 +273,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 
     function resizeCanvas() {
         var availW = window.innerWidth - 16;
-        var availH = (window.visualViewport ? window.visualViewport.height : window.innerHeight) * 0.55;
+        var availH = window.innerHeight * 0.55;
         CELL_W = Math.max(1, Math.floor(availW / mapW));
         CELL_H = Math.max(1, Math.floor(availH / mapH));
         /* Keep cells square-ish: use the smaller dimension */
@@ -285,9 +285,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     }
 
     window.addEventListener('resize', function() {
-        resizeCanvas(); if (engine) render();
-    });
-    if (window.visualViewport) window.visualViewport.addEventListener('resize', function() {
         resizeCanvas();
         if (engine) render();
     });
