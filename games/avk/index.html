@@ -139,6 +139,41 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 .load-step.active { color: #4dabf7; }
 .load-step.done { color: #69db7c; }
 .load-step .elapsed { color: #888; margin-left: 8px; font-size: 0.85em; }
+#scrub-bar {
+    width: 100%;
+    max-width: 900px;
+    height: 12px;
+    background: #444;
+    border-radius: 3px;
+    position: relative;
+    cursor: pointer;
+    margin-top: 8px;
+    flex-shrink: 0;
+}
+#scrub-fill {
+    height: 100%;
+    background: #4dabf7;
+    border-radius: 3px;
+    width: 0%;
+    pointer-events: none;
+}
+#scrub-head {
+    position: absolute;
+    top: -2px;
+    width: 4px;
+    height: 16px;
+    background: #fff;
+    border-radius: 2px;
+    pointer-events: none;
+    left: 0%;
+}
+#scrub-label {
+    font-size: 0.7em;
+    font-family: monospace;
+    color: #888;
+    margin-top: 2px;
+    flex-shrink: 0;
+}
 #legend {
     margin-top: 8px;
     font-size: 0.8em;
@@ -166,6 +201,9 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <div id="status">Initializing...</div>
     <div id="game-over-msg"></div>
     <canvas id="canvas"></canvas>
+    <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
+    <div id="scrub-label"></div>
+    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;">0.0.14 (281e0c0)</div>
 </div>
 <div id="ui-area">
     <div id="controls">
@@ -217,6 +255,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     let lastFrameTime = 0;
     let heldKey = null;
     let heldInterval = null;
+    let maxTurnReached = 0;
+    let scrubbing = false;
 
     /* Colors */
     const BG_COLOR = '#0f0f23';
@@ -317,6 +357,16 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         fpsBar.style.background = (pct < 85) ? '#ff6b6b' : '#4dabf7';
         fpsText.textContent = fps + ' fps';
 
+        /* Scrub bar */
+        if (turn > maxTurnReached) maxTurnReached = turn;
+        if (!scrubbing && maxTurnReached > 0) {
+            var scrubPct = (turn / maxTurnReached) * 100;
+            var fillPct = 100; /* bar always full width = history extent */
+            document.getElementById('scrub-fill').style.width = fillPct + '%';
+            document.getElementById('scrub-head').style.left = scrubPct + '%';
+            document.getElementById('scrub-label').textContent = 'Turn ' + turn + ' / ' + maxTurnReached;
+        }
+
         /* Profiling — top 3 systems by time */
         var sysNames = ['rewind','start_of_turn','app_start','movement','attack','despawn','spawn','app_stop','history'];
         var sysCount = engine.getSystemCount();
@@ -403,7 +453,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         if (!engine) return;
         stopPlaying();
         engine.reset();
-        /* Run turn 1 to trigger app_start and get initial positions */
+        maxTurnReached = 0;
         engine.turn();
         render();
         gameOverEl.textContent = '';
@@ -472,6 +522,40 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             stopHold();
         }
     }, true);
+
+    /* Scrub bar drag */
+    var scrubBar = document.getElementById('scrub-bar');
+
+    function scrubTo(e) {
+        if (!engine || maxTurnReached <= 1) return;
+        var rect = scrubBar.getBoundingClientRect();
+        var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        var targetTurn = Math.max(1, Math.round(pct * maxTurnReached));
+        var currentTurn = engine.getTurn();
+        if (targetTurn === currentTurn) return;
+
+        if (targetTurn < currentTurn) {
+            engine.rewind(targetTurn);
+        } else {
+            for (var t = currentTurn; t < targetTurn; t++) {
+                engine.turn();
+                if (engine.isGameOver()) break;
+            }
+        }
+        render();
+    }
+
+    scrubBar.addEventListener('mousedown', function(e) {
+        scrubbing = true;
+        if (playing) stopPlaying();
+        scrubTo(e);
+    });
+    document.addEventListener('mousemove', function(e) {
+        if (scrubbing) scrubTo(e);
+    });
+    document.addEventListener('mouseup', function() {
+        scrubbing = false;
+    });
 
     /* Init */
     const stepLoad = document.getElementById('step-load');
