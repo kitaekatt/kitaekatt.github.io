@@ -4,15 +4,15 @@ Grid-based auto-battler. Red archers (ranged) vs blue knights (melee) fight on a
 
 ## Native Systems
 
-All systems implemented in C at `native/systems.c`. Execution order defined in `app.yaml`:
+All systems implemented in C at `systems/native/systems.c`. Execution order defined in `app.yaml`:
 
 | Order | System | Purpose |
 |-------|--------|---------|
-| 1 | `start_of_turn` | Removes `TookDamage` marker from all entities (per-turn flag cleanup) |
-| 2 | `app_start` | Spawns initial armies with random positions, then **disables itself** |
-| 3 | `movement` | Moves each unit one step toward/away from enemies based on faction strategy |
-| 4 | `attack` | Each unit attacks one enemy in range, reduces Health, adds TookDamage marker |
-| 5 | `despawn` | Deletes entities with Health <= 0 (batch-collects then deletes outside iterator) |
+| 1 | `despawn` | Deletes entities with Health <= 0 from previous turn |
+| 2 | `start_of_turn` | Removes `TookDamage` marker and clears `Weapon.attacked` field |
+| 3 | `app_start` | Spawns initial armies with random positions, then **disables itself** |
+| 4 | `movement` | Moves each unit one step toward/away from enemies based on faction strategy |
+| 5 | `attack` | Each unit attacks one enemy in range, reduces Health, adds TookDamage marker, records target in Weapon.attacked |
 | 6 | `spawn` | Processes SpawnRequest components, calls `engine_entity_spawn()` |
 | 7 | `app_stop` | Checks if either faction has 0 living units, sets `engine->game_over` |
 
@@ -32,9 +32,10 @@ All systems implemented in C at `native/systems.c`. Execution order defined in `
 - Tiebreaking: uses EntityId (lower ID has priority) with momentum tiebreaker to prevent oscillation
 
 **attack**:
-- Each unit attacks the lowest-EntityId enemy within its AttackRange
+- Each unit attacks the lowest-health enemy within its Weapon.range
 - Reduces target's Health.base by attacker's AttackDamage.base
 - Adds TookDamage marker to target (rendered as white in client)
+- Records target entity ID in attacker's Weapon.attacked field
 
 **despawn**:
 - Uses batch-delete pattern: collect entities to delete in array during query, delete after query finishes
@@ -42,13 +43,14 @@ All systems implemented in C at `native/systems.c`. Execution order defined in `
 
 ## Components
 
-Defined in `templates/components/`. Mutable per-turn components:
+Defined in `components/`. Mutable per-turn components:
 - `Location { x: i32, y: i32 }` -- modified by movement
 - `Health { base: i32 }` -- modified by attack
 
 Immutable (set at spawn from prefab, never changed):
 - `MovementSpeed { base: i32, energy: i32 }` -- always base=1
-- `AttackDamage { base: i32 }`, `AttackRange { base: i32 }`
+- `AttackDamage { base: i32 }`
+- `Weapon { range: i32, attacked: entity }` -- range is immutable; attacked is set per-turn by attack system, cleared by start_of_turn
 - `MovementType` (enum: kite, hold, etc.)
 - `RedFaction` / `BlueFaction` (marker tags)
 - `TookDamage` (marker, added/removed each turn)
@@ -66,9 +68,9 @@ Systems check for the `SimulationPaused` marker component and early-return if pr
 
 Tuning levers:
 - Army sizes: `FLECS_KNIGHTS` / `FLECS_ARCHERS` env vars (default 470/120)
-- Prefab stats in `templates/entities/`: Health, AttackDamage, AttackRange, MovementType
+- Prefab stats in `entities/`: Health, AttackDamage, Weapon, MovementType
 - Map size: configured by the client via MapSize component on the Map entity
-name: archer
+name: avk
 description: "Red archers vs blue knights on a bounded grid map"
 archers: 1127
 knights: 2649
@@ -78,19 +80,311 @@ map_size:
   y: 144
 max_turns: 1000
 templates:
-  components: [Health, MovementSpeed, MovementType, AttackRange, AttackDamage, RedFaction, BlueFaction, Location, MapSize, SpawnRequest, TookDamage]
+  components: [Health, MovementSpeed, MovementType, Weapon, AttackDamage, RedFaction, BlueFaction, Location, MapSize, SpawnRequest, TookDamage]
   entities: [Archer, Knight]
-  systems: [start_of_turn, app_start, movement, attack, despawn, spawn, app_stop]
 system_order:
   - rewind
+  - despawn
   - start_of_turn
   - app_start
   - movement
   - attack
-  - despawn
   - spawn
   - app_stop
   - history_capture
+name: AttackDamage
+kind: component
+fields:
+  base: { type: i32 }
+name: BlueFaction
+kind: marker
+name: Health
+kind: component
+fields:
+  base: { type: i32 }
+name: Location
+kind: component
+fields:
+  x: { type: i32 }
+  y: { type: i32 }
+name: MapSize
+kind: component
+fields:
+  x: { type: i32 }
+  y: { type: i32 }
+name: MovementSpeed
+kind: component
+fields:
+  base: { type: i32 }
+  energy: { type: i32 }
+name: MovementType
+kind: enum
+variants:
+  - kite
+  - charge
+name: RedFaction
+kind: marker
+name: SpawnRequest
+kind: component
+fields:
+  template: { type: string }
+name: TookDamage
+kind: component
+fields:
+  value: { type: bool }
+name: Weapon
+kind: component
+fields:
+  range: { type: i32 }
+  attacked: { type: entity }
+# Archers vs Knights: Simulation Spec
+
+## Overview
+
+A grid-based auto-battler on a bounded rectangular map. Red archers (ranged) fight blue knights (melee) until one faction is eliminated. Units spawn randomly, then act deterministically — no randomness after the initial placement.
+
+The simulation is turn-based. Each turn, every unit moves once and attacks once. Population decreases through combat until one side is gone.
+
+---
+
+## The Board
+
+The board is a bounded rectangular grid. Default size: 320 x 144 cells. Coordinates range from (0, 0) to (map_width, map_height) inclusive.
+
+There is no wrapping. The edges are impassable — boundary cells are treated as occupied. Units cannot move beyond or through them.
+
+Each cell holds at most one unit. Units occupy exactly one cell.
+
+---
+
+## Unit Types
+
+There are two unit types, differentiated by faction, stats, and movement behavior.
+
+### Archer (Red Faction)
+
+| Stat | Value |
+|------|-------|
+| Health | 10 |
+| Attack Damage | 5 |
+| Weapon Range | 3 (manhattan) |
+| Movement Speed | 1 |
+| Movement Type | kite |
+
+Archers are fragile ranged units. They try to maintain distance from enemies, fleeing when knights get too close and approaching when they're out of range. They win by staying at range and shooting.
+
+### Knight (Blue Faction)
+
+| Stat | Value |
+|------|-------|
+| Health | 35 |
+| Attack Damage | 5 |
+| Weapon Range | 1 (manhattan) |
+| Movement Speed | 1 |
+| Movement Type | charge |
+
+Knights are durable melee units. They close distance as fast as possible to engage in melee. They win by reaching archers and sustaining through their fire.
+
+---
+
+## Spawning
+
+All units spawn on turn 1. The app_start system runs once, creates all units with random positions, then disables itself permanently.
+
+**Default army sizes:** 1127 archers, 2649 knights (configurable in app.yaml).
+
+**Placement:** For each unit, a random unoccupied cell is selected:
+```
+do { x = rand() % (map_width + 1); y = rand() % (map_height + 1); } while (occupied(x, y));
+```
+
+Knights spawn first, then archers. RNG is seeded once with `time(NULL) + offset`. This is the only source of randomness in the entire simulation. All behavior after spawning is deterministic.
+
+---
+
+## Turn Structure
+
+Each turn executes these systems in order:
+
+1. **despawn** — remove units with health <= 0 from previous turn
+2. **start_of_turn** — clear TookDamage markers and Weapon.attacked fields
+3. **app_start** — spawn armies (turn 1 only, then disabled)
+4. **movement** — move each unit one step
+5. **attack** — each unit attacks one enemy in range, records target in Weapon.attacked
+6. **spawn** — process any SpawnRequest entities
+7. **app_stop** — check win/loss conditions
+
+A unit may both move and attack in the same turn. These are separate phases, not a choice.
+
+---
+
+## Movement
+
+Every unit moves exactly one cell per turn (speed is always 1). Movement is resolved iteratively until no unit can improve its position.
+
+### Distance Fields
+
+Before movement begins, two BFS distance fields are computed:
+- Distance from every cell to the nearest red (archer) unit
+- Distance from every cell to the nearest blue (knight) unit
+
+These are multi-source BFS flood fills — O(cells), not O(units squared). Each unit uses the appropriate enemy distance field to score candidate moves.
+
+### Candidate Moves
+
+Each unit evaluates 5 candidates: the 4 adjacent cells plus staying in place. Occupied cells (except current position) and out-of-bounds cells are excluded.
+
+### Scoring
+
+**Knights (charge):**
+```
+score = -distance_to_nearest_enemy
+```
+Minimize distance to the closest archer. Move toward enemies.
+
+**Archers (kite):**
+```
+if distance_to_nearest_enemy >= attack_range:
+    if enemies_in_range > 0:
+        score = 20000 + enemies_in_range    # hold and shoot
+    else:
+        score = -distance_to_nearest_enemy  # approach to range
+else:
+    score = distance_to_nearest_enemy * 1000  # flee
+```
+If safe (enemy outside melee range), prefer cells with targets in attack range. If unsafe (enemy within melee range), flee with high priority.
+
+### Tiebreaking
+
+When multiple cells share the best score:
+
+1. **Knights only — ally backing:** prefer cells where an allied unit is directly behind (at the reflection point of the move direction). This encourages formation.
+2. **All units — centrality:** prefer cells closest to the map center (manhattan distance to (map_width/2, map_height/2)).
+3. **Fallback:** first candidate in iteration order.
+
+### Iteration
+
+Movement repeats in a loop: collect all units, attempt moves, apply changes. The loop continues until a full pass produces zero moves. This stabilizes positions when units block each other.
+
+---
+
+## Attack
+
+After movement, each unit attacks one enemy in range.
+
+### Target Selection
+
+Scan all cells within manhattan distance of the unit's attack range. For each occupied cell containing an enemy unit, evaluate as a candidate target.
+
+**Priority (in order):**
+1. Lowest health (focus fire on wounded targets)
+2. Closest distance (prefer nearby enemies)
+3. Closest to map center
+4. Lowest entity ID (stable tiebreak)
+
+### Damage
+
+Subtract the attacker's damage from the target's health. Health can go negative — the despawn system removes dead units after all attacks resolve.
+
+Add the TookDamage marker to the target. This marker is used for rendering (damage flash) and is cleared at the start of the next turn.
+
+### Simultaneous Resolution
+
+All units attack in a single pass. A unit can be killed by an earlier attacker and still attack in the same turn (it is not removed until the despawn phase). However, units are processed in entity_id order, so the sequence is deterministic.
+
+---
+
+## Death and Despawn
+
+After all attacks resolve, the despawn system removes units with health <= 0.
+
+Dead units are collected into an array during iteration, then deleted after the query finishes. This avoids modifying the ECS world during iteration.
+
+---
+
+## Win Conditions
+
+After despawn, the app_stop system checks both factions:
+
+| Condition | Result |
+|-----------|--------|
+| No living red units (health > 0) | Knights Win |
+| No living blue units (health > 0) | Archers Win |
+| Both factions eliminated simultaneously | Knights Win (checked first) |
+| Turn limit reached (1000) | No winner declared |
+
+---
+
+## Distance
+
+All distance calculations use **manhattan distance**: `|x1 - x2| + |y1 - y2|`.
+
+This applies to attack range, movement scoring, target selection priority, and centrality tiebreaking.
+
+---
+
+## Spatial Grid
+
+A static 2D occupancy grid tracks unit positions for O(1) lookups:
+- Dimensions: 512 x 256 (maximum supported map size)
+- Each cell stores unit index + 1 (0 = empty)
+- Rebuilt each movement phase
+- Out-of-bounds cells return occupied
+
+---
+
+## Balance
+
+The game's balance depends on the tension between archer range advantage and knight health advantage.
+
+| Lever | Archer | Knight | Ratio |
+|-------|--------|--------|-------|
+| Count | 1127 | 2649 | 1 : 2.3 |
+| Health | 10 | 35 | 1 : 3.5 |
+| Damage | 5 | 5 | 1 : 1 |
+| Range | 3 | 1 | 3 : 1 |
+
+Knights need to close distance before archers whittle them down. Archers need enough space to kite. The 320-wide map gives archers room to maneuver; the 2.3:1 knight numerical advantage compensates.
+
+Tuning levers in app.yaml: army sizes, map dimensions, max turns. Tuning levers in entity prefabs: health, damage, range, movement type.
+
+---
+
+## Implementation Notes
+
+### Determinism
+
+The simulation is fully deterministic given the same RNG seed. No randomness exists after spawning. Units are sorted by entity_id before processing, ensuring consistent iteration order.
+
+### Buffer Sizes
+
+All stack arrays in native systems must accommodate the maximum unit count. The current maximum is 4096 units. Undersized buffers silently drop units, causing non-determinism.
+
+### Movement Speed
+
+Speed must always be 1. The movement loop assumes each unit moves at most once per pass. Speed > 1 causes infinite oscillation as units unblock each other repeatedly.
+
+### Per-Turn Flags
+
+TookDamage is a marker component used as a per-turn signal. It is added by the attack system and removed by start_of_turn. Use `ecs_remove_id` to clear it — setting a bool field to false leaves the component present in queries, causing ghost state.
+name: Archer
+abstract: true
+components:
+  Health: { base: 10 }
+  MovementSpeed: { base: 1, energy: 0 }
+  MovementType: kite
+  Weapon: { range: 3 }
+  AttackDamage: { base: 5 }
+  RedFaction: true
+name: Knight
+abstract: true
+components:
+  Health: { base: 35 }
+  MovementSpeed: { base: 1, energy: 0 }
+  MovementType: charge
+  Weapon: { range: 1 }
+  AttackDamage: { base: 5 }
+  BlueFaction: true
 #include "systems.h"
 #include "engine/systems.h"
 #include "engine/components.h"
@@ -125,7 +419,7 @@ static int collect_units(Engine *engine, UnitData *units, int max_units) {
     ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
     ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
     ecs_entity_t spd_comp = ecs_lookup(engine->world, "MovementSpeed");
-    ecs_entity_t rng_comp = ecs_lookup(engine->world, "AttackRange");
+    ecs_entity_t rng_comp = ecs_lookup(engine->world, "Weapon");
     ecs_entity_t dmg_comp = ecs_lookup(engine->world, "AttackDamage");
     ecs_entity_t red_comp = ecs_lookup(engine->world, "RedFaction");
     ecs_entity_t blue_comp = ecs_lookup(engine->world, "BlueFaction");
@@ -175,7 +469,7 @@ static int collect_units(Engine *engine, UnitData *units, int max_units) {
                 }
             }
 
-            /* AttackRange */
+            /* Weapon (range is first field) */
             if (rng_comp && ecs_has_id(engine->world, eid, rng_comp)) {
                 const int32_t *r = (const int32_t *)ecs_get_id(engine->world, eid, rng_comp);
                 if (r) u->range = *r;
@@ -260,35 +554,57 @@ static int grid_unit_at(int x, int y) {
 
 /* ── start_of_turn ──────────────────────────────────────────────────── */
 
-static void archer_start_of_turn(Engine *engine) {
+static void avk_start_of_turn(Engine *engine) {
     if (is_simulation_paused(engine)) return;
     ecs_entity_t td = ecs_lookup(engine->world, "TookDamage");
-    if (!td) return;
+    ecs_entity_t wpn_comp = ecs_lookup(engine->world, "Weapon");
 
-    /* Collect entities to remove TookDamage from (can't modify during iteration) */
-    ecs_entity_t to_clear[4096];
-    int clear_count = 0;
+    /* Clear TookDamage markers */
+    if (td) {
+        ecs_entity_t to_clear[4096];
+        int clear_count = 0;
 
-    ecs_query_t *q = ecs_query(engine->world, {
-        .terms = {{ .id = td }, { .id = engine->user_entity_tag }},
-        .cache_kind = EcsQueryCacheNone
-    });
-    ecs_iter_t it = ecs_query_iter(engine->world, q);
-    while (ecs_query_next(&it)) {
-        for (int i = 0; i < it.count && clear_count < 4096; i++) {
-            to_clear[clear_count++] = it.entities[i];
+        ecs_query_t *q = ecs_query(engine->world, {
+            .terms = {{ .id = td }, { .id = engine->user_entity_tag }},
+            .cache_kind = EcsQueryCacheNone
+        });
+        ecs_iter_t it = ecs_query_iter(engine->world, q);
+        while (ecs_query_next(&it)) {
+            for (int i = 0; i < it.count && clear_count < 4096; i++) {
+                to_clear[clear_count++] = it.entities[i];
+            }
+        }
+        ecs_query_fini(q);
+
+        for (int i = 0; i < clear_count; i++) {
+            ecs_remove_id(engine->world, to_clear[i], td);
         }
     }
-    ecs_query_fini(q);
 
-    for (int i = 0; i < clear_count; i++) {
-        ecs_remove_id(engine->world, to_clear[i], td);
+    /* Clear Weapon.attacked field (set to 0) */
+    if (wpn_comp) {
+        ecs_query_t *q = ecs_query(engine->world, {
+            .terms = {{ .id = wpn_comp }, { .id = engine->user_entity_tag }},
+            .cache_kind = EcsQueryCacheNone
+        });
+        ecs_iter_t it = ecs_query_iter(engine->world, q);
+        while (ecs_query_next(&it)) {
+            for (int i = 0; i < it.count; i++) {
+                void *wpn = ecs_get_mut_id(engine->world, it.entities[i], wpn_comp);
+                if (wpn) {
+                    ecs_entity_t *attacked = (ecs_entity_t *)((char *)wpn + sizeof(int32_t));
+                    *attacked = 0;
+                    ecs_modified_id(engine->world, it.entities[i], wpn_comp);
+                }
+            }
+        }
+        ecs_query_fini(q);
     }
 }
 
 /* ── game_start ──────────────────────────────────────────────────────── */
 
-static void archer_app_start(Engine *engine) {
+static void avk_app_start(Engine *engine) {
     /* Find Map entity for bounds */
     ecs_entity_t map = ecs_lookup(engine->world, "Map");
     if (!map) return;
@@ -463,7 +779,7 @@ static int score_cell(int nx, int ny, int move_type, int range,
 
 /* ── movement ────────────────────────────────────────────────────────── */
 
-static void archer_movement(Engine *engine) {
+static void avk_movement(Engine *engine) {
     if (is_simulation_paused(engine)) return;
     ecs_entity_t map = ecs_lookup(engine->world, "Map");
     ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
@@ -591,12 +907,13 @@ static void archer_movement(Engine *engine) {
 
 /* ── attack ──────────────────────────────────────────────────────────── */
 
-static void archer_attack(Engine *engine) {
+static void avk_attack(Engine *engine) {
     if (is_simulation_paused(engine)) return;
     UnitData units[4096];
     int count = collect_units(engine, units, 4096);
 
     ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
+    ecs_entity_t wpn_comp = ecs_lookup(engine->world, "Weapon");
     ecs_entity_t td_comp = ensure_took_damage_comp(engine);
     if (!hp_comp) return;
 
@@ -654,13 +971,23 @@ static void archer_attack(Engine *engine) {
             if (td_comp) {
                 ecs_add_id(engine->world, target->eid, td_comp);
             }
+
+            /* Record who this unit attacked (Weapon.attacked is second field, offset sizeof(int32_t)) */
+            if (wpn_comp && ecs_has_id(engine->world, units[i].eid, wpn_comp)) {
+                void *wpn = ecs_get_mut_id(engine->world, units[i].eid, wpn_comp);
+                if (wpn) {
+                    ecs_entity_t *attacked = (ecs_entity_t *)((char *)wpn + sizeof(int32_t));
+                    *attacked = target->eid;
+                    ecs_modified_id(engine->world, units[i].eid, wpn_comp);
+                }
+            }
         }
     }
 }
 
 /* ── despawn ─────────────────────────────────────────────────────────── */
 
-static void archer_despawn(Engine *engine) {
+static void avk_despawn(Engine *engine) {
     if (is_simulation_paused(engine)) return;
     ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
     if (!hp_comp) return;
@@ -689,7 +1016,7 @@ static void archer_despawn(Engine *engine) {
 
 /* ── spawn ───────────────────────────────────────────────────────────── */
 
-static void archer_spawn(Engine *engine) {
+static void avk_spawn(Engine *engine) {
     if (is_simulation_paused(engine)) return;
     ecs_entity_t sr_comp = ecs_lookup(engine->world, "SpawnRequest");
     ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
@@ -741,7 +1068,7 @@ static void archer_spawn(Engine *engine) {
 
 /* ── game_over ───────────────────────────────────────────────────────── */
 
-static void archer_app_stop(Engine *engine) {
+static void avk_app_stop(Engine *engine) {
     if (is_simulation_paused(engine)) return;
     ecs_entity_t red_comp = ecs_lookup(engine->world, "RedFaction");
     ecs_entity_t blue_comp = ecs_lookup(engine->world, "BlueFaction");
@@ -792,104 +1119,28 @@ static void archer_app_stop(Engine *engine) {
 
 /* ── Registration ────────────────────────────────────────────────────── */
 
-void archer_register_native_systems(Engine *engine) {
+void avk_register_native_systems(Engine *engine) {
     /* Ensure TookDamage component exists */
     ensure_took_damage_comp(engine);
 
-    engine_system_register_native(engine, "start_of_turn", archer_start_of_turn);
-    engine_system_register_native(engine, "app_start", archer_app_start);
-    engine_system_register_native(engine, "movement", archer_movement);
-    engine_system_register_native(engine, "attack", archer_attack);
-    engine_system_register_native(engine, "despawn", archer_despawn);
-    engine_system_register_native(engine, "spawn", archer_spawn);
-    engine_system_register_native(engine, "app_stop", archer_app_stop);
+    engine_system_register_native(engine, "start_of_turn", avk_start_of_turn);
+    engine_system_register_native(engine, "app_start", avk_app_start);
+    engine_system_register_native(engine, "movement", avk_movement);
+    engine_system_register_native(engine, "attack", avk_attack);
+    engine_system_register_native(engine, "despawn", avk_despawn);
+    engine_system_register_native(engine, "spawn", avk_spawn);
+    engine_system_register_native(engine, "app_stop", avk_app_stop);
 }
-#ifndef ARCHER_SYSTEMS_H
-#define ARCHER_SYSTEMS_H
+#ifndef AVK_SYSTEMS_H
+#define AVK_SYSTEMS_H
 
 #include "engine/engine.h"
 
 /* Register all native archer systems on an engine.
    Replaces Lua systems with C implementations for the same names. */
-void archer_register_native_systems(Engine *engine);
+void avk_register_native_systems(Engine *engine);
 
 #endif
-name: AttackDamage
-kind: component
-fields:
-  base: { type: i32 }
-name: AttackRange
-kind: component
-fields:
-  base: { type: i32 }
-name: BlueFaction
-kind: marker
-name: Health
-kind: component
-fields:
-  base: { type: i32 }
-name: Location
-kind: component
-fields:
-  x: { type: i32 }
-  y: { type: i32 }
-name: MapSize
-kind: component
-fields:
-  x: { type: i32 }
-  y: { type: i32 }
-name: MovementSpeed
-kind: component
-fields:
-  base: { type: i32 }
-  energy: { type: i32 }
-name: MovementType
-kind: enum
-variants:
-  - kite
-  - charge
-name: RedFaction
-kind: marker
-name: SpawnRequest
-kind: component
-fields:
-  template: { type: string }
-name: TookDamage
-kind: component
-fields:
-  value: { type: bool }
-name: Archer
-abstract: true
-components:
-  Health: { base: 10 }
-  MovementSpeed: { base: 1, energy: 0 }
-  MovementType: kite
-  AttackRange: { base: 3 }
-  AttackDamage: { base: 5 }
-  RedFaction: true
-name: Knight
-abstract: true
-components:
-  Health: { base: 35 }
-  MovementSpeed: { base: 1, energy: 0 }
-  MovementType: charge
-  AttackRange: { base: 1 }
-  AttackDamage: { base: 5 }
-  BlueFaction: true
-name: app_start
-enabled: true
-name: app_stop
-enabled: true
-name: attack
-enabled: true
-name: despawn
-enabled: true
-name: movement
-enabled: true
-name: spawn
-enabled: true
-name: start_of_turn
-enabled: true
 #include "test.h"
 #include "../src/engine/engine.h"
 #include "../src/engine/simulation.h"
@@ -919,7 +1170,7 @@ static void count_factions(int *archers, int *knights) {
 static void setup_game(int map_size) {
     engine = engine_init(NULL);
     snprintf(engine->sandboxes_dir, sizeof(engine->sandboxes_dir), "./sandboxes/");
-    engine_sandbox_select(engine, "archer");
+    engine_sandbox_select(engine, "avk");
     AppStartResult asr;
     engine_app_start(engine, &asr);
     ecs_entity_t map = engine_entity_create(engine, "Map");
