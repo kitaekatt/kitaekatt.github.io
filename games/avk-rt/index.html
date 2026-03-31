@@ -106,7 +106,7 @@ button:active { background: #4a4a6a; }
         <span class="red">&#9632; Archer</span>
         <span class="blue">&#9632; Knight</span>
     </div>
-    <div id="version">v0.0.3</div>
+    <div id="version">v0.0.4</div>
 </div>
 
 <script>
@@ -123,9 +123,8 @@ button:active { background: #4a4a6a; }
     const HEADER_MAX = 60;
     const FOOTER_MIN = 40;
     const FOOTER_MAX = 60;
-    const GAME_MIN = 240;  /* minimum game area height (half of 480) */
-    const GAME_MAX = 480;  /* ideal game area height */
-    const GAME_ASPECT = 640 / 480;  /* 4:3 */
+    const GAME_MIN = 240;  /* minimum game area height */
+    const GAME_ASPECT = 16 / 9;
 
     function layout() {
         const totalH = window.innerHeight;
@@ -151,11 +150,11 @@ button:active { background: #4a4a6a; }
         } else {
             /* Enough for everything — scale proportionally toward max */
             const available = totalH - chromeMin - GAME_MIN;
-            const wantExtra = (HEADER_MAX - HEADER_MIN) + (FOOTER_MAX - FOOTER_MIN) + (GAME_MAX - GAME_MIN);
-            const t = Math.min(1, available / wantExtra);
+            const chromeExtra = (HEADER_MAX - HEADER_MIN) + (FOOTER_MAX - FOOTER_MIN);
+            const chromeT = Math.min(1, available / chromeExtra);
 
-            headerH = HEADER_MIN + (HEADER_MAX - HEADER_MIN) * t;
-            footerH = FOOTER_MIN + (FOOTER_MAX - FOOTER_MIN) * t;
+            headerH = HEADER_MIN + (HEADER_MAX - HEADER_MIN) * chromeT;
+            footerH = FOOTER_MIN + (FOOTER_MAX - FOOTER_MIN) * chromeT;
             gameH = totalH - headerH - footerH;
         }
 
@@ -173,9 +172,6 @@ button:active { background: #4a4a6a; }
             canvasW = totalW;
             canvasH = canvasW / GAME_ASPECT;
         }
-
-        /* Don't exceed max */
-        if (canvasW > 640) { canvasW = 640; canvasH = 480; }
 
         canvas.style.width = Math.floor(canvasW) + 'px';
         canvas.style.height = Math.floor(canvasH) + 'px';
