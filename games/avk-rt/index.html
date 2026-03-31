@@ -6,7 +6,7 @@
 <title>Archers vs Knights RT</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { height: 100%; overflow-y: hidden; }
+html, body { height: 100%; overflow: hidden; }
 body {
     background: #1a1a2e;
     color: #e0e0e0;
@@ -21,17 +21,18 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 8px 16px;
     gap: 16px;
-    flex-shrink: 0;
+    overflow: hidden;
 }
 #header-area h1 {
     font-size: 1.4em;
     color: #f0f0f0;
+    white-space: nowrap;
 }
 #status {
     font-size: 0.95em;
     color: #aaa;
+    white-space: nowrap;
 }
 #game-over-msg {
     font-size: 1.1em;
@@ -39,22 +40,13 @@ body {
     color: #ffd700;
 }
 
-/* Middle row: left-area + game-area */
+/* Middle: game area */
 #middle {
-    flex: 1;
-    display: flex;
-    min-height: 0;
-}
-#game-area {
-    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    min-width: 0;
 }
 canvas {
-    width: 640px;
-    height: 480px;
     border: 1px solid #333;
     border-radius: 4px;
 }
@@ -64,10 +56,9 @@ canvas {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 8px 16px;
     gap: 8px;
-    flex-shrink: 0;
     flex-wrap: wrap;
+    overflow: hidden;
 }
 button {
     background: #2a2a4a;
@@ -103,9 +94,7 @@ button:active { background: #4a4a6a; }
 </div>
 
 <div id="middle">
-    <div id="game-area">
-        <canvas id="canvas" width="640" height="480"></canvas>
-    </div>
+    <canvas id="canvas" width="640" height="480"></canvas>
 </div>
 
 <div id="footer-area">
@@ -117,7 +106,7 @@ button:active { background: #4a4a6a; }
         <span class="red">&#9632; Archer</span>
         <span class="blue">&#9632; Knight</span>
     </div>
-    <div id="version">v0.0.2</div>
+    <div id="version">v0.0.3</div>
 </div>
 
 <script>
@@ -125,12 +114,81 @@ button:active { background: #4a4a6a; }
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const statusEl = document.getElementById('status');
+    const headerEl = document.getElementById('header-area');
+    const middleEl = document.getElementById('middle');
+    const footerEl = document.getElementById('footer-area');
 
-    // Draw pink rectangle to confirm canvas works
+    /* Layout budget (pixels) */
+    const HEADER_MIN = 40;
+    const HEADER_MAX = 60;
+    const FOOTER_MIN = 40;
+    const FOOTER_MAX = 60;
+    const GAME_MIN = 240;  /* minimum game area height (half of 480) */
+    const GAME_MAX = 480;  /* ideal game area height */
+    const GAME_ASPECT = 640 / 480;  /* 4:3 */
+
+    function layout() {
+        const totalH = window.innerHeight;
+        const totalW = window.innerWidth;
+
+        /* Step 1: ensure min header + footer */
+        const chromeMin = HEADER_MIN + FOOTER_MIN;
+        const chromeMax = HEADER_MAX + FOOTER_MAX;
+        const gameMinTotal = chromeMin + GAME_MIN;
+
+        let headerH, footerH, gameH;
+
+        if (totalH <= chromeMin) {
+            /* Not even enough for header + footer */
+            headerH = totalH / 2;
+            footerH = totalH / 2;
+            gameH = 0;
+        } else if (totalH < gameMinTotal) {
+            /* Enough for header + footer but game area below minimum */
+            headerH = HEADER_MIN;
+            footerH = FOOTER_MIN;
+            gameH = totalH - chromeMin;
+        } else {
+            /* Enough for everything — scale proportionally toward max */
+            const available = totalH - chromeMin - GAME_MIN;
+            const wantExtra = (HEADER_MAX - HEADER_MIN) + (FOOTER_MAX - FOOTER_MIN) + (GAME_MAX - GAME_MIN);
+            const t = Math.min(1, available / wantExtra);
+
+            headerH = HEADER_MIN + (HEADER_MAX - HEADER_MIN) * t;
+            footerH = FOOTER_MIN + (FOOTER_MAX - FOOTER_MIN) * t;
+            gameH = totalH - headerH - footerH;
+        }
+
+        /* Apply header/footer sizes */
+        headerEl.style.height = Math.floor(headerH) + 'px';
+        footerEl.style.height = Math.floor(footerH) + 'px';
+        middleEl.style.height = Math.floor(gameH) + 'px';
+
+        /* Scale canvas to fit game area maintaining 4:3 aspect */
+        let canvasW = gameH * GAME_ASPECT;
+        let canvasH = gameH;
+
+        /* Also constrain by available width */
+        if (canvasW > totalW) {
+            canvasW = totalW;
+            canvasH = canvasW / GAME_ASPECT;
+        }
+
+        /* Don't exceed max */
+        if (canvasW > 640) { canvasW = 640; canvasH = 480; }
+
+        canvas.style.width = Math.floor(canvasW) + 'px';
+        canvas.style.height = Math.floor(canvasH) + 'px';
+
+        statusEl.textContent = `${Math.floor(canvasW)}x${Math.floor(canvasH)} (${totalW}x${totalH})`;
+    }
+
+    layout();
+    window.addEventListener('resize', layout);
+
+    /* Draw pink rectangle */
     ctx.fillStyle = '#ff69b4';
     ctx.fillRect(0, 0, 640, 480);
-
-    statusEl.textContent = 'Canvas ready (640x480)';
 })();
 </script>
 
