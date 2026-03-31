@@ -94,7 +94,7 @@ button:active { background: #4a4a6a; }
 </div>
 
 <div id="middle">
-    <canvas id="canvas" width="640" height="480"></canvas>
+    <canvas id="canvas" width="1024" height="576"></canvas>
 </div>
 
 <div id="footer-area">
@@ -106,7 +106,7 @@ button:active { background: #4a4a6a; }
         <span class="red">&#9632; Archer</span>
         <span class="blue">&#9632; Knight</span>
     </div>
-    <div id="version">v0.0.4</div>
+    <div id="version">v0.0.5</div>
 </div>
 
 <script>
@@ -163,7 +163,7 @@ button:active { background: #4a4a6a; }
         footerEl.style.height = Math.floor(footerH) + 'px';
         middleEl.style.height = Math.floor(gameH) + 'px';
 
-        /* Scale canvas to fit game area maintaining 4:3 aspect */
+        /* Scale canvas to fit game area maintaining 16:9 aspect */
         let canvasW = gameH * GAME_ASPECT;
         let canvasH = gameH;
 
@@ -182,9 +182,17 @@ button:active { background: #4a4a6a; }
     layout();
     window.addEventListener('resize', layout);
 
-    /* Draw pink rectangle */
+    /* Draw pink rectangle with grid */
     ctx.fillStyle = '#ff69b4';
-    ctx.fillRect(0, 0, 640, 480);
+    ctx.fillRect(0, 0, 1024, 576);
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= 1024; x += 64) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 576); ctx.stroke();
+    }
+    for (let y = 0; y <= 576; y += 64) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(1024, y); ctx.stroke();
+    }
 })();
 </script>
 
