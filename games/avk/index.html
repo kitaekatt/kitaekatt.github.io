@@ -23,7 +23,7 @@ body {
 }
 #header-area h1 { font-size: 1.4em; color: #f0f0f0; white-space: nowrap; }
 #status { font-size: 0.95em; color: #aaa; white-space: nowrap; font-family: monospace; }
-#game-over-msg { font-size: 1.1em; font-weight: bold; color: #ffd700; }
+#game-over-msg { font-size: 1.1em; font-weight: bold; color: #ffd700; height: 1.4em; line-height: 1.4em; }
 #middle { display: flex; align-items: center; justify-content: center; }
 canvas { border: 1px solid #333; border-radius: 4px; image-rendering: pixelated; }
 #footer-area {
@@ -152,7 +152,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="red">&#9632; Archer</span>
         <span class="blue">&#9632; Knight</span>
     </div>
-    <div id="version">v (21b2686)</div>
+    <div id="version">v (c115e8d)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -269,9 +269,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         if (gameOver) {
             const msg = engine.getMessage();
             gameOverEl.textContent = msg;
-            stopPlaying();
+            gameOverEl.style.color = '#ffd700';
         } else {
-            gameOverEl.textContent = '';
+            gameOverEl.textContent = fps > 0 ? fps + ' fps' : '';
+            gameOverEl.style.color = '#555';
         }
     }
 
