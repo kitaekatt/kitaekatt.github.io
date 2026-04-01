@@ -163,11 +163,11 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <option value="wasm_12x" selected>192×108</option>
         <option value="wasm_17x">272×153</option>
         <option value="wasm_23x">368×207</option>
-        <option value="wasm_30x" disabled class="debug-only">480×270</option>
-        <option value="wasm_38x" disabled class="debug-only">608×342</option>
+        <option value="wasm_30x" class="debug-only" hidden>480×270</option>
+        <option value="wasm_38x" class="debug-only" hidden>608×342</option>
     </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
-    <div id="version">v0.1.0 (66666ba)</div>
+    <div id="version">v0.1.0 (2476601)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -452,7 +452,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 },
             });
             document.getElementById('btn-debug').addEventListener('click', function unlock() {
-                document.querySelectorAll('#map-select .debug-only').forEach(function(o) { o.disabled = false; });
+                document.querySelectorAll('#map-select .debug-only').forEach(function(o) { o.hidden = false; });
                 this.removeEventListener('click', unlock);
             });
 
