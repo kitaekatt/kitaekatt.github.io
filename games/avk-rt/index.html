@@ -82,12 +82,14 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="version">v0.1.0 (7d198c0)</div>
+    <button id="btn-debug" style="font-size:0.7em;padding:4px 8px;min-width:auto;">Copy State</button>
+    <div id="version">v0.1.0 (2e98b37)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
 <script src="/lib/controls.js"></script>
 <script src="/lib/layout.js"></script>
+<script src="/lib/debug.js"></script>
 <script>
 (function() {
     const canvas = document.getElementById('canvas');
@@ -500,6 +502,23 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             const my = engine.getMapY();
             mapLabel = `${mx}x${my} map`;
             initViewFromModel();
+            GameDebug.init({
+                btnDebug: document.getElementById('btn-debug'),
+                getMapSize: function() { return [engine.getMapX(), engine.getMapY()]; },
+                getUnits: function() {
+                    var units = [];
+                    var n = engine.getUnitCount();
+                    for (var i = 0; i < n; i++) {
+                        units.push({
+                            type: engine.getUnitFaction(i) === 0 ? 'Archer' : 'Knight',
+                            x: engine.getUnitX(i),
+                            y: engine.getUnitY(i),
+                            health: engine.getHealth(i),
+                        });
+                    }
+                    return units;
+                },
+            });
             updateButtons();
             requestAnimationFrame(render);
         });
