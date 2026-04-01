@@ -271,13 +271,13 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 
         switch (phase) {
             case 'movement':
-                drawX = (u.prevX + (u.x - u.prevX) * t) * CELL;
-                drawY = (u.prevY + (u.y - u.prevY) * t) * CELL;
+                drawX = (u.prevX + (u.x - u.prevX) * t - 1) * CELL;
+                drawY = (u.prevY + (u.y - u.prevY) * t - 1) * CELL;
                 break;
 
             case 'attack':
-                drawX = u.x * CELL;
-                drawY = u.y * CELL;
+                drawX = (u.x - 1) * CELL;
+                drawY = (u.y - 1) * CELL;
                 /* Animate weapon toward target */
                 if (u.attackedId) {
                     const target = findViewUnit(u.attackedId);
@@ -289,8 +289,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 break;
 
             case 'reaction':
-                drawX = u.x * CELL;
-                drawY = u.y * CELL;
+                drawX = (u.x - 1) * CELL;
+                drawY = (u.y - 1) * CELL;
                 if (u.wasDamaged) {
                     /* frames 1-8: lighten then return */
                     bodyFrame = 1 + Math.min(7, Math.floor(t * 8));
@@ -298,8 +298,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 break;
 
             case 'defeat':
-                drawX = u.x * CELL;
-                drawY = u.y * CELL;
+                drawX = (u.x - 1) * CELL;
+                drawY = (u.y - 1) * CELL;
                 if (u.isDying) {
                     bodyFrame = 9 + Math.min(7, Math.floor(t * 8));
                     scale = 1 - t * 0.9;
@@ -308,8 +308,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 break;
 
             default: /* idle */
-                drawX = u.x * CELL;
-                drawY = u.y * CELL;
+                drawX = (u.x - 1) * CELL;
+                drawY = (u.y - 1) * CELL;
         }
 
         /* Draw body */
@@ -462,7 +462,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             engine.initWithConfig('wasm-rt');
             const mx = engine.getMapX();
             const my = engine.getMapY();
-            mapLabel = `${mx+1}x${my+1} map`;
+            mapLabel = `${mx}x${my} map`;
             initViewFromModel();
             requestAnimationFrame(render);
         });
