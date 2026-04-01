@@ -61,7 +61,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="version">v0.0.14 (4e189b4)</div>
+    <div id="version">v0.0.14 (9a3df81)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -89,10 +89,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     /* ── Turn timing ─────────────────────────────────────────── */
     const TARGET_TURN_MS = 250;
     const TIMELINE = {
-        movement: { start: 0.0,  end: 1.0 },
-        attack:   { start: 0.5,  end: 0.75 },
-        reaction: { start: 0.75, end: 0.875 },
-        defeat:   { start: 0.75, end: 1.0 },
+        movement: { start: 0.0,   end: 1.0 },
+        attack:   { start: 0.33,  end: 0.875 },
+        reaction: { start: 0.75,  end: 0.875 },
+        defeat:   { start: 0.875, end: 1.0 },
     };
     let animDurationMs = TARGET_TURN_MS;
     function tlT(p, tl) { return p <= tl.start ? 0 : p >= tl.end ? 1 : (p - tl.start) / (tl.end - tl.start); }
