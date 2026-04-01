@@ -57,6 +57,13 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 .green { color: #78be64; }
 .blue { color: #4d94d2; }
 #version { font-size: 0.6em; color: #555; }
+#map-select { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; font-size: 0.75em; color: #888; }
+#map-select label { cursor: pointer; padding: 2px 6px; border: 1px solid transparent; border-radius: 3px; }
+#map-select label:hover { border-color: #444; }
+#map-select label:has(input:checked) { border-color: #4a6a4a; color: #ccc; }
+#map-select input { display: none; }
+#map-select span { color: #ccc; }
+#map-select em { font-style: normal; }
 </style>
 </head>
 <body>
@@ -84,8 +91,18 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
+    <div id="map-select">
+        <label><input type="radio" name="mapsize" value="wasm_1x"><span>1x</span> <em>16×9</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_2x"><span>2x</span> <em>32×18</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_3x" checked><span>3x</span> <em>48×27</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_5x"><span>5x</span> <em>80×45</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_8x"><span>8x</span> <em>128×72</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_11x"><span>11x</span> <em>176×99</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_14x"><span>14x</span> <em>224×126</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_18x"><span>18x</span> <em>288×162</em></label>
+    </div>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
-    <div id="version">v0.1.0 (7919366)</div>
+    <div id="version">v0.1.0 (78199eb)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -105,8 +122,9 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const headerEl = document.getElementById('header-area');
     const middleEl = document.getElementById('middle');
     const footerEl = document.getElementById('footer-area');
+    var currentConfig = 'wasm_3x';
 
-    const CELL = 64, COLS = 48, ROWS = 27;
+    var CELL = 64, COLS = 48, ROWS = 27;
     const BG = '#0f0f23';
 
     let engine = null;
@@ -328,6 +346,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     function render(timestamp) {
         if (!engine) return;
 
+        const drawT0 = performance.now();
+
         ctx.fillStyle = BG;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         drawGrid();
@@ -346,6 +366,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             if (u.dead) continue;
             drawUnit(u, tMove, tAttack, tReact, tDefeat);
         }
+
+        renderTiming.draw = performance.now() - drawT0;
 
         /* FPS */
         const now = performance.now();
@@ -376,9 +398,12 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 
         /* Animation progression */
         if (animating) {
+            animFrameCount++;
             if (p >= 1) {
                 animating = false;
+                turnTiming.anim = timestamp - animStartTime;
                 turnTiming.total = timestamp - turnStartWall;
+                recordTiming();
                 /* Mark dying units as dead */
                 for (const u of viewUnits) {
                     if (u.isDying) u.dead = true;
@@ -393,14 +418,37 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         }
     }
 
-    /* ── Controls ────────────────────────────────────────────── */
     /* ── Per-turn timing ───────────────────────────────────── */
-    let turnTiming = { engine: 0, view: 0, anim: 0, total: 0 };
+    let turnTiming = { engine: 0, view: 0, anim: 0, total: 0, systems: [], collectTime: 0, wasmTotal: 0 };
+    let renderTiming = { draw: 0 };
     let turnStartWall = 0;
+    let animFrameCount = 0;
+    const HISTORY_SIZE = 10;
+    let timingHistory = [];
+
+    function collectSystemTiming() {
+        turnTiming.systems = [];
+        var n = engine.getSystemCount();
+        for (var i = 0; i < n; i++) {
+            turnTiming.systems.push({ name: engine.getSystemName(i), time: engine.getSystemTime(i) });
+        }
+        turnTiming.collectTime = engine.getCollectTime();
+        turnTiming.wasmTotal = engine.getTotalTime();
+    }
+
+    function recordTiming() {
+        timingHistory.push({
+            engine: turnTiming.engine, view: turnTiming.view,
+            anim: turnTiming.anim, total: turnTiming.total,
+            renderDraw: renderTiming.draw, animFrames: animFrameCount,
+        });
+        if (timingHistory.length > HISTORY_SIZE) timingHistory.shift();
+    }
 
     function startTurn() {
         if (!engine || engine.isGameOver() || animating) return;
         animating = true;
+        animFrameCount = 0;
         turnStartWall = performance.now();
 
         const t0 = performance.now();
@@ -411,6 +459,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 
         turnTiming.engine = t1 - t0;
         turnTiming.view = t2 - t1;
+        collectSystemTiming();
 
         /* Adjust animation duration so total turn ≈ TARGET_TURN_MS */
         const overhead = turnTiming.engine + turnTiming.view;
@@ -427,8 +476,18 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         btnNew: btnNew,
         onStep: function() {
             if (!engine || engine.isGameOver() || animating) return;
+            const t0 = performance.now();
             engine.turn();
+            const t1 = performance.now();
             updateViewForTurn();
+            const t2 = performance.now();
+            turnTiming.engine = t1 - t0;
+            turnTiming.view = t2 - t1;
+            turnTiming.anim = 0;
+            turnTiming.total = t2 - t0;
+            collectSystemTiming();
+            animFrameCount = 0;
+            recordTiming();
             for (const u of viewUnits) { u.prevX = u.x; u.prevY = u.y; }
             requestAnimationFrame(render);
         },
@@ -445,7 +504,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         onNewGame: function() {
             animating = false;
             gameOverEl.textContent = '';
-            engine.initWithConfig('wasm-rt');
+            engine.initWithConfig(currentConfig);
             engine.turn();
             initViewFromModel();
             requestAnimationFrame(render);
@@ -473,6 +532,24 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         /* canvas stays visible — about overlays it */
     });
 
+    /* Map size selector */
+    document.getElementById('map-select').addEventListener('change', function(e) {
+        if (!engine || !e.target.value) return;
+        currentConfig = e.target.value;
+        animating = false;
+        gameOverEl.textContent = '';
+        engine.initWithConfig(currentConfig);
+        engine.turn();
+        var mx = engine.getMapX(), my = engine.getMapY();
+        COLS = mx; ROWS = my;
+        canvas.width = mx * CELL;
+        canvas.height = my * CELL;
+        mapLabel = mx + 'x' + my + ' map';
+        initViewFromModel();
+        controls.updateButtons();
+        requestAnimationFrame(render);
+    });
+
     /* ── Init ────────────────────────────────────────────────── */
     statusEl.textContent = 'Loading sprites...';
     loadSprites('assets/sprites', function() {
@@ -497,11 +574,19 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 getMessage: M.cwrap('wasm_get_game_over_message', 'string', []),
                 rewind: M.cwrap('wasm_rewind', 'number', ['number']),
                 reset: M.cwrap('wasm_reset', 'number', []),
+                getSystemCount: M.cwrap('wasm_get_system_count', 'number', []),
+                getSystemTime: M.cwrap('wasm_get_system_time', 'number', ['number']),
+                getCollectTime: M.cwrap('wasm_get_collect_time', 'number', []),
+                getTotalTime: M.cwrap('wasm_get_total_time', 'number', []),
+                getSystemName: M.cwrap('wasm_get_system_name', 'string', ['number']),
             };
-            engine.initWithConfig('wasm-rt');
+            engine.initWithConfig(currentConfig);
             engine.turn();  /* run app_start to spawn units */
-            const mx = engine.getMapX();
-            const my = engine.getMapY();
+            var mx = engine.getMapX();
+            var my = engine.getMapY();
+            COLS = mx; ROWS = my;
+            canvas.width = mx * CELL;
+            canvas.height = my * CELL;
             mapLabel = `${mx}x${my} map`;
             initViewFromModel();
             GameDebug.init({
@@ -519,6 +604,28 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                         });
                     }
                     return units;
+                },
+                getTiming: function() {
+                    var avg = { engine: 0, view: 0, anim: 0, total: 0 };
+                    var n = timingHistory.length;
+                    if (n > 0) {
+                        for (var i = 0; i < n; i++) {
+                            avg.engine += timingHistory[i].engine;
+                            avg.view += timingHistory[i].view;
+                            avg.anim += timingHistory[i].anim;
+                            avg.total += timingHistory[i].total;
+                        }
+                        avg.engine /= n; avg.view /= n; avg.anim /= n; avg.total /= n;
+                    }
+                    return {
+                        current: turnTiming, render: renderTiming, avg: avg,
+                        systems: turnTiming.systems || [],
+                        collectTime: turnTiming.collectTime || 0,
+                        wasmTotal: turnTiming.wasmTotal || 0,
+                        animFrames: animFrameCount, turn: engine.getTurn(),
+                        unitCount: viewUnits.filter(function(u) { return !u.dead; }).length,
+                        historySize: n,
+                    };
                 },
             });
             controls.updateButtons();
