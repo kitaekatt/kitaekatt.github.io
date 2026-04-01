@@ -5104,11 +5104,11 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <option value="wasm_3x">48×27</option>
         <option value="wasm_5x">80×45</option>
         <option value="wasm_8x">128×72</option>
-        <option value="wasm_12x">192×108</option>
+        <option value="wasm_12x" selected>192×108</option>
         <option value="wasm_17x">272×153</option>
         <option value="wasm_23x">368×207</option>
         <option value="wasm_30x">480×270</option>
-        <option value="wasm_38x" selected>608×342</option>
+        <option value="wasm_38x">608×342</option>
     </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
     <div id="version">v0.1.0</div>
@@ -5131,7 +5131,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const loadingEl = document.getElementById('loading');
 
     let engine = null;
-    var currentConfig = 'wasm_38x';
+    var currentConfig = 'wasm_12x';
     let mapW = 288, mapH = 162;
     let CELL_W = 1, CELL_H = 1;
     const frameTimes = [];
@@ -5581,7 +5581,7 @@ int wasm_init(void) {
     }
 
     AppStartResult asr;
-    if (!engine_app_start(g_engine, "wasm_38x", &asr)) {
+    if (!engine_app_start(g_engine, "wasm_12x", &asr)) {
         engine_fini(g_engine);
         g_engine = NULL;
         return 0;
