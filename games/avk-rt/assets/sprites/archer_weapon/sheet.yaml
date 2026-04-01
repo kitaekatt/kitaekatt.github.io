@@ -1,0 +1,8 @@
+name: archer_weapon
+frame_size: 64
+frame_count: 1
+fps: 30
+animations:
+  idle:
+    first_frame: 0
+    last_frame: 0

@@ -1,0 +1,14 @@
+name: archer_body
+frame_size: 64
+frame_count: 17
+fps: 30
+animations:
+  idle:
+    first_frame: 0
+    last_frame: 0
+  hit:
+    first_frame: 1
+    last_frame: 8
+  defeat:
+    first_frame: 9
+    last_frame: 16

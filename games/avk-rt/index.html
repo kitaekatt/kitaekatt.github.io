@@ -15,186 +15,459 @@ body {
     flex-direction: column;
     height: 100vh;
 }
-
-/* Header */
 #header-area {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    gap: 16px; overflow: hidden;
 }
-#header-area h1 {
-    font-size: 1.4em;
-    color: #f0f0f0;
-    white-space: nowrap;
-}
-#status {
-    font-size: 0.95em;
-    color: #aaa;
-    white-space: nowrap;
-}
-#game-over-msg {
-    font-size: 1.1em;
-    font-weight: bold;
-    color: #ffd700;
-}
-
-/* Middle: game area */
-#middle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-canvas {
-    border: 1px solid #333;
-    border-radius: 4px;
-}
-
-/* Footer */
+#header-area h1 { font-size: 1.4em; color: #f0f0f0; white-space: nowrap; }
+#status { font-size: 0.95em; color: #aaa; white-space: nowrap; }
+#game-over-msg { font-size: 1.1em; font-weight: bold; color: #ffd700; }
+#middle { display: flex; align-items: center; justify-content: center; }
+canvas { border: 1px solid #333; border-radius: 4px; image-rendering: pixelated; }
 #footer-area {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    gap: 8px; flex-wrap: wrap; overflow: hidden;
 }
 button {
-    background: #2a2a4a;
-    color: #e0e0e0;
-    border: 1px solid #444;
-    border-radius: 4px;
-    padding: 8px 16px;
-    font-size: 0.9em;
-    cursor: pointer;
-    min-width: 70px;
+    background: #2a2a4a; color: #e0e0e0; border: 1px solid #444;
+    border-radius: 4px; padding: 8px 16px; font-size: 0.9em;
+    cursor: pointer; min-width: 70px;
 }
 button:hover { background: #3a3a5a; }
-button:active { background: #4a4a6a; }
-#legend {
-    font-size: 0.8em;
-    color: #888;
-}
+button.active { background: #4a6a4a; border-color: #6a8a6a; }
+#legend { font-size: 0.8em; color: #888; }
 #legend span { margin: 0 8px; }
-.red { color: #ff6b6b; }
-.blue { color: #4dabf7; }
-#version {
-    font-size: 0.6em;
-    color: #555;
-}
+.green { color: #78be64; }
+.blue { color: #4d94d2; }
+#version { font-size: 0.6em; color: #555; }
 </style>
 </head>
 <body>
 
 <div id="header-area">
     <h1>Archers vs Knights RT</h1>
-    <div id="status">Initializing...</div>
+    <div id="status">Loading...</div>
     <div id="game-over-msg"></div>
 </div>
-
 <div id="middle">
     <canvas id="canvas" width="1024" height="576"></canvas>
 </div>
-
 <div id="footer-area">
     <button id="btn-play" title="Space">Play</button>
     <button id="btn-step" title="Right Arrow">Step</button>
     <button id="btn-rewind" title="Left Arrow">Rewind</button>
     <button id="btn-new">New Game</button>
     <div id="legend">
-        <span class="red">&#9632; Archer</span>
-        <span class="blue">&#9632; Knight</span>
+        <span class="green">&#9679; Archer</span>
+        <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="version">v0.0.5</div>
+    <div id="version">v0.0.14</div>
 </div>
 
+<script src="flecs-ecs.js"></script>
 <script>
 (function() {
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const statusEl = document.getElementById('status');
+    const gameOverEl = document.getElementById('game-over-msg');
+    const btnPlay = document.getElementById('btn-play');
+    const btnStep = document.getElementById('btn-step');
+    const btnRewind = document.getElementById('btn-rewind');
+    const btnNew = document.getElementById('btn-new');
     const headerEl = document.getElementById('header-area');
     const middleEl = document.getElementById('middle');
     const footerEl = document.getElementById('footer-area');
 
-    /* Layout budget (pixels) */
-    const HEADER_MIN = 40;
-    const HEADER_MAX = 60;
-    const FOOTER_MIN = 40;
-    const FOOTER_MAX = 60;
-    const GAME_MIN = 240;  /* minimum game area height */
-    const GAME_ASPECT = 16 / 9;
+    const CELL = 64, COLS = 16, ROWS = 9;
+    const BG = '#0f0f23';
 
-    function layout() {
-        const totalH = window.innerHeight;
-        const totalW = window.innerWidth;
+    let engine = null;
+    let playing = false;
+    let mapLabel = '';
 
-        /* Step 1: ensure min header + footer */
-        const chromeMin = HEADER_MIN + FOOTER_MIN;
-        const chromeMax = HEADER_MAX + FOOTER_MAX;
-        const gameMinTotal = chromeMin + GAME_MIN;
+    /* ── Turn timing ─────────────────────────────────────────── */
+    const PHASE_MS = 250;
+    const PHASES = ['movement', 'attack', 'reaction', 'defeat'];
 
-        let headerH, footerH, gameH;
+    /* ── View state (persistent across turns) ───────────────── */
+    let viewUnits = [];       /* persistent view units, keyed by entityId */
+    let currentPhase = -1;    /* -1=idle, 0-3=animating phase */
+    let phaseStartTime = 0;
+    let animating = false;
 
-        if (totalH <= chromeMin) {
-            /* Not even enough for header + footer */
-            headerH = totalH / 2;
-            footerH = totalH / 2;
-            gameH = 0;
-        } else if (totalH < gameMinTotal) {
-            /* Enough for header + footer but game area below minimum */
-            headerH = HEADER_MIN;
-            footerH = FOOTER_MIN;
-            gameH = totalH - chromeMin;
-        } else {
-            /* Enough for everything — scale proportionally toward max */
-            const available = totalH - chromeMin - GAME_MIN;
-            const chromeExtra = (HEADER_MAX - HEADER_MIN) + (FOOTER_MAX - FOOTER_MIN);
-            const chromeT = Math.min(1, available / chromeExtra);
+    /* Read all units from WASM into a map keyed by entity_id */
+    function readUnits() {
+        const map = {};
+        const count = engine.getUnitCount();
+        for (let i = 0; i < count; i++) {
+            const eid = engine.getEntityId(i);
+            map[eid] = {
+                entityId: eid,
+                x: engine.getUnitX(i),
+                y: engine.getUnitY(i),
+                health: engine.getHealth(i),
+                faction: engine.getUnitFaction(i),
+                damaged: engine.getUnitDamaged(i),
+                attackedId: engine.getAttackedId(i),
+            };
+        }
+        return map;
+    }
 
-            headerH = HEADER_MIN + (HEADER_MAX - HEADER_MIN) * chromeT;
-            footerH = FOOTER_MIN + (FOOTER_MAX - FOOTER_MIN) * chromeT;
-            gameH = totalH - headerH - footerH;
+    /* Create a new view unit */
+    function makeViewUnit(entityId, x, y, faction) {
+        return {
+            entityId: entityId,
+            x: x, y: y,
+            prevX: x, prevY: y,
+            faction: faction,
+            health: 0,
+            wasDamaged: false,
+            isDying: false,
+            dead: false,
+            attackedId: 0,
+            attackAngle: 0,
+        };
+    }
+
+    /* Initialize view from ModelWorld (used on game start and rewind) */
+    function initViewFromModel() {
+        const model = readUnits();
+        viewUnits = [];
+        for (const eid in model) {
+            const m = model[eid];
+            if (m.health <= 0) continue; /* skip dead units waiting for despawn */
+            const vu = makeViewUnit(m.entityId, m.x, m.y, m.faction);
+            vu.health = m.health;
+            viewUnits.push(vu);
+        }
+    }
+
+    /* Update persistent view units from ModelWorld after a turn */
+    function updateViewForTurn() {
+        const model = readUnits();
+        const viewById = {};
+        for (const vu of viewUnits) viewById[vu.entityId] = vu;
+
+        /* Update existing view units with new model state */
+        for (const eid in model) {
+            const m = model[eid];
+            let vu = viewById[eid];
+
+            if (!vu) {
+                /* New unit (spawned this turn) */
+                vu = makeViewUnit(m.entityId, m.x, m.y, m.faction);
+                viewUnits.push(vu);
+                viewById[eid] = vu;
+            }
+
+            /* Store previous position (where the view unit currently is) */
+            vu.prevX = vu.x;
+            vu.prevY = vu.y;
+
+            /* Update to new model state */
+            vu.x = m.x;
+            vu.y = m.y;
+            vu.health = m.health;
+            vu.wasDamaged = m.damaged;
+            vu.isDying = m.health <= 0;
+            vu.attackedId = m.attackedId;
+            vu.attackAngle = 0;
         }
 
-        /* Apply header/footer sizes */
+        /* Mark units that were despawned (in view but not in model) as dead.
+           These already played their defeat animation last turn. */
+        for (const vu of viewUnits) {
+            if (!model[vu.entityId] && !vu.dead) {
+                vu.dead = true;
+            }
+        }
+
+        /* Remove dead units (defeat animation already played) */
+        viewUnits = viewUnits.filter(vu => !vu.dead);
+
+        /* Compute attack angles */
+        const byId = {};
+        for (const vu of viewUnits) byId[vu.entityId] = vu;
+        for (const vu of viewUnits) {
+            if (vu.attackedId && byId[vu.attackedId]) {
+                const target = byId[vu.attackedId];
+                vu.attackAngle = Math.atan2(target.y - vu.y, target.x - vu.x) + Math.PI / 2;
+            }
+        }
+    }
+
+    /* Find a view unit by entity_id */
+    function findViewUnit(entityId) {
+        return viewUnits.find(u => u.entityId === entityId);
+    }
+
+    /* ── Layout ──────────────────────────────────────────────── */
+    const HEADER_MIN = 40, HEADER_MAX = 60;
+    const FOOTER_MIN = 40, FOOTER_MAX = 60;
+    const GAME_MIN = 240, GAME_ASPECT = 16 / 9;
+
+    function layout() {
+        const totalH = window.innerHeight, totalW = window.innerWidth;
+        const chromeMin = HEADER_MIN + FOOTER_MIN;
+        let headerH, footerH, gameH;
+        if (totalH <= chromeMin) {
+            headerH = totalH / 2; footerH = totalH / 2; gameH = 0;
+        } else if (totalH < chromeMin + GAME_MIN) {
+            headerH = HEADER_MIN; footerH = FOOTER_MIN; gameH = totalH - chromeMin;
+        } else {
+            const avail = totalH - chromeMin - GAME_MIN;
+            const extra = (HEADER_MAX - HEADER_MIN) + (FOOTER_MAX - FOOTER_MIN);
+            const t = Math.min(1, avail / extra);
+            headerH = HEADER_MIN + (HEADER_MAX - HEADER_MIN) * t;
+            footerH = FOOTER_MIN + (FOOTER_MAX - FOOTER_MIN) * t;
+            gameH = totalH - headerH - footerH;
+        }
         headerEl.style.height = Math.floor(headerH) + 'px';
         footerEl.style.height = Math.floor(footerH) + 'px';
         middleEl.style.height = Math.floor(gameH) + 'px';
-
-        /* Scale canvas to fit game area maintaining 16:9 aspect */
-        let canvasW = gameH * GAME_ASPECT;
-        let canvasH = gameH;
-
-        /* Also constrain by available width */
-        if (canvasW > totalW) {
-            canvasW = totalW;
-            canvasH = canvasW / GAME_ASPECT;
-        }
-
-        canvas.style.width = Math.floor(canvasW) + 'px';
-        canvas.style.height = Math.floor(canvasH) + 'px';
-
-        statusEl.textContent = `${Math.floor(canvasW)}x${Math.floor(canvasH)} (${totalW}x${totalH})`;
+        let cw = gameH * GAME_ASPECT, ch = gameH;
+        if (cw > totalW) { cw = totalW; ch = cw / GAME_ASPECT; }
+        canvas.style.width = Math.floor(cw) + 'px';
+        canvas.style.height = Math.floor(ch) + 'px';
     }
-
     layout();
     window.addEventListener('resize', layout);
 
-    /* Draw pink rectangle with grid */
-    ctx.fillStyle = '#ff69b4';
-    ctx.fillRect(0, 0, 1024, 576);
-    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-    ctx.lineWidth = 1;
-    for (let x = 0; x <= 1024; x += 64) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 576); ctx.stroke();
+    /* ── Sprites ─────────────────────────────────────────────── */
+    const SPRITE_NAMES = ['knight_body', 'archer_body', 'knight_weapon', 'archer_weapon'];
+    const SPRITE_COUNTS = { knight_body: 17, archer_body: 17, knight_weapon: 1, archer_weapon: 1 };
+    const sprites = {};
+    let spritesLoaded = 0, spritesTotal = 0;
+
+    function loadSprites(basePath, cb) {
+        for (const name of SPRITE_NAMES) {
+            const count = SPRITE_COUNTS[name];
+            spritesTotal += count;
+            sprites[name] = { frames: [] };
+            for (let i = 0; i < count; i++) {
+                const img = new Image();
+                img.onload = img.onerror = function() { spritesLoaded++; if (spritesLoaded === spritesTotal) cb(); };
+                img.src = `${basePath}/${name}/frame_${String(i).padStart(2,'0')}.png`;
+                sprites[name].frames.push(img);
+            }
+        }
     }
-    for (let y = 0; y <= 576; y += 64) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(1024, y); ctx.stroke();
+
+    /* ── Rendering ───────────────────────────────────────────── */
+    function drawGrid() {
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= COLS; x++) { ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,ROWS*CELL); ctx.stroke(); }
+        for (let y = 0; y <= ROWS; y++) { ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(COLS*CELL,y*CELL); ctx.stroke(); }
     }
+
+    function drawUnit(u, phase, t) {
+        const bodyName = u.faction === 0 ? 'archer_body' : 'knight_body';
+        const weaponName = u.faction === 0 ? 'archer_weapon' : 'knight_weapon';
+        let drawX, drawY, bodyFrame = 0, scale = 1, showWeapon = true;
+        let weaponOffX = 0, weaponOffY = 0;
+
+        switch (phase) {
+            case 'movement':
+                drawX = (u.prevX + (u.x - u.prevX) * t) * CELL;
+                drawY = (u.prevY + (u.y - u.prevY) * t) * CELL;
+                break;
+
+            case 'attack':
+                drawX = u.x * CELL;
+                drawY = u.y * CELL;
+                /* Animate weapon toward target */
+                if (u.attackedId) {
+                    const target = findViewUnit(u.attackedId);
+                    if (target) {
+                        weaponOffX = (target.x - u.x) * CELL * t;
+                        weaponOffY = (target.y - u.y) * CELL * t;
+                    }
+                }
+                break;
+
+            case 'reaction':
+                drawX = u.x * CELL;
+                drawY = u.y * CELL;
+                if (u.wasDamaged) {
+                    /* frames 1-8: lighten then return */
+                    bodyFrame = 1 + Math.min(7, Math.floor(t * 8));
+                }
+                break;
+
+            case 'defeat':
+                drawX = u.x * CELL;
+                drawY = u.y * CELL;
+                if (u.isDying) {
+                    bodyFrame = 9 + Math.min(7, Math.floor(t * 8));
+                    scale = 1 - t * 0.9;
+                    showWeapon = false;
+                }
+                break;
+
+            default: /* idle */
+                drawX = u.x * CELL;
+                drawY = u.y * CELL;
+        }
+
+        /* Draw body */
+        const bodyImg = sprites[bodyName].frames[Math.min(bodyFrame, sprites[bodyName].frames.length - 1)];
+        if (bodyImg && bodyImg.complete) {
+            const size = CELL * scale;
+            const off = (CELL - size) / 2;
+            ctx.drawImage(bodyImg, drawX + off, drawY + off, size, size);
+        }
+
+        /* Draw weapon (rotated to face attack target) */
+        if (showWeapon) {
+            const wImg = sprites[weaponName].frames[0];
+            if (wImg && wImg.complete) {
+                const size = CELL * scale;
+                const cx = drawX + CELL / 2 + weaponOffX;
+                const cy = drawY + CELL / 2 + weaponOffY;
+                ctx.save();
+                ctx.translate(cx, cy);
+                if (u.attackAngle) ctx.rotate(u.attackAngle);
+                ctx.drawImage(wImg, -size / 2, -size / 2, size, size);
+                ctx.restore();
+            }
+        }
+    }
+
+    function render(timestamp) {
+        if (!engine) return;
+
+        ctx.fillStyle = BG;
+        ctx.fillRect(0, 0, 1024, 576);
+        drawGrid();
+
+        const phase = currentPhase >= 0 ? PHASES[currentPhase] : 'idle';
+        let t = 0;
+        if (currentPhase >= 0 && phaseStartTime > 0) {
+            t = Math.min(1, (timestamp - phaseStartTime) / PHASE_MS);
+        }
+
+        for (const u of viewUnits) {
+            if (u.dead) continue;
+            drawUnit(u, phase, t);
+        }
+
+        /* Status */
+        const turn = engine.getTurn();
+        const gameOver = engine.isGameOver();
+        if (gameOver) gameOverEl.textContent = engine.getMessage();
+        const aliveCount = viewUnits.filter(u => !u.dead && !u.isDying).length;
+        const phaseLabel = currentPhase >= 0 ? ` | ${phase} ${Math.floor(t*100)}%` : '';
+        statusEl.textContent = `${mapLabel} | Turn ${turn} | ${aliveCount} units${phaseLabel}`;
+
+        /* Phase progression */
+        if (currentPhase >= 0) {
+            if (t >= 1) {
+                currentPhase++;
+                if (currentPhase >= PHASES.length) {
+                    currentPhase = -1;
+                    animating = false;
+                    /* Mark dying units as dead — they'll be removed at next turn start */
+                    for (const u of viewUnits) {
+                        if (u.isDying) u.dead = true;
+                    }
+                    if (playing && !gameOver) {
+                        startTurn();
+                    }
+                    return;
+                }
+                phaseStartTime = timestamp;
+            }
+            requestAnimationFrame(render);
+        }
+    }
+
+    /* ── Controls ────────────────────────────────────────────── */
+    function startTurn() {
+        if (!engine || engine.isGameOver() || animating) return;
+        animating = true;
+        engine.turn();
+        updateViewForTurn();
+        currentPhase = 0;
+        phaseStartTime = performance.now();
+        requestAnimationFrame(render);
+    }
+
+    function togglePlay() {
+        playing = !playing;
+        btnPlay.textContent = playing ? 'Pause' : 'Play';
+        btnPlay.classList.toggle('active', playing);
+        if (playing && !animating) startTurn();
+    }
+
+    function rewindOne() {
+        if (!engine || animating) return;
+        const turn = engine.getTurn();
+        if (turn > 1) {
+            engine.rewind(turn - 1);
+            gameOverEl.textContent = '';
+            initViewFromModel();
+            currentPhase = -1;
+            requestAnimationFrame(render);
+        }
+    }
+
+    function newGame() {
+        if (playing) togglePlay();
+        animating = false;
+        currentPhase = -1;
+        gameOverEl.textContent = '';
+        engine.initWithConfig('wasm-rt');
+        initViewFromModel();
+        requestAnimationFrame(render);
+    }
+
+    btnPlay.addEventListener('click', togglePlay);
+    btnStep.addEventListener('click', startTurn);
+    btnRewind.addEventListener('click', rewindOne);
+    btnNew.addEventListener('click', newGame);
+    document.addEventListener('keydown', function(e) {
+        if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+        else if (e.code === 'ArrowRight') { e.preventDefault(); startTurn(); }
+        else if (e.code === 'ArrowLeft') { e.preventDefault(); rewindOne(); }
+    });
+
+    /* ── Init ────────────────────────────────────────────────── */
+    statusEl.textContent = 'Loading sprites...';
+    loadSprites('assets/sprites', function() {
+        statusEl.textContent = 'Loading engine...';
+        FlecsECS().then(function(M) {
+            engine = {
+                init: M.cwrap('wasm_init', 'number', []),
+                initWithConfig: M.cwrap('wasm_init_with_config', 'number', ['string']),
+                turn: M.cwrap('wasm_turn', 'number', []),
+                getTurn: M.cwrap('wasm_get_turn', 'number', []),
+                getUnitCount: M.cwrap('wasm_get_unit_count', 'number', []),
+                getUnitX: M.cwrap('wasm_get_unit_x', 'number', ['number']),
+                getUnitY: M.cwrap('wasm_get_unit_y', 'number', ['number']),
+                getUnitFaction: M.cwrap('wasm_get_unit_faction', 'number', ['number']),
+                getUnitDamaged: M.cwrap('wasm_get_unit_took_damage', 'number', ['number']),
+                getHealth: M.cwrap('wasm_get_unit_health', 'number', ['number']),
+                getAttackedId: M.cwrap('wasm_get_unit_attacked_id', 'number', ['number']),
+                getEntityId: M.cwrap('wasm_get_unit_entity_id', 'number', ['number']),
+                getMapX: M.cwrap('wasm_get_map_x', 'number', []),
+                getMapY: M.cwrap('wasm_get_map_y', 'number', []),
+                isGameOver: M.cwrap('wasm_is_game_over', 'number', []),
+                getMessage: M.cwrap('wasm_get_game_over_message', 'string', []),
+                rewind: M.cwrap('wasm_rewind', 'number', ['number']),
+                reset: M.cwrap('wasm_reset', 'number', []),
+            };
+            engine.initWithConfig('wasm-rt');
+            const mx = engine.getMapX();
+            const my = engine.getMapY();
+            mapLabel = `${mx+1}x${my+1} map`;
+            initViewFromModel();
+            requestAnimationFrame(render);
+        });
+    });
 })();
 </script>
-
 </body>
 </html>
