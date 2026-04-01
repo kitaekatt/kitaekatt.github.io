@@ -110,18 +110,18 @@ configs:
     map_size: { x: 272, y: 153 }
     max_turns: 1000
   wasm_23x:
-    archers: 1097
-    knights: 4388
+    archers: 1098
+    knights: 4387
     map_size: { x: 368, y: 207 }
     max_turns: 1000
   wasm_30x:
-    archers: 2040
-    knights: 7291
+    archers: 1777
+    knights: 7554
     map_size: { x: 480, y: 270 }
     max_turns: 1000
   wasm_38x:
-    archers: 4116
-    knights: 10855
+    archers: 2432
+    knights: 12539
     map_size: { x: 608, y: 342 }
     max_turns: 1000
   console:
@@ -4080,7 +4080,7 @@ html, body { height: 100%; overflow: hidden; }
 body {
     background: #1a1a2e;
     color: #e0e0e0;
-    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
     display: flex;
     flex-direction: column;
     height: 100vh;
@@ -4960,7 +4960,7 @@ html, body { height: 100%; overflow: hidden; }
 body {
     background: #1a1a2e;
     color: #e0e0e0;
-    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
     display: flex;
     flex-direction: column;
     height: 100vh;
