@@ -93,15 +93,15 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <option value="wasm_2x">32×18</option>
         <option value="wasm_3x" selected>48×27</option>
         <option value="wasm_5x">80×45</option>
-        <option value="wasm_8x">128×72</option>
-        <option value="wasm_12x">192×108</option>
-        <option value="wasm_17x">272×153</option>
-        <option value="wasm_23x">368×207</option>
-        <option value="wasm_30x">480×270</option>
-        <option value="wasm_38x">608×342</option>
+        <option value="wasm_8x" disabled class="debug-only">128×72</option>
+        <option value="wasm_12x" disabled class="debug-only">192×108</option>
+        <option value="wasm_17x" disabled class="debug-only">272×153</option>
+        <option value="wasm_23x" disabled class="debug-only">368×207</option>
+        <option value="wasm_30x" disabled class="debug-only">480×270</option>
+        <option value="wasm_38x" disabled class="debug-only">608×342</option>
     </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
-    <div id="version">v0.1.0 (9c591b7)</div>
+    <div id="version">v0.1.0 (66666ba)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -626,6 +626,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                         historySize: n,
                     };
                 },
+            });
+            document.getElementById('btn-debug').addEventListener('click', function unlock() {
+                document.querySelectorAll('#map-select .debug-only').forEach(function(o) { o.disabled = false; });
+                this.removeEventListener('click', unlock);
             });
             controls.updateButtons();
             requestAnimationFrame(render);

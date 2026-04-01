@@ -110,13 +110,13 @@ configs:
     map_size: { x: 272, y: 153 }
     max_turns: 1000
   wasm_23x:
-    archers: 1108
-    knights: 4377
+    archers: 1092
+    knights: 4393
     map_size: { x: 368, y: 207 }
     max_turns: 1000
   wasm_30x:
-    archers: 1885
-    knights: 7446
+    archers: 1515
+    knights: 7816
     map_size: { x: 480, y: 270 }
     max_turns: 1000
   wasm_38x:
@@ -4163,12 +4163,12 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <option value="wasm_2x">32×18</option>
         <option value="wasm_3x" selected>48×27</option>
         <option value="wasm_5x">80×45</option>
-        <option value="wasm_8x">128×72</option>
-        <option value="wasm_12x">192×108</option>
-        <option value="wasm_17x">272×153</option>
-        <option value="wasm_23x">368×207</option>
-        <option value="wasm_30x">480×270</option>
-        <option value="wasm_38x">608×342</option>
+        <option value="wasm_8x" disabled class="debug-only">128×72</option>
+        <option value="wasm_12x" disabled class="debug-only">192×108</option>
+        <option value="wasm_17x" disabled class="debug-only">272×153</option>
+        <option value="wasm_23x" disabled class="debug-only">368×207</option>
+        <option value="wasm_30x" disabled class="debug-only">480×270</option>
+        <option value="wasm_38x" disabled class="debug-only">608×342</option>
     </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
     <div id="version">v0.1.0</div>
@@ -4697,6 +4697,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                     };
                 },
             });
+            document.getElementById('btn-debug').addEventListener('click', function unlock() {
+                document.querySelectorAll('#map-select .debug-only').forEach(function(o) { o.disabled = false; });
+                this.removeEventListener('click', unlock);
+            });
             controls.updateButtons();
             requestAnimationFrame(render);
         });
@@ -5104,11 +5108,11 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <option value="wasm_3x">48×27</option>
         <option value="wasm_5x">80×45</option>
         <option value="wasm_8x">128×72</option>
-        <option value="wasm_12x">192×108</option>
+        <option value="wasm_12x" selected>192×108</option>
         <option value="wasm_17x">272×153</option>
         <option value="wasm_23x">368×207</option>
-        <option value="wasm_30x">480×270</option>
-        <option value="wasm_38x" selected>608×342</option>
+        <option value="wasm_30x" disabled class="debug-only">480×270</option>
+        <option value="wasm_38x" disabled class="debug-only">608×342</option>
     </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
     <div id="version">v0.1.0</div>
@@ -5131,7 +5135,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const loadingEl = document.getElementById('loading');
 
     let engine = null;
-    var currentConfig = 'wasm_38x';
+    var currentConfig = 'wasm_12x';
     let mapW = 288, mapH = 162;
     let CELL_W = 1, CELL_H = 1;
     const frameTimes = [];
@@ -5395,6 +5399,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                     return units;
                 },
             });
+            document.getElementById('btn-debug').addEventListener('click', function unlock() {
+                document.querySelectorAll('#map-select .debug-only').forEach(function(o) { o.disabled = false; });
+                this.removeEventListener('click', unlock);
+            });
 
             markDone(stepInit);
 
@@ -5581,7 +5589,7 @@ int wasm_init(void) {
     }
 
     AppStartResult asr;
-    if (!engine_app_start(g_engine, "wasm_38x", &asr)) {
+    if (!engine_app_start(g_engine, "wasm_12x", &asr)) {
         engine_fini(g_engine);
         g_engine = NULL;
         return 0;
