@@ -34,6 +34,8 @@ button {
     cursor: pointer; min-width: 70px;
 }
 button:hover { background: #3a3a5a; }
+button:disabled { opacity: 0.3; cursor: default; }
+button:disabled:hover { background: #2a2a3a; }
 button.active { background: #4a6a4a; border-color: #6a8a6a; }
 #legend { font-size: 0.8em; color: #888; }
 #legend span { margin: 0 8px; }
@@ -54,14 +56,14 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 </div>
 <div id="footer-area">
     <button id="btn-play" title="Space">Play</button>
-    <button id="btn-step" title="Right Arrow">Step</button>
     <button id="btn-rewind" title="Left Arrow">Rewind</button>
+    <button id="btn-step" title="Right Arrow">Step</button>
     <button id="btn-new">New Game</button>
     <div id="legend">
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="version">v0.0.14 (d0738b3)</div>
+    <div id="version">v0.0.14 (74bf3c9)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -368,6 +370,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 for (const u of viewUnits) {
                     if (u.isDying) u.dead = true;
                 }
+                updateButtons();
                 if (playing && !gameOver) {
                     startTurn();
                 }
@@ -404,43 +407,105 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         requestAnimationFrame(render);
     }
 
+    function updateButtons() {
+        if (!engine) { btnRewind.disabled = true; btnStep.disabled = true; return; }
+        btnRewind.disabled = engine.getTurn() <= 1 || animating;
+        btnStep.disabled = engine.isGameOver() || animating;
+    }
+
     function togglePlay() {
         playing = !playing;
         btnPlay.textContent = playing ? 'Pause' : 'Play';
         btnPlay.classList.toggle('active', playing);
         if (playing && !animating) startTurn();
+        updateButtons();
     }
 
     function rewindOne() {
-        if (!engine || animating) return;
+        if (!engine) return;
+        if (playing) togglePlay();
+        if (animating) return;
         const turn = engine.getTurn();
-        if (turn > 1) {
-            engine.rewind(turn - 1);
-            gameOverEl.textContent = '';
-            initViewFromModel();
-            animating = false;
-            requestAnimationFrame(render);
-        }
+        if (turn <= 1) return;
+        engine.rewind(turn - 1);
+        gameOverEl.textContent = '';
+        initViewFromModel();
+        animating = false;
+        requestAnimationFrame(render);
+        updateButtons();
+    }
+
+    function quickStep() {
+        if (!engine || engine.isGameOver() || animating) return;
+        engine.turn();
+        updateViewForTurn();
+        requestAnimationFrame(render);
+        updateButtons();
+    }
+
+    function stepOne() {
+        if (playing) togglePlay();
+        startTurn();
     }
 
     function newGame() {
+        stopHold();
         if (playing) togglePlay();
         animating = false;
-        currentPhase = -1;
         gameOverEl.textContent = '';
         engine.initWithConfig('wasm-rt');
+        engine.turn();
         initViewFromModel();
         requestAnimationFrame(render);
+        updateButtons();
     }
 
+    /* ── Hold behavior ──────────────────────────────────────── */
+    let holdTimeout = null;
+    let holdInterval = null;
+
+    function startHold(action) {
+        stopHold();
+        action();
+        holdTimeout = setTimeout(function() {
+            holdInterval = setInterval(action, 100);
+        }, 300);
+    }
+
+    function stopHold() {
+        if (holdTimeout) { clearTimeout(holdTimeout); holdTimeout = null; }
+        if (holdInterval) { clearInterval(holdInterval); holdInterval = null; }
+    }
+
+    /* ── Event wiring ───────────────────────────────────────── */
     btnPlay.addEventListener('click', togglePlay);
-    btnStep.addEventListener('click', startTurn);
-    btnRewind.addEventListener('click', rewindOne);
     btnNew.addEventListener('click', newGame);
+
+    btnStep.addEventListener('mousedown', function() { startHold(function() { if (playing) togglePlay(); quickStep(); }); });
+    btnRewind.addEventListener('mousedown', function() { startHold(function() { if (playing) togglePlay(); rewindOne(); }); });
+    document.addEventListener('mouseup', stopHold);
+
+    /* Single-click step uses animated turn */
+    btnStep.addEventListener('click', function(e) { if (!holdInterval) stepOne(); });
+
+    let heldKey = null;
     document.addEventListener('keydown', function(e) {
+        if (e.repeat) return;
         if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
-        else if (e.code === 'ArrowRight') { e.preventDefault(); startTurn(); }
-        else if (e.code === 'ArrowLeft') { e.preventDefault(); rewindOne(); }
+        else if (e.code === 'ArrowRight') {
+            e.preventDefault();
+            heldKey = 'right';
+            startHold(function() { if (playing) togglePlay(); quickStep(); });
+        }
+        else if (e.code === 'ArrowLeft') {
+            e.preventDefault();
+            heldKey = 'left';
+            startHold(function() { if (playing) togglePlay(); rewindOne(); });
+        }
+    });
+    document.addEventListener('keyup', function(e) {
+        if (e.code === 'ArrowRight' && heldKey === 'right') { stopHold(); heldKey = null; }
+        else if (e.code === 'ArrowLeft' && heldKey === 'left') { stopHold(); heldKey = null; }
     });
 
     /* ── Init ────────────────────────────────────────────────── */
@@ -469,10 +534,12 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 reset: M.cwrap('wasm_reset', 'number', []),
             };
             engine.initWithConfig('wasm-rt');
+            engine.turn();  /* run app_start to spawn units */
             const mx = engine.getMapX();
             const my = engine.getMapY();
             mapLabel = `${mx}x${my} map`;
             initViewFromModel();
+            updateButtons();
             requestAnimationFrame(render);
         });
     });
