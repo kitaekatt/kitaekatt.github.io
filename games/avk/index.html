@@ -152,7 +152,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="red">&#9632; Archer</span>
         <span class="blue">&#9632; Knight</span>
     </div>
-    <div id="version">v (c115e8d)</div>
+    <div id="version">v (9175ba3)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -321,6 +321,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         },
         canStep: function() { return !!engine && !engine.isGameOver(); },
         canRewind: function() { return !!engine && engine.getTurn() > 1; },
+        isGameOver: function() { return !!engine && engine.isGameOver(); },
     });
 
     /* About toggle */
