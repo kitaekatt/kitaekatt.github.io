@@ -50,7 +50,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <div id="game-over-msg"></div>
 </div>
 <div id="middle">
-    <canvas id="canvas" width="1024" height="576"></canvas>
+    <canvas id="canvas" width="2048" height="1152"></canvas>
 </div>
 <div id="footer-area">
     <button id="btn-play" title="Space">Play</button>
@@ -79,7 +79,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const middleEl = document.getElementById('middle');
     const footerEl = document.getElementById('footer-area');
 
-    const CELL = 64, COLS = 16, ROWS = 9;
+    const CELL = 64, COLS = 32, ROWS = 18;
     const BG = '#0f0f23';
 
     let engine = null;
