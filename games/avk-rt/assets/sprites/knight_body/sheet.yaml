@@ -1,6 +1,6 @@
 name: knight_body
 frame_size: 64
-frame_count: 17
+frame_count: 18
 fps: 30
 animations:
   idle:
@@ -8,7 +8,7 @@ animations:
     last_frame: 0
   hit:
     first_frame: 1
-    last_frame: 8
+    last_frame: 9
   defeat:
-    first_frame: 9
-    last_frame: 16
+    first_frame: 10
+    last_frame: 17
