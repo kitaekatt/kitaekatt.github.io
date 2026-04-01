@@ -1779,15 +1779,17 @@ var GameDebug = (function() {
     var overlay = null;
     var showing = false;
     var rafId = null;
+    var debugBtn = null;
 
     function init(cfg) {
+        debugBtn = cfg.btnDebug;
         if (cfg.getTiming) {
-            cfg.btnDebug.addEventListener('click', function() {
+            debugBtn.addEventListener('click', function() {
                 if (showing) close(); else open(cfg);
             });
         } else {
             /* Legacy: click = copy YAML */
-            cfg.btnDebug.addEventListener('click', function() { copyYaml(cfg); });
+            debugBtn.addEventListener('click', function() { copyYaml(cfg); });
         }
     }
 
@@ -1806,7 +1808,7 @@ var GameDebug = (function() {
         ].join(';');
         document.body.appendChild(overlay);
         showing = true;
-        cfg.btnDebug.classList.add('active');
+        debugBtn.classList.add('active');
         tick(cfg);
     }
 
@@ -1814,6 +1816,7 @@ var GameDebug = (function() {
         if (overlay) overlay.remove();
         overlay = null;
         showing = false;
+        if (debugBtn) debugBtn.classList.remove('active');
         if (rafId) cancelAnimationFrame(rafId);
         rafId = null;
     }
@@ -1831,7 +1834,7 @@ var GameDebug = (function() {
         var lines = [];
 
         lines.push('Turn ' + d.turn + '  |  ' + d.unitCount + ' units');
-        lines.push('\x1b--- Turn (last / avg' + d.historySize + ') ---');
+        lines.push('--- Turn (last / avg' + d.historySize + ') ---');
         lines.push('engine:  ' + fmt(c.engine) + ' / ' + fmt(a.engine) + ' ms');
 
         /* Per-system breakdown */
@@ -4105,13 +4108,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 .green { color: #78be64; }
 .blue { color: #4d94d2; }
 #version { font-size: 0.6em; color: #555; }
-#map-select { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; font-size: 0.75em; color: #888; }
-#map-select label { cursor: pointer; padding: 2px 6px; border: 1px solid transparent; border-radius: 3px; }
-#map-select label:hover { border-color: #444; }
-#map-select label:has(input:checked) { border-color: #4a6a4a; color: #ccc; }
-#map-select input { display: none; }
-#map-select span { color: #ccc; }
-#map-select em { font-style: normal; }
+#map-select {
+    background: #2a2a4a; color: #e0e0e0; border: 1px solid #444;
+    border-radius: 4px; padding: 4px 8px; font-size: 0.85em; cursor: pointer;
+}
 </style>
 </head>
 <body>
@@ -4139,16 +4139,16 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="map-select">
-        <label><input type="radio" name="mapsize" value="wasm_1x"><span>1x</span> <em>16×9</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_2x"><span>2x</span> <em>32×18</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_3x" checked><span>3x</span> <em>48×27</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_5x"><span>5x</span> <em>80×45</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_8x"><span>8x</span> <em>128×72</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_11x"><span>11x</span> <em>176×99</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_14x"><span>14x</span> <em>224×126</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_18x"><span>18x</span> <em>288×162</em></label>
-    </div>
+    <select id="map-select">
+        <option value="wasm_1x">16×9</option>
+        <option value="wasm_2x">32×18</option>
+        <option value="wasm_3x" selected>48×27</option>
+        <option value="wasm_5x">80×45</option>
+        <option value="wasm_8x">128×72</option>
+        <option value="wasm_11x">176×99</option>
+        <option value="wasm_14x">224×126</option>
+        <option value="wasm_18x">288×162</option>
+    </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
     <div id="version">v0.1.0</div>
 </div>
@@ -5038,13 +5038,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 .red { color: #ff6b6b; }
 .blue { color: #4dabf7; }
 .white { color: #ffffff; }
-#map-select { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; font-size: 0.75em; color: #888; }
-#map-select label { cursor: pointer; padding: 2px 6px; border: 1px solid transparent; border-radius: 3px; }
-#map-select label:hover { border-color: #444; }
-#map-select label:has(input:checked) { border-color: #4a6a4a; color: #ccc; }
-#map-select input { display: none; }
-#map-select span { color: #ccc; }
-#map-select em { font-style: normal; }
+#map-select {
+    background: #2a2a4a; color: #e0e0e0; border: 1px solid #444;
+    border-radius: 4px; padding: 4px 8px; font-size: 0.85em; cursor: pointer;
+}
 </style>
 </head>
 <body>
@@ -5080,16 +5077,16 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="red">&#9632; Archer</span>
         <span class="blue">&#9632; Knight</span>
     </div>
-    <div id="map-select">
-        <label><input type="radio" name="mapsize" value="wasm_1x"><span>1x</span> <em>16×9</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_2x"><span>2x</span> <em>32×18</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_3x"><span>3x</span> <em>48×27</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_5x"><span>5x</span> <em>80×45</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_8x"><span>8x</span> <em>128×72</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_11x"><span>11x</span> <em>176×99</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_14x"><span>14x</span> <em>224×126</em></label>
-        <label><input type="radio" name="mapsize" value="wasm_18x" checked><span>18x</span> <em>288×162</em></label>
-    </div>
+    <select id="map-select">
+        <option value="wasm_1x">16×9</option>
+        <option value="wasm_2x">32×18</option>
+        <option value="wasm_3x">48×27</option>
+        <option value="wasm_5x">80×45</option>
+        <option value="wasm_8x">128×72</option>
+        <option value="wasm_11x">176×99</option>
+        <option value="wasm_14x">224×126</option>
+        <option value="wasm_18x" selected>288×162</option>
+    </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
     <div id="version">v0.1.0</div>
 </div>
@@ -5629,6 +5626,7 @@ int wasm_turn(void) {
     /* Time unit collection */
     double t0 = emscripten_get_now();
     collect_wasm_units(g_engine);
+    read_map_size(g_engine);
     g_collect_time = emscripten_get_now() - t0;
 
     g_total_time = emscripten_get_now() - frame_start;
