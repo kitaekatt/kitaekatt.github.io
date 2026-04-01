@@ -115,6 +115,13 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 .red { color: #ff6b6b; }
 .blue { color: #4dabf7; }
 .white { color: #ffffff; }
+#map-select { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; font-size: 0.75em; color: #888; }
+#map-select label { cursor: pointer; padding: 2px 6px; border: 1px solid transparent; border-radius: 3px; }
+#map-select label:hover { border-color: #444; }
+#map-select label:has(input:checked) { border-color: #4a6a4a; color: #ccc; }
+#map-select input { display: none; }
+#map-select span { color: #ccc; }
+#map-select em { font-style: normal; }
 </style>
 </head>
 <body>
@@ -150,8 +157,18 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="red">&#9632; Archer</span>
         <span class="blue">&#9632; Knight</span>
     </div>
+    <div id="map-select">
+        <label><input type="radio" name="mapsize" value="wasm_1x"><span>1x</span> <em>16×9</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_2x"><span>2x</span> <em>32×18</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_3x"><span>3x</span> <em>48×27</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_5x"><span>5x</span> <em>80×45</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_8x"><span>8x</span> <em>128×72</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_11x"><span>11x</span> <em>176×99</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_14x"><span>14x</span> <em>224×126</em></label>
+        <label><input type="radio" name="mapsize" value="wasm_18x" checked><span>18x</span> <em>288×162</em></label>
+    </div>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
-    <div id="version">v0.1.0 (7919366)</div>
+    <div id="version">v0.1.0 (78199eb)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -171,6 +188,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const loadingEl = document.getElementById('loading');
 
     let engine = null;
+    var currentConfig = 'wasm_18x';
     let mapW = 288, mapH = 162;
     let CELL_W = 1, CELL_H = 1;
     const frameTimes = [];
@@ -311,8 +329,11 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         onNewGame: function() {
             if (!engine) return;
             if (playInterval) { clearInterval(playInterval); playInterval = null; }
-            engine.reset();
+            engine.initWithConfig(currentConfig);
             engine.turn();
+            mapW = engine.getMapX() || 288;
+            mapH = engine.getMapY() || 162;
+            gameLayout.resize();
             render();
             gameOverEl.textContent = '';
         },
@@ -339,7 +360,21 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         /* canvas stays visible — about overlays it */
     });
 
-    /* Scrub bar drag */
+    /* Map size selector */
+    document.getElementById('map-select').addEventListener('change', function(e) {
+        if (!engine || !e.target.value) return;
+        currentConfig = e.target.value;
+        if (playInterval) { clearInterval(playInterval); playInterval = null; }
+        engine.initWithConfig(currentConfig);
+        engine.turn();
+        mapW = engine.getMapX() || 288;
+        mapH = engine.getMapY() || 162;
+        gameLayout.resize();
+        render();
+        gameOverEl.textContent = '';
+        controls.updateButtons();
+    });
+
     /* Init */
     const stepLoad = document.getElementById('step-load');
     const stepInit = document.getElementById('step-init');
@@ -363,6 +398,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         try {
             engine = {
                 init: M.cwrap('wasm_init', 'number', []),
+                initWithConfig: M.cwrap('wasm_init_with_config', 'number', ['string']),
                 turn: M.cwrap('wasm_turn', 'number', []),
                 getTurn: M.cwrap('wasm_get_turn', 'number', []),
                 getUnitCount: M.cwrap('wasm_get_unit_count', 'number', []),
