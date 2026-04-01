@@ -85,9 +85,9 @@ configs:
     map_size: { x: 151, y: 49 }
     max_turns: 1000
   wasm-rt:
-    archers: 4
-    knights: 8
-    map_size: { x: 16, y: 9 }
+    archers: 5
+    knights: 19
+    map_size: { x: 32, y: 18 }
     max_turns: 200
 
 archers: 995
@@ -3569,7 +3569,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <div id="game-over-msg"></div>
 </div>
 <div id="middle">
-    <canvas id="canvas" width="1024" height="576"></canvas>
+    <canvas id="canvas" width="2048" height="1152"></canvas>
 </div>
 <div id="footer-area">
     <button id="btn-play" title="Space">Play</button>
@@ -3598,7 +3598,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const middleEl = document.getElementById('middle');
     const footerEl = document.getElementById('footer-area');
 
-    const CELL = 64, COLS = 16, ROWS = 9;
+    const CELL = 64, COLS = 32, ROWS = 18;
     const BG = '#0f0f23';
 
     let engine = null;
