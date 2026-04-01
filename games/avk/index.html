@@ -138,6 +138,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <h3>About</h3>
         <p>Built in C with Flecs ECS, it simulates archers (red) fighting knights (blue) on a 16:9 grid. Combat is turn-based -- all units move one tile per turn. Knights have range 1 and 25 HP. Archers have range 3 and 10 HP. All attacks deal 5 damage.</p>
         <p>Knights need to surround archers to kill them -- with equal movement speed and shorter range, knights must corner archers against walls or each other.</p>
+        <p>Check out the <a href="../avk-rt/" style="color:#4dabf7;">animated version</a> with sprites and phase animations.</p>
     </div>
 </div>
 <div id="middle">
@@ -152,7 +153,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="red">&#9632; Archer</span>
         <span class="blue">&#9632; Knight</span>
     </div>
-    <div id="version">v0.1.0 (ff2791c)</div>
+    <div id="version">v0.1.0 (7d198c0)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -322,10 +323,17 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         canStep: function() { return !!engine && !engine.isGameOver(); },
         canRewind: function() { return !!engine && engine.getTurn() > 1; },
         isGameOver: function() { return !!engine && engine.isGameOver(); },
+        onAnyAction: function() { closeAbout(); },
     });
 
     /* About toggle */
     var aboutShowing = false;
+    function closeAbout() {
+        if (!aboutShowing) return;
+        aboutShowing = false;
+        document.getElementById('about-panel').style.display = 'none';
+        canvas.style.display = '';
+    }
     document.getElementById('info-btn').addEventListener('click', function() {
         aboutShowing = !aboutShowing;
         document.getElementById('about-panel').style.display = aboutShowing ? 'block' : 'none';
