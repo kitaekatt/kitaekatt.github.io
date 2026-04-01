@@ -266,6 +266,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         canvas: canvas,
         headerEl: document.getElementById('game-area'),
         footerEl: document.getElementById('ui-area'),
+        footerMin: 100, footerMax: 120,
         onResize: function(cw, ch) {
             CELL_W = Math.max(1, Math.floor(cw / mapW));
             CELL_H = CELL_W;
