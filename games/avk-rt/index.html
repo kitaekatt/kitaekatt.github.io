@@ -61,7 +61,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="version">v0.0.14 (552a7ed)</div>
+    <div id="version">v0.0.14 (24e16e9)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -87,8 +87,9 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     let mapLabel = '';
 
     /* ── Turn timing ─────────────────────────────────────────── */
-    const PHASE_MS = 62;
+    const TARGET_TURN_MS = 250;
     const PHASES = ['movement', 'attack', 'reaction', 'defeat'];
+    let phaseMs = TARGET_TURN_MS / PHASES.length;  /* adjusted dynamically */
 
     /* ── View state (persistent across turns) ───────────────── */
     let viewUnits = [];       /* persistent view units, keyed by entityId */
@@ -346,7 +347,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         const phase = currentPhase >= 0 ? PHASES[currentPhase] : 'idle';
         let t = 0;
         if (currentPhase >= 0 && phaseStartTime > 0) {
-            t = Math.min(1, (timestamp - phaseStartTime) / PHASE_MS);
+            t = Math.min(1, (timestamp - phaseStartTime) / phaseMs);
         }
 
         for (const u of viewUnits) {
@@ -361,7 +362,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         const aliveCount = viewUnits.filter(u => !u.dead && !u.isDying).length;
         const phaseLabel = currentPhase >= 0 ? ` | ${phase} ${Math.floor(t*100)}%` : '';
         const tt = turnTiming.total > 0
-            ? ` | ${turnTiming.total.toFixed(0)}ms (eng:${turnTiming.engine.toFixed(1)} view:${turnTiming.view.toFixed(1)} anim:${turnTiming.anim.toFixed(0)})`
+            ? ` | ${turnTiming.total.toFixed(0)}ms (eng:${turnTiming.engine.toFixed(1)} view:${turnTiming.view.toFixed(1)} phase:${phaseMs.toFixed(0)})`
             : '';
         statusEl.textContent = `${mapLabel} | Turn ${turn} | ${aliveCount} units${phaseLabel}${tt}`;
 
@@ -407,6 +408,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 
         turnTiming.engine = t1 - t0;
         turnTiming.view = t2 - t1;
+
+        /* Adjust phase duration so total turn ≈ TARGET_TURN_MS */
+        const overhead = turnTiming.engine + turnTiming.view;
+        phaseMs = Math.max(1, (TARGET_TURN_MS - overhead) / PHASES.length);
 
         currentPhase = 0;
         phaseStartTime = performance.now();
