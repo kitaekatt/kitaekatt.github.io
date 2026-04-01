@@ -63,7 +63,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="version">v0.0.14 (5963a1b)</div>
+    <div id="version">v0.0.14 (d1850f3)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -436,6 +436,11 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         if (!engine || engine.isGameOver() || animating) return;
         engine.turn();
         updateViewForTurn();
+        /* Snap view to final positions (no animation) */
+        for (const u of viewUnits) {
+            u.prevX = u.x;
+            u.prevY = u.y;
+        }
         requestAnimationFrame(render);
         updateButtons();
     }
