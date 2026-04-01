@@ -61,7 +61,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="version">v0.0.14 (b97b1da)</div>
+    <div id="version">v0.0.14 (552a7ed)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -360,7 +360,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         if (gameOver) gameOverEl.textContent = engine.getMessage();
         const aliveCount = viewUnits.filter(u => !u.dead && !u.isDying).length;
         const phaseLabel = currentPhase >= 0 ? ` | ${phase} ${Math.floor(t*100)}%` : '';
-        statusEl.textContent = `${mapLabel} | Turn ${turn} | ${aliveCount} units${phaseLabel}`;
+        const tt = turnTiming.total > 0
+            ? ` | ${turnTiming.total.toFixed(0)}ms (eng:${turnTiming.engine.toFixed(1)} view:${turnTiming.view.toFixed(1)} anim:${turnTiming.anim.toFixed(0)})`
+            : '';
+        statusEl.textContent = `${mapLabel} | Turn ${turn} | ${aliveCount} units${phaseLabel}${tt}`;
 
         /* Phase progression */
         if (currentPhase >= 0) {
@@ -369,6 +372,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 if (currentPhase >= PHASES.length) {
                     currentPhase = -1;
                     animating = false;
+                    turnTiming.anim = timestamp - turnStartWall - turnTiming.engine - turnTiming.view;
+                    turnTiming.total = timestamp - turnStartWall;
                     /* Mark dying units as dead — they'll be removed at next turn start */
                     for (const u of viewUnits) {
                         if (u.isDying) u.dead = true;
@@ -385,11 +390,24 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     }
 
     /* ── Controls ────────────────────────────────────────────── */
+    /* ── Per-turn timing ───────────────────────────────────── */
+    let turnTiming = { engine: 0, view: 0, anim: 0, total: 0 };
+    let turnStartWall = 0;
+
     function startTurn() {
         if (!engine || engine.isGameOver() || animating) return;
         animating = true;
+        turnStartWall = performance.now();
+
+        const t0 = performance.now();
         engine.turn();
+        const t1 = performance.now();
         updateViewForTurn();
+        const t2 = performance.now();
+
+        turnTiming.engine = t1 - t0;
+        turnTiming.view = t2 - t1;
+
         currentPhase = 0;
         phaseStartTime = performance.now();
         requestAnimationFrame(render);
