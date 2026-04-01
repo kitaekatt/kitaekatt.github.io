@@ -1645,15 +1645,20 @@ var GameControls = (function() {
         var heldKey = null;
 
         function updateButtons() {
-            cfg.btnRewind.disabled = !cfg.canRewind();
-            cfg.btnStep.disabled = !cfg.canStep();
+            if (playing) {
+                cfg.btnRewind.disabled = false;
+                cfg.btnStep.disabled = false;
+            } else {
+                cfg.btnRewind.disabled = !cfg.canRewind();
+                cfg.btnStep.disabled = !cfg.canStep();
+            }
         }
 
         function startHold(action) {
             stopHold();
             action();
             holdTimeout = setTimeout(function() {
-                holdInterval = setInterval(action, 100);
+                holdInterval = setInterval(action, 33);
             }, 300);
         }
 
@@ -1663,6 +1668,7 @@ var GameControls = (function() {
         }
 
         function togglePlay() {
+            if (cfg.onAnyAction) cfg.onAnyAction();
             if (!playing && cfg.isGameOver && cfg.isGameOver()) {
                 cfg.onNewGame();
             }
@@ -1674,18 +1680,21 @@ var GameControls = (function() {
         }
 
         function doStep() {
+            if (cfg.onAnyAction) cfg.onAnyAction();
             if (playing) togglePlay();
             cfg.onStep();
             updateButtons();
         }
 
         function doRewind() {
+            if (cfg.onAnyAction) cfg.onAnyAction();
             if (playing) togglePlay();
             cfg.onRewind();
             updateButtons();
         }
 
         function doNewGame() {
+            if (cfg.onAnyAction) cfg.onAnyAction();
             stopHold();
             if (playing) togglePlay();
             cfg.onNewGame();
@@ -1728,6 +1737,43 @@ var GameControls = (function() {
         };
     }
 
+    return { init: init };
+})();
+/**
+ * Debug: copy board state as scenario YAML to clipboard.
+ */
+var GameDebug = (function() {
+    function init(cfg) {
+        cfg.btnDebug.addEventListener('click', function() {
+            var size = cfg.getMapSize();
+            var units = cfg.getUnits();
+            var lines = ['map: ' + size[0] + ' ' + size[1], 'units:'];
+            for (var i = 0; i < units.length; i++) {
+                var u = units[i];
+                lines.push('  - ' + u.type + ' ' + u.x + ' ' + u.y + ' health:' + u.health);
+            }
+            var yaml = lines.join('\n') + '\n';
+
+            /* Try textarea approach first (most compatible) */
+            var ta = document.createElement('textarea');
+            ta.value = yaml;
+            ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            var ok = false;
+            try { ok = document.execCommand('copy'); } catch(e) {}
+            document.body.removeChild(ta);
+
+            if (ok) {
+                cfg.btnDebug.textContent = 'Copied!';
+                setTimeout(function() { cfg.btnDebug.textContent = 'Debug'; }, 1500);
+            } else {
+                /* Last resort: show in a prompt so user can manually copy */
+                prompt('Copy this scenario YAML:', yaml);
+            }
+        });
+    }
     return { init: init };
 })();
 /**
@@ -3890,8 +3936,21 @@ body {
     gap: 16px; overflow: hidden;
 }
 #header-area h1 { font-size: 1.4em; color: #f0f0f0; white-space: nowrap; }
-#status { font-size: 0.95em; color: #aaa; white-space: nowrap; font-family: monospace; }
+#status { font-size: 0.95em; color: #aaa; white-space: nowrap; }
 #game-over-msg { font-size: 1.1em; font-weight: bold; color: #ffd700; height: 1.4em; line-height: 1.4em; }
+#info-btn {
+    display: inline-block; width: 22px; height: 22px; line-height: 22px;
+    text-align: center; border-radius: 50%; border: 1px solid #666;
+    color: #888; font-size: 0.85em; cursor: pointer; margin-left: 8px;
+    vertical-align: middle; user-select: none;
+}
+#info-btn:hover { background: #3a3a5a; color: #fff; }
+#about-panel {
+    display: none; max-width: 640px; padding: 16px 20px;
+    color: #ccc; font-size: 0.85em; line-height: 1.6; text-align: left;
+}
+#about-panel h3 { color: #f0f0f0; margin-bottom: 8px; }
+#about-panel p { margin-bottom: 10px; }
 #middle { display: flex; align-items: center; justify-content: center; }
 canvas { border: 1px solid #333; border-radius: 4px; image-rendering: pixelated; }
 #footer-area {
@@ -3917,9 +3976,15 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 <body>
 
 <div id="header-area">
-    <h1>Archers vs Knights RT</h1>
+    <h1>Archers vs Knights RT <span id="info-btn" title="About">?</span></h1>
     <div id="status">Loading...</div>
     <div id="game-over-msg"></div>
+    <div id="about-panel">
+        <h3>About</h3>
+        <p>Built in C with Flecs ECS, it simulates archers (red) fighting knights (blue) on a 16:9 grid with sprite animations. Combat is turn-based -- all units move one tile per turn. Knights have range 1 and 25 HP. Archers have range 3 and 10 HP. All attacks deal 5 damage.</p>
+        <p>Knights need to surround archers to kill them -- with equal movement speed and shorter range, knights must corner archers against walls or each other.</p>
+        <p>Check out the <a href="../avk/" style="color:#4dabf7;">minimalist version</a> for large-scale battles.</p>
+    </div>
 </div>
 <div id="middle">
     <canvas id="canvas" width="3072" height="1728"></canvas>
@@ -3933,12 +3998,14 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="version">v0.0.14</div>
+    <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
+    <div id="version">v0.1.0</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
 <script src="/lib/controls.js"></script>
 <script src="/lib/layout.js"></script>
+<script src="/lib/debug.js"></script>
 <script>
 (function() {
     const canvas = document.getElementById('canvas');
@@ -4214,14 +4281,12 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             gameOverEl.textContent = fps > 0 ? fps + ' fps' : '';
             gameOverEl.style.color = '#555';
         }
-        const aliveCount = viewUnits.filter(u => !u.dead && !u.isDying).length;
-        const pad = (s, n) => (s + ' '.repeat(n)).slice(0, n);
-        const padL = (s, n) => (' '.repeat(n) + s).slice(-n);
-        const progress = animating ? padL(Math.floor(p*100)+'%', 4) : pad('', 4);
-        const timing = turnTiming.total > 0
-            ? `${padL(turnTiming.total.toFixed(0), 4)}ms  eng:${padL(turnTiming.engine.toFixed(1), 5)}  view:${padL(turnTiming.view.toFixed(1), 5)}`
-            : '';
-        statusEl.textContent = `${mapLabel} | Turn ${padL(''+turn, 4)} | ${padL(''+aliveCount, 3)} units | ${progress} | ${timing}`;
+        let archerCount = 0, knightCount = 0;
+        for (const u of viewUnits) {
+            if (u.dead || u.isDying) continue;
+            if (u.faction === 0) archerCount++; else knightCount++;
+        }
+        statusEl.innerHTML = `Turn ${turn} &nbsp;|&nbsp; <span class="green">Archers: ${archerCount}</span> &nbsp;|&nbsp; <span class="blue">Knights: ${knightCount}</span>`;
 
         /* Animation progression */
         if (animating) {
@@ -4305,6 +4370,21 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         canStep: function() { return !!engine && !engine.isGameOver() && !animating; },
         canRewind: function() { return !!engine && engine.getTurn() > 1 && !animating; },
         isGameOver: function() { return !!engine && engine.isGameOver(); },
+        onAnyAction: function() { closeAbout(); },
+    });
+
+    /* About toggle */
+    var aboutShowing = false;
+    function closeAbout() {
+        if (!aboutShowing) return;
+        aboutShowing = false;
+        document.getElementById('about-panel').style.display = 'none';
+        canvas.style.display = '';
+    }
+    document.getElementById('info-btn').addEventListener('click', function() {
+        aboutShowing = !aboutShowing;
+        document.getElementById('about-panel').style.display = aboutShowing ? 'block' : 'none';
+        canvas.style.display = aboutShowing ? 'none' : '';
     });
 
     /* ── Init ────────────────────────────────────────────────── */
@@ -4338,7 +4418,24 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             const my = engine.getMapY();
             mapLabel = `${mx}x${my} map`;
             initViewFromModel();
-            updateButtons();
+            GameDebug.init({
+                btnDebug: document.getElementById('btn-debug'),
+                getMapSize: function() { return [engine.getMapX(), engine.getMapY()]; },
+                getUnits: function() {
+                    var units = [];
+                    var n = engine.getUnitCount();
+                    for (var i = 0; i < n; i++) {
+                        units.push({
+                            type: engine.getUnitFaction(i) === 0 ? 'Archer' : 'Knight',
+                            x: engine.getUnitX(i),
+                            y: engine.getUnitY(i),
+                            health: engine.getHealth(i),
+                        });
+                    }
+                    return units;
+                },
+            });
+            controls.updateButtons();
             requestAnimationFrame(render);
         });
     });
@@ -4723,6 +4820,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <h3>About</h3>
         <p>Built in C with Flecs ECS, it simulates archers (red) fighting knights (blue) on a 16:9 grid. Combat is turn-based -- all units move one tile per turn. Knights have range 1 and 25 HP. Archers have range 3 and 10 HP. All attacks deal 5 damage.</p>
         <p>Knights need to surround archers to kill them -- with equal movement speed and shorter range, knights must corner archers against walls or each other.</p>
+        <p>Check out the <a href="../avk-rt/" style="color:#4dabf7;">animated version</a> with sprites and phase animations.</p>
     </div>
 </div>
 <div id="middle">
@@ -4737,12 +4835,14 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="red">&#9632; Archer</span>
         <span class="blue">&#9632; Knight</span>
     </div>
-    <div id="version"></div>
+    <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
+    <div id="version">v0.1.0</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
 <script src="/lib/controls.js"></script>
 <script src="/lib/layout.js"></script>
+<script src="/lib/debug.js"></script>
 <script>
 (function() {
     const canvas = document.getElementById('canvas');
@@ -4907,10 +5007,17 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         canStep: function() { return !!engine && !engine.isGameOver(); },
         canRewind: function() { return !!engine && engine.getTurn() > 1; },
         isGameOver: function() { return !!engine && engine.isGameOver(); },
+        onAnyAction: function() { closeAbout(); },
     });
 
     /* About toggle */
     var aboutShowing = false;
+    function closeAbout() {
+        if (!aboutShowing) return;
+        aboutShowing = false;
+        document.getElementById('about-panel').style.display = 'none';
+        canvas.style.display = '';
+    }
     document.getElementById('info-btn').addEventListener('click', function() {
         aboutShowing = !aboutShowing;
         document.getElementById('about-panel').style.display = aboutShowing ? 'block' : 'none';
@@ -4976,6 +5083,24 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 
             gameLayout.resize();
             render();
+
+            GameDebug.init({
+                btnDebug: document.getElementById('btn-debug'),
+                getMapSize: function() { return [engine.getMapX(), engine.getMapY()]; },
+                getUnits: function() {
+                    var units = [];
+                    var n = engine.getUnitCount();
+                    for (var i = 0; i < n; i++) {
+                        units.push({
+                            type: engine.getUnitFaction(i) === 0 ? 'Archer' : 'Knight',
+                            x: engine.getUnitX(i),
+                            y: engine.getUnitY(i),
+                            health: engine.getHealth(i),
+                        });
+                    }
+                    return units;
+                },
+            });
 
             markDone(stepInit);
 
@@ -6223,6 +6348,20 @@ static void avk_movement(Engine *engine) {
 
     static const int dirs[][2] = {{0,-1},{0,1},{-1,0},{1,0},{0,0}};
 
+    /* Debug logging */
+    static FILE *dbg = NULL;
+    static int dbg_checked = 0;
+    if (!dbg_checked) {
+        dbg_checked = 1;
+        const char *dbg_path = getenv("FLECS_DEBUG_MOVEMENT");
+        if (dbg_path) {
+            dbg = fopen(dbg_path, "w");
+            if (dbg) { fprintf(dbg, "debug enabled\n"); fflush(dbg); }
+        }
+    }
+    static int dbg_turn = 0;
+    dbg_turn++;
+
     /* Pending moves buffer — applied in batch after each pass */
     int pend_idx[4096], pend_x[4096], pend_y[4096];
 
@@ -6325,6 +6464,23 @@ static void avk_movement(Engine *engine) {
                 bx = cand_x[c]; by = cand_y[c];
                 found = true;
                 break;
+            }
+
+            /* Debug: log decision */
+            if (dbg) {
+                const char *type = ent->faction == 0 ? "Archer" : "Knight";
+                fprintf(dbg, "turn:%d %s at(%d,%d) best_score:%d candidates:",
+                        dbg_turn, type, ent->x, ent->y, best_score);
+                for (int c = 0; c < ncand; c++) {
+                    int wx2 = cand_x[c] - 1 < mx - cand_x[c] ? cand_x[c] - 1 : mx - cand_x[c];
+                    int wy2 = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
+                    int wd2 = wx2 < wy2 ? wx2 : wy2;
+                    fprintf(dbg, " (%d,%d)s=%d,w=%d%s",
+                            cand_x[c], cand_y[c], cand_score[c], wd2,
+                            (cand_score[c] == best_score) ? "*" : "");
+                }
+                fprintf(dbg, " -> (%d,%d)\n", bx, by);
+                fflush(dbg);
             }
 
             if (found && (bx != ent->x || by != ent->y)) {
