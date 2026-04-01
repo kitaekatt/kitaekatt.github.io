@@ -75,13 +75,13 @@ description: "Red archers vs blue knights on a bounded grid map"
 
 configs:
   wasm:
-    archers: 676
-    knights: 2683
+    archers: 923
+    knights: 2436
     map_size: { x: 288, y: 162 }
     max_turns: 1000
   console:
-    archers: 107
-    knights: 425
+    archers: 108
+    knights: 424
     map_size: { x: 151, y: 49 }
     max_turns: 1000
   wasm-rt:
@@ -5055,6 +5055,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 getUnitY: M.cwrap('wasm_get_unit_y', 'number', ['number']),
                 getUnitFaction: M.cwrap('wasm_get_unit_faction', 'number', ['number']),
                 getUnitDamaged: M.cwrap('wasm_get_unit_took_damage', 'number', ['number']),
+                getHealth: M.cwrap('wasm_get_unit_health', 'number', ['number']),
                 getMapX: M.cwrap('wasm_get_map_x', 'number', []),
                 getMapY: M.cwrap('wasm_get_map_y', 'number', []),
                 isGameOver: M.cwrap('wasm_is_game_over', 'number', []),
@@ -6445,6 +6446,35 @@ static void avk_movement(Engine *engine) {
                 if (wd > best_wdist) best_wdist = wd;
             }
 
+            /* Tiebreaker 3: prefer reducing the larger axis to target enemy */
+            int16_t *enemy_own = (ent->faction == 0) ? g_owner_blue : g_owner_red;
+            int tgt_idx = enemy_own[ent->y * GRID_MAX_X + ent->x];
+            int best_axis = 0;
+            if (tgt_idx >= 0 && tgt_idx < count) {
+                int tx = units[tgt_idx].x, ty = units[tgt_idx].y;
+                int adx = abs(ent->x - tx), ady = abs(ent->y - ty);
+                if (adx != ady) {
+                    for (int c = 0; c < ncand; c++) {
+                        if (cand_score[c] != best_score) continue;
+                        if (ent->move_type == 1 && best_backed) {
+                            int bk_x = 2 * ent->x - cand_x[c];
+                            int bk_y = 2 * ent->y - cand_y[c];
+                            int ally = grid_unit_at(bk_x, bk_y);
+                            if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
+                                continue;
+                        }
+                        int wx = cand_x[c] - 1 < mx - cand_x[c] ? cand_x[c] - 1 : mx - cand_x[c];
+                        int wy = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
+                        int wd = wx < wy ? wx : wy;
+                        if (wd != best_wdist) continue;
+                        int pref = (adx >= ady)
+                            ? (abs(cand_x[c] - tx) < adx)
+                            : (abs(cand_y[c] - ty) < ady);
+                        if (pref > best_axis) best_axis = pref;
+                    }
+                }
+            }
+
             /* Pick first matching candidate */
             int bx = ent->x, by = ent->y;
             bool found = false;
@@ -6461,6 +6491,14 @@ static void avk_movement(Engine *engine) {
                 int wy = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
                 int wd = wx < wy ? wx : wy;
                 if (wd != best_wdist) continue;
+                if (best_axis && tgt_idx >= 0 && tgt_idx < count) {
+                    int tx = units[tgt_idx].x, ty = units[tgt_idx].y;
+                    int adx = abs(ent->x - tx), ady = abs(ent->y - ty);
+                    int pref = (adx >= ady)
+                        ? (abs(cand_x[c] - tx) < adx)
+                        : (abs(cand_y[c] - ty) < ady);
+                    if (!pref) continue;
+                }
                 bx = cand_x[c]; by = cand_y[c];
                 found = true;
                 break;
