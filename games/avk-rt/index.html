@@ -63,10 +63,12 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="version">v0.0.14 (277ffe0)</div>
+    <div id="version">v0.0.14 (b7d9d0a)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
+<script src="/lib/controls.js"></script>
+<script src="/lib/layout.js"></script>
 <script>
 (function() {
     const canvas = document.getElementById('canvas');
@@ -85,7 +87,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const BG = '#0f0f23';
 
     let engine = null;
-    let playing = false;
     let mapLabel = '';
 
     /* ── Turn timing ─────────────────────────────────────────── */
@@ -212,36 +213,12 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     }
 
     /* ── Layout ──────────────────────────────────────────────── */
-    const HEADER_MIN = 40, HEADER_MAX = 60;
-    const FOOTER_MIN = 40, FOOTER_MAX = 60;
-    const GAME_MIN = 240, GAME_ASPECT = 16 / 9;
-
-    function layout() {
-        const totalH = window.innerHeight, totalW = window.innerWidth;
-        const chromeMin = HEADER_MIN + FOOTER_MIN;
-        let headerH, footerH, gameH;
-        if (totalH <= chromeMin) {
-            headerH = totalH / 2; footerH = totalH / 2; gameH = 0;
-        } else if (totalH < chromeMin + GAME_MIN) {
-            headerH = HEADER_MIN; footerH = FOOTER_MIN; gameH = totalH - chromeMin;
-        } else {
-            const avail = totalH - chromeMin - GAME_MIN;
-            const extra = (HEADER_MAX - HEADER_MIN) + (FOOTER_MAX - FOOTER_MIN);
-            const t = Math.min(1, avail / extra);
-            headerH = HEADER_MIN + (HEADER_MAX - HEADER_MIN) * t;
-            footerH = FOOTER_MIN + (FOOTER_MAX - FOOTER_MIN) * t;
-            gameH = totalH - headerH - footerH;
-        }
-        headerEl.style.height = Math.floor(headerH) + 'px';
-        footerEl.style.height = Math.floor(footerH) + 'px';
-        middleEl.style.height = Math.floor(gameH) + 'px';
-        let cw = gameH * GAME_ASPECT, ch = gameH;
-        if (cw > totalW) { cw = totalW; ch = cw / GAME_ASPECT; }
-        canvas.style.width = Math.floor(cw) + 'px';
-        canvas.style.height = Math.floor(ch) + 'px';
-    }
-    layout();
-    window.addEventListener('resize', layout);
+    GameLayout.init({
+        canvas: canvas,
+        headerEl: headerEl,
+        footerEl: footerEl,
+        middleEl: middleEl,
+    });
 
     /* ── Sprites ─────────────────────────────────────────────── */
     const SPRITE_NAMES = ['knight_body', 'archer_body', 'knight_weapon', 'archer_weapon'];
@@ -367,8 +344,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 for (const u of viewUnits) {
                     if (u.isDying) u.dead = true;
                 }
-                updateButtons();
-                if (playing && !gameOver) {
+                controls.updateButtons();
+                if (controls.isPlaying() && !gameOver) {
                     startTurn();
                 }
                 return;
@@ -404,107 +381,41 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         requestAnimationFrame(render);
     }
 
-    function updateButtons() {
-        if (!engine) { btnRewind.disabled = true; btnStep.disabled = true; return; }
-        btnRewind.disabled = engine.getTurn() <= 1 || animating;
-        btnStep.disabled = engine.isGameOver() || animating;
-    }
-
-    function togglePlay() {
-        playing = !playing;
-        btnPlay.textContent = playing ? 'Pause' : 'Play';
-        btnPlay.classList.toggle('active', playing);
-        if (playing && !animating) startTurn();
-        updateButtons();
-    }
-
-    function rewindOne() {
-        if (!engine) return;
-        if (playing) togglePlay();
-        if (animating) return;
-        const turn = engine.getTurn();
-        if (turn <= 1) return;
-        engine.rewind(turn - 1);
-        gameOverEl.textContent = '';
-        initViewFromModel();
-        animating = false;
-        requestAnimationFrame(render);
-        updateButtons();
-    }
-
-    function quickStep() {
-        if (!engine || engine.isGameOver() || animating) return;
-        engine.turn();
-        updateViewForTurn();
-        /* Snap view to final positions (no animation) */
-        for (const u of viewUnits) {
-            u.prevX = u.x;
-            u.prevY = u.y;
-        }
-        requestAnimationFrame(render);
-        updateButtons();
-    }
-
-    function stepOne() {
-        if (playing) togglePlay();
-        startTurn();
-    }
-
-    function newGame() {
-        stopHold();
-        if (playing) togglePlay();
-        animating = false;
-        gameOverEl.textContent = '';
-        engine.initWithConfig('wasm-rt');
-        engine.turn();
-        initViewFromModel();
-        requestAnimationFrame(render);
-        updateButtons();
-    }
-
-    /* ── Hold behavior ──────────────────────────────────────── */
-    let holdTimeout = null;
-    let holdInterval = null;
-
-    function startHold(action) {
-        stopHold();
-        action();
-        holdTimeout = setTimeout(function() {
-            holdInterval = setInterval(action, 100);
-        }, 300);
-    }
-
-    function stopHold() {
-        if (holdTimeout) { clearTimeout(holdTimeout); holdTimeout = null; }
-        if (holdInterval) { clearInterval(holdInterval); holdInterval = null; }
-    }
-
-    /* ── Event wiring ───────────────────────────────────────── */
-    btnPlay.addEventListener('click', togglePlay);
-    btnNew.addEventListener('click', newGame);
-
-    btnStep.addEventListener('mousedown', function() { startHold(function() { if (playing) togglePlay(); quickStep(); }); });
-    btnRewind.addEventListener('mousedown', function() { startHold(function() { if (playing) togglePlay(); rewindOne(); }); });
-    document.addEventListener('mouseup', stopHold);
-
-    let heldKey = null;
-    document.addEventListener('keydown', function(e) {
-        if (e.repeat) return;
-        if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
-        else if (e.code === 'ArrowRight') {
-            e.preventDefault();
-            heldKey = 'right';
-            startHold(function() { if (playing) togglePlay(); quickStep(); });
-        }
-        else if (e.code === 'ArrowLeft') {
-            e.preventDefault();
-            heldKey = 'left';
-            startHold(function() { if (playing) togglePlay(); rewindOne(); });
-        }
-    });
-    document.addEventListener('keyup', function(e) {
-        if (e.code === 'ArrowRight' && heldKey === 'right') { stopHold(); heldKey = null; }
-        else if (e.code === 'ArrowLeft' && heldKey === 'left') { stopHold(); heldKey = null; }
+    var controls = GameControls.init({
+        btnPlay: btnPlay,
+        btnStep: btnStep,
+        btnRewind: btnRewind,
+        btnNew: btnNew,
+        onStep: function() {
+            if (!engine || engine.isGameOver() || animating) return;
+            engine.turn();
+            updateViewForTurn();
+            for (const u of viewUnits) { u.prevX = u.x; u.prevY = u.y; }
+            requestAnimationFrame(render);
+        },
+        onRewind: function() {
+            if (!engine || animating) return;
+            var turn = engine.getTurn();
+            if (turn <= 1) return;
+            engine.rewind(turn - 1);
+            gameOverEl.textContent = '';
+            initViewFromModel();
+            animating = false;
+            requestAnimationFrame(render);
+        },
+        onNewGame: function() {
+            animating = false;
+            gameOverEl.textContent = '';
+            engine.initWithConfig('wasm-rt');
+            engine.turn();
+            initViewFromModel();
+            requestAnimationFrame(render);
+        },
+        onPlay: function() {
+            if (!animating) startTurn();
+        },
+        canStep: function() { return !!engine && !engine.isGameOver() && !animating; },
+        canRewind: function() { return !!engine && engine.getTurn() > 1 && !animating; },
     });
 
     /* ── Init ────────────────────────────────────────────────── */
