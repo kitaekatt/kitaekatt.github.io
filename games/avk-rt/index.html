@@ -20,7 +20,7 @@ body {
     gap: 16px; overflow: hidden;
 }
 #header-area h1 { font-size: 1.4em; color: #f0f0f0; white-space: nowrap; }
-#status { font-size: 0.95em; color: #aaa; white-space: nowrap; }
+#status { font-size: 0.95em; color: #aaa; white-space: nowrap; font-family: monospace; }
 #game-over-msg { font-size: 1.1em; font-weight: bold; color: #ffd700; }
 #middle { display: flex; align-items: center; justify-content: center; }
 canvas { border: 1px solid #333; border-radius: 4px; image-rendering: pixelated; }
@@ -61,7 +61,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="version">v0.0.14 (24e16e9)</div>
+    <div id="version">v0.0.14 (88303c1)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -360,11 +360,13 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         const gameOver = engine.isGameOver();
         if (gameOver) gameOverEl.textContent = engine.getMessage();
         const aliveCount = viewUnits.filter(u => !u.dead && !u.isDying).length;
-        const phaseLabel = currentPhase >= 0 ? ` | ${phase} ${Math.floor(t*100)}%` : '';
-        const tt = turnTiming.total > 0
-            ? ` | ${turnTiming.total.toFixed(0)}ms (eng:${turnTiming.engine.toFixed(1)} view:${turnTiming.view.toFixed(1)} phase:${phaseMs.toFixed(0)})`
+        const pad = (s, n) => (s + ' '.repeat(n)).slice(0, n);
+        const padL = (s, n) => (' '.repeat(n) + s).slice(-n);
+        const phaseName = currentPhase >= 0 ? pad(phase, 8) + padL(Math.floor(t*100)+'%', 4) : pad('', 13);
+        const timing = turnTiming.total > 0
+            ? `${padL(turnTiming.total.toFixed(0), 4)}ms  eng:${padL(turnTiming.engine.toFixed(1), 5)}  view:${padL(turnTiming.view.toFixed(1), 5)}  phase:${padL(phaseMs.toFixed(0), 3)}`
             : '';
-        statusEl.textContent = `${mapLabel} | Turn ${turn} | ${aliveCount} units${phaseLabel}${tt}`;
+        statusEl.textContent = `${mapLabel} | Turn ${padL(''+turn, 4)} | ${padL(''+aliveCount, 3)} units | ${phaseName} | ${timing}`;
 
         /* Phase progression */
         if (currentPhase >= 0) {
