@@ -50,7 +50,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <div id="game-over-msg"></div>
 </div>
 <div id="middle">
-    <canvas id="canvas" width="2048" height="1152"></canvas>
+    <canvas id="canvas" width="3072" height="1728"></canvas>
 </div>
 <div id="footer-area">
     <button id="btn-play" title="Space">Play</button>
@@ -61,7 +61,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="version">v0.0.14 (efd37b8)</div>
+    <div id="version">v0.0.14 (42a8823)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -79,7 +79,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const middleEl = document.getElementById('middle');
     const footerEl = document.getElementById('footer-area');
 
-    const CELL = 64, COLS = 32, ROWS = 18;
+    const CELL = 64, COLS = 48, ROWS = 27;
     const BG = '#0f0f23';
 
     let engine = null;

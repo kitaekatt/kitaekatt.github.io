@@ -85,13 +85,13 @@ configs:
     map_size: { x: 151, y: 49 }
     max_turns: 1000
   wasm-rt:
-    archers: 5
-    knights: 19
-    map_size: { x: 32, y: 18 }
+    archers: 99
+    knights: 150
+    map_size: { x: 48, y: 27 }
     max_turns: 200
 
-archers: 995
-knights: 2781
+archers: 5
+knights: 19
 map_size:
   x: 321
   y: 145
@@ -3569,7 +3569,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <div id="game-over-msg"></div>
 </div>
 <div id="middle">
-    <canvas id="canvas" width="2048" height="1152"></canvas>
+    <canvas id="canvas" width="3072" height="1728"></canvas>
 </div>
 <div id="footer-area">
     <button id="btn-play" title="Space">Play</button>
@@ -3598,7 +3598,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const middleEl = document.getElementById('middle');
     const footerEl = document.getElementById('footer-area');
 
-    const CELL = 64, COLS = 32, ROWS = 18;
+    const CELL = 64, COLS = 48, ROWS = 27;
     const BG = '#0f0f23';
 
     let engine = null;
@@ -3859,7 +3859,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         if (!engine) return;
 
         ctx.fillStyle = BG;
-        ctx.fillRect(0, 0, 1024, 576);
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         drawGrid();
 
         const phase = currentPhase >= 0 ? PHASES[currentPhase] : 'idle';
