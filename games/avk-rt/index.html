@@ -340,7 +340,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         if (!engine) return;
 
         ctx.fillStyle = BG;
-        ctx.fillRect(0, 0, 1024, 576);
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         drawGrid();
 
         const phase = currentPhase >= 0 ? PHASES[currentPhase] : 'idle';
