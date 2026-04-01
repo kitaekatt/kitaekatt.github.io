@@ -5862,20 +5862,40 @@ static void avk_app_start(Engine *engine) {
  * dist_to_blue[y][x] = manhattan distance to nearest blue (knight) unit
  * Built via BFS flood-fill from all enemy positions: O(cells) not O(units²).
  * A cell with distance 0 contains an enemy — the movement target and attack condition.
+ *
+ * Owner arrays track which unit index "owns" each cell (nearest source).
+ * Used by incremental_update to walk Voronoi regions efficiently.
  */
 
 static int16_t g_dist_to_red[GRID_MAX_Y * GRID_MAX_X];
 static int16_t g_dist_to_blue[GRID_MAX_Y * GRID_MAX_X];
+static int16_t g_owner_red[GRID_MAX_Y * GRID_MAX_X];
+static int16_t g_owner_blue[GRID_MAX_Y * GRID_MAX_X];
 
 /* BFS queue — max cells = GRID_MAX_X * GRID_MAX_Y */
 #define BFS_MAX (GRID_MAX_X * GRID_MAX_Y)
 static int32_t g_bfs_queue[BFS_MAX];
 
-static void build_distance_field(int16_t *dist, UnitData *units, int count,
-                                 int faction, int mx, int my) {
+/* Bitset for incremental update phases */
+#define BITSET_SIZE ((GRID_MAX_X * GRID_MAX_Y + 63) / 64)
+static uint64_t g_raised[BITSET_SIZE];
+static uint64_t g_in_queue[BITSET_SIZE];
+
+static inline void bit_set(uint64_t *bs, int idx) { bs[idx/64] |= (1ULL << (idx%64)); }
+static inline void bit_clear(uint64_t *bs, int idx) { (void)bs; (void)idx; bs[idx/64] &= ~(1ULL << (idx%64)); }
+static inline bool bit_test(uint64_t *bs, int idx) { return (bs[idx/64] >> (idx%64)) & 1; }
+
+typedef struct { int unit_idx; int old_x, old_y, new_x, new_y; } MovedSite;
+
+/* Scratch buffer to collect raised cell indices during phase 1 */
+static int32_t g_raised_cells[BFS_MAX];
+
+static void build_distance_field(int16_t *dist, int16_t *owner, UnitData *units,
+                                 int count, int faction, int mx, int my) {
     /* Coordinates are 1-based: valid range is 1..mx, 1..my */
     /* Init all to -1 (unvisited) — 0xFF bytes produce -1 in int16 two's complement */
     memset(dist, 0xFF, (size_t)(my + 1) * GRID_MAX_X * sizeof(int16_t));
+    memset(owner, 0xFF, (size_t)(my + 1) * GRID_MAX_X * sizeof(int16_t));
 
     /* Seed BFS with all units of the target faction */
     int head = 0, tail = 0;
@@ -5884,23 +5904,160 @@ static void build_distance_field(int16_t *dist, UnitData *units, int count,
         int x = units[i].x, y = units[i].y;
         if (x >= 1 && x <= mx && y >= 1 && y <= my && dist[y * GRID_MAX_X + x] < 0) {
             dist[y * GRID_MAX_X + x] = 0;
+            owner[y * GRID_MAX_X + x] = (int16_t)i;
             g_bfs_queue[tail++] = y * (mx + 1) + x;
         }
     }
 
-    /* BFS flood fill */
+    /* BFS flood fill — propagate owner along with distance */
     static const int dx[] = {0, 0, -1, 1};
     static const int dy[] = {-1, 1, 0, 0};
     while (head < tail) {
         int pos = g_bfs_queue[head++];
         int cy = pos / (mx + 1), cx = pos % (mx + 1);
         int16_t d = dist[cy * GRID_MAX_X + cx];
+        int16_t o = owner[cy * GRID_MAX_X + cx];
         for (int dir = 0; dir < 4; dir++) {
             int nx = cx + dx[dir], ny = cy + dy[dir];
             if (nx < 1 || nx > mx || ny < 1 || ny > my) continue;
-            if (dist[ny * GRID_MAX_X + nx] >= 0) continue;
-            dist[ny * GRID_MAX_X + nx] = d + 1;
+            int ni = ny * GRID_MAX_X + nx;
+            if (dist[ni] >= 0) continue;
+            dist[ni] = d + 1;
+            owner[ni] = o;
             g_bfs_queue[tail++] = ny * (mx + 1) + nx;
+        }
+    }
+}
+
+/* ── Incremental distance field update ────────────────────────────── */
+/*
+ * When a small number of sites (units) move, we can update the distance
+ * field incrementally instead of doing a full BFS rebuild:
+ *
+ * Phase 1: For each moved site, walk its Voronoi region (cells owned by it)
+ *   from the old position. Recompute distances using manhattan distance to the
+ *   new position. Mark cells where distance increased as "raised".
+ *
+ * Phase 2: BFS repair from (a) new positions of moved sites and
+ *   (b) non-raised neighbors of raised cells. This corrects any cells
+ *   that should now be owned by a different (closer) site.
+ */
+static void incremental_update(int16_t *dist, int16_t *own,
+                               MovedSite *moved, int nmoved,
+                               UnitData *units, int mx, int my) {
+    (void)units;
+    static const int dx[] = {0, 0, -1, 1};
+    static const int dy[] = {-1, 1, 0, 0};
+    int W = GRID_MAX_X;
+
+    /* Clear bitsets (only the portion we use) */
+    size_t bitset_bytes = ((size_t)(my + 1) * W + 63) / 64 * sizeof(uint64_t);
+    if (bitset_bytes > sizeof(g_raised)) bitset_bytes = sizeof(g_raised);
+    memset(g_raised, 0, bitset_bytes);
+    memset(g_in_queue, 0, bitset_bytes);
+
+    int n_raised = 0;
+
+    /* PHASE 1: Walk each moved site's Voronoi region, update distances.
+     *
+     * Two-pass per site:
+     *   Pass A: BFS to collect all cells in this site's Voronoi region.
+     *           Keep visited markers in place to prevent revisiting.
+     *   Pass B: Iterate collected cells, compute new manhattan distance
+     *           to the site's new position, mark raised cells, restore owner. */
+    for (int m = 0; m < nmoved; m++) {
+        int sid = moved[m].unit_idx;
+        int ox = moved[m].old_x, oy = moved[m].old_y;
+        int nx = moved[m].new_x, ny = moved[m].new_y;
+
+        int16_t visited_mark = (int16_t)(-2 - sid);
+
+        /* Pass A: BFS to collect Voronoi cells */
+        int head = 0, tail = 0;
+        int oi = oy * W + ox;
+
+        if (own[oi] == (int16_t)sid) {
+            own[oi] = visited_mark;
+            g_bfs_queue[tail++] = oi;
+        }
+
+        /* The BFS only enqueues cells once (via visited_mark), so tail <= total cells */
+        while (head < tail) {
+            int ci = g_bfs_queue[head++];
+            int cy = ci / W, cx = ci % W;
+
+            for (int dir = 0; dir < 4; dir++) {
+                int ex = cx + dx[dir], ey = cy + dy[dir];
+                if (ex < 1 || ex > mx || ey < 1 || ey > my) continue;
+                int ei = ey * W + ex;
+                if (own[ei] == (int16_t)sid) {
+                    own[ei] = visited_mark;
+                    g_bfs_queue[tail++] = ei;
+                }
+            }
+        }
+
+        /* Pass B: Update distances and restore owners for collected cells.
+         * g_bfs_queue[0..tail-1] contains all cells in this site's Voronoi region. */
+        for (int k = 0; k < tail; k++) {
+            int ci = g_bfs_queue[k];
+            int cy = ci / W, cx = ci % W;
+
+            int new_d = abs(cx - nx) + abs(cy - ny);
+            if (new_d > dist[ci]) {
+                bit_set(g_raised, ci);
+                g_raised_cells[n_raised++] = ci;
+            }
+            dist[ci] = (int16_t)new_d;
+            own[ci] = (int16_t)sid; /* restore owner */
+        }
+    }
+
+    /* PHASE 2: Repair — BFS from boundary of raised region + new site positions */
+    int head = 0, tail = 0;
+
+    /* Seed (a): new positions of moved sites */
+    for (int m = 0; m < nmoved; m++) {
+        int ni = moved[m].new_y * W + moved[m].new_x;
+        dist[ni] = 0;
+        own[ni] = (int16_t)moved[m].unit_idx;
+        if (!bit_test(g_in_queue, ni)) {
+            g_bfs_queue[tail++] = ni;
+            bit_set(g_in_queue, ni);
+        }
+    }
+
+    /* Seed (b): non-raised neighbors of raised cells (using collected list) */
+    for (int r = 0; r < n_raised; r++) {
+        int ci = g_raised_cells[r];
+        int cy = ci / W, cx = ci % W;
+        for (int dir = 0; dir < 4; dir++) {
+            int ex = cx + dx[dir], ey = cy + dy[dir];
+            if (ex < 1 || ex > mx || ey < 1 || ey > my) continue;
+            int ei = ey * W + ex;
+            if (!bit_test(g_raised, ei) && !bit_test(g_in_queue, ei)) {
+                g_bfs_queue[tail++] = ei;
+                bit_set(g_in_queue, ei);
+            }
+        }
+    }
+
+    /* BFS repair */
+    while (head < tail) {
+        int ci = g_bfs_queue[head++];
+        int cy = ci / W, cx = ci % W;
+        for (int dir = 0; dir < 4; dir++) {
+            int ex = cx + dx[dir], ey = cy + dy[dir];
+            if (ex < 1 || ex > mx || ey < 1 || ey > my) continue;
+            int ei = ey * W + ex;
+            if (dist[ci] + 1 < dist[ei]) {
+                dist[ei] = dist[ci] + 1;
+                own[ei] = own[ci];
+                if (!bit_test(g_in_queue, ei)) {
+                    g_bfs_queue[tail++] = ei;
+                    bit_set(g_in_queue, ei);
+                }
+            }
         }
     }
 }
@@ -5979,13 +6136,24 @@ static void avk_movement(Engine *engine) {
     /* Pending moves buffer — applied in batch after each pass */
     int pend_idx[4096], pend_x[4096], pend_y[4096];
 
-    bool moved = true;
-    while (moved) {
-        moved = false;
+    /* MovedSite buffers for incremental update */
+    MovedSite moved_red[4096], moved_blue[4096];
 
-        /* Rebuild distance fields from current positions each pass */
-        build_distance_field(g_dist_to_red, units, count, 0, mx, my);
-        build_distance_field(g_dist_to_blue, units, count, 1, mx, my);
+    /* Adaptive threshold: use incremental only when few units moved.
+     * Incremental cost = O(voronoi_region_sum) + O(repair_bfs).
+     * Full rebuild cost = O(cells).
+     * When many units move, the voronoi walk alone approaches O(cells)
+     * and the repair adds more, making full rebuild cheaper. */
+    int incr_threshold = count / 8;
+    if (incr_threshold < 32) incr_threshold = 32;
+
+    /* Build initial distance fields with owner tracking (full BFS) */
+    build_distance_field(g_dist_to_red, g_owner_red, units, count, 0, mx, my);
+    build_distance_field(g_dist_to_blue, g_owner_blue, units, count, 1, mx, my);
+
+    bool any_moved = true;
+    while (any_moved) {
+        any_moved = false;
 
         /* Phase 1: decide moves for all units */
         int npend = 0;
@@ -6079,11 +6247,16 @@ static void avk_movement(Engine *engine) {
             }
         }
 
-        /* Phase 2: apply moves, skip if target now occupied */
+        /* Phase 2: apply moves, skip if target now occupied.
+         * Track which faction's units actually moved for incremental update. */
+        int n_moved_red = 0, n_moved_blue = 0;
+
         for (int p = 0; p < npend; p++) {
             int i = pend_idx[p];
             UnitData *ent = &units[i];
             if (grid_occupied(pend_x[p], pend_y[p])) continue;
+
+            int old_x = ent->x, old_y = ent->y;
             g_occ_grid[ent->y * GRID_MAX_X + ent->x] = 0;
             ent->x = pend_x[p]; ent->y = pend_y[p];
             grid_set(ent->x, ent->y, i);
@@ -6091,8 +6264,44 @@ static void avk_movement(Engine *engine) {
 
             int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, ent->eid, loc_comp);
             if (loc) { loc[0] = ent->x; loc[1] = ent->y; ecs_modified_id(engine->world, ent->eid, loc_comp); }
-            moved = true;
+            any_moved = true;
+
+            /* Record movement by faction for distance field update */
+            if (ent->faction == 0) {
+                moved_red[n_moved_red].unit_idx = i;
+                moved_red[n_moved_red].old_x = old_x;
+                moved_red[n_moved_red].old_y = old_y;
+                moved_red[n_moved_red].new_x = ent->x;
+                moved_red[n_moved_red].new_y = ent->y;
+                n_moved_red++;
+            } else {
+                moved_blue[n_moved_blue].unit_idx = i;
+                moved_blue[n_moved_blue].old_x = old_x;
+                moved_blue[n_moved_blue].old_y = old_y;
+                moved_blue[n_moved_blue].new_x = ent->x;
+                moved_blue[n_moved_blue].new_y = ent->y;
+                n_moved_blue++;
+            }
         }
+
+        /* Phase 3: Update distance fields — incremental if few moved, else full rebuild */
+        if (any_moved) {
+            if (n_moved_red > 0) {
+                if (n_moved_red > incr_threshold) {
+                    build_distance_field(g_dist_to_red, g_owner_red, units, count, 0, mx, my);
+                } else {
+                    incremental_update(g_dist_to_red, g_owner_red, moved_red, n_moved_red, units, mx, my);
+                }
+            }
+            if (n_moved_blue > 0) {
+                if (n_moved_blue > incr_threshold) {
+                    build_distance_field(g_dist_to_blue, g_owner_blue, units, count, 1, mx, my);
+                } else {
+                    incremental_update(g_dist_to_blue, g_owner_blue, moved_blue, n_moved_blue, units, mx, my);
+                }
+            }
+        }
+
     }
 }
 
