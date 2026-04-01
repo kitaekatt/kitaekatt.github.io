@@ -110,13 +110,13 @@ configs:
     map_size: { x: 272, y: 153 }
     max_turns: 1000
   wasm_23x:
-    archers: 1098
-    knights: 4387
+    archers: 1199
+    knights: 4287
     map_size: { x: 368, y: 207 }
     max_turns: 1000
   wasm_30x:
-    archers: 1777
-    knights: 7554
+    archers: 1908
+    knights: 7423
     map_size: { x: 480, y: 270 }
     max_turns: 1000
   wasm_38x:
@@ -4105,8 +4105,19 @@ body {
     padding: 24px; color: #ccc; font-size: 0.85em; line-height: 1.6;
     text-align: left; overflow: auto;
 }
-#about-panel h3 { color: #f0f0f0; margin-bottom: 8px; }
+#about-panel h3 { color: #f0f0f0; margin: 16px 0 8px; }
+#about-panel h3:first-child { margin-top: 0; }
 #about-panel p { margin-bottom: 10px; }
+.stat-cards { display: flex; gap: 12px; margin: 12px 0; flex-wrap: wrap; }
+.stat-card {
+    border: 1px solid #444; border-radius: 6px; padding: 10px 14px;
+    min-width: 140px; flex: 1;
+}
+.stat-card .name { font-weight: bold; font-size: 1.1em; margin-bottom: 6px; }
+.stat-card .name.red { color: #ff6b6b; }
+.stat-card .name.blue { color: #4dabf7; }
+.stat-card .stat { color: #999; margin: 2px 0; }
+.stat-card .stat b { color: #ccc; }
 #middle { display: flex; align-items: center; justify-content: center; position: relative; }
 canvas { border: 1px solid #333; border-radius: 4px; image-rendering: pixelated; }
 #footer-area {
@@ -4143,10 +4154,37 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 <div id="middle">
     <canvas id="canvas" width="3072" height="1728"></canvas>
     <div id="about-panel">
-        <h3>About</h3>
-        <p>Built in C with Flecs ECS, it simulates archers (red) fighting knights (blue) on a 16:9 grid with sprite animations. Combat is turn-based -- all units move one tile per turn. Knights have range 1 and 25 HP. Archers have range 3 and 10 HP. All attacks deal 5 damage.</p>
-        <p>Knights need to surround archers to kill them -- with equal movement speed and shorter range, knights must corner archers against walls or each other.</p>
-        <p>Check out the <a href="../avk/" style="color:#4dabf7;">minimalist version</a> for large-scale battles.</p>
+        <h3>Archers vs Knights</h3>
+        <p>A turn-based auto-battler on a 16:9 grid. Red archers and blue knights fight until one side is eliminated. All units move one tile per turn. Built in C with <a href="https://www.flecs.dev/" style="color:#4dabf7;">Flecs ECS</a>.</p>
+
+        <h3>Units</h3>
+        <div class="stat-cards">
+            <div class="stat-card">
+                <div class="name red">Archer</div>
+                <div class="stat">HP: <b>10</b></div>
+                <div class="stat">Range: <b>3</b></div>
+                <div class="stat">Damage: <b>5</b></div>
+                <div class="stat">Speed: <b>1</b></div>
+                <div class="stat">Style: <b>Kite</b></div>
+            </div>
+            <div class="stat-card">
+                <div class="name blue">Knight</div>
+                <div class="stat">HP: <b>25</b></div>
+                <div class="stat">Range: <b>1</b></div>
+                <div class="stat">Damage: <b>5</b></div>
+                <div class="stat">Speed: <b>1</b></div>
+                <div class="stat">Style: <b>Charge</b></div>
+            </div>
+        </div>
+
+        <h3>How It Works</h3>
+        <p><b>Each turn:</b> all units move, then all units attack.</p>
+        <p><b>Knights</b> charge toward the nearest archer. When two moves are equally good, they prefer to stay backed by an ally, then prefer moves away from walls, then prefer closing the longer axis to their target.</p>
+        <p><b>Archers</b> try to stay at exactly their attack range. Too close and they retreat; too far and they advance. Same tiebreakers as knights.</p>
+        <p><b>Attack:</b> each unit hits the lowest-HP enemy within range. Knights must be adjacent; archers can shoot up to 3 tiles away.</p>
+        <p><b>Win condition:</b> the game ends when one side has no units left.</p>
+
+        <p style="margin-top:16px;">Check out the <a href="../avk/" style="color:#4dabf7;">minimalist version</a> for large-scale battles.</p>
     </div>
 </div>
 <div id="footer-area">
@@ -5051,9 +5089,19 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     padding: 24px; color: #ccc; font-size: 0.85em; line-height: 1.6;
     text-align: left; overflow: auto;
 }
-#about-panel h3 { color: #f0f0f0; margin-bottom: 8px; }
+#about-panel h3 { color: #f0f0f0; margin: 16px 0 8px; }
+#about-panel h3:first-child { margin-top: 0; }
 #about-panel p { margin-bottom: 10px; }
-#about-panel ol { margin-left: 20px; margin-bottom: 10px; }
+.stat-cards { display: flex; gap: 12px; margin: 12px 0; flex-wrap: wrap; }
+.stat-card {
+    border: 1px solid #444; border-radius: 6px; padding: 10px 14px;
+    min-width: 140px; flex: 1;
+}
+.stat-card .name { font-weight: bold; font-size: 1.1em; margin-bottom: 6px; }
+.stat-card .name.red { color: #ff6b6b; }
+.stat-card .name.blue { color: #4dabf7; }
+.stat-card .stat { color: #999; margin: 2px 0; }
+.stat-card .stat b { color: #ccc; }
 #legend {
     margin-top: 8px;
     font-size: 0.8em;
@@ -5087,10 +5135,37 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 <div id="middle">
     <canvas id="canvas"></canvas>
     <div id="about-panel">
-        <h3>About</h3>
-        <p>Built in C with Flecs ECS, it simulates archers (red) fighting knights (blue) on a 16:9 grid. Combat is turn-based -- all units move one tile per turn. Knights have range 1 and 25 HP. Archers have range 3 and 10 HP. All attacks deal 5 damage.</p>
-        <p>Knights need to surround archers to kill them -- with equal movement speed and shorter range, knights must corner archers against walls or each other.</p>
-        <p>Check out the <a href="../avk-rt/" style="color:#4dabf7;">animated version</a> with sprites and phase animations.</p>
+        <h3>Archers vs Knights</h3>
+        <p>A turn-based auto-battler on a 16:9 grid. Red archers and blue knights fight until one side is eliminated. All units move one tile per turn. Built in C with <a href="https://www.flecs.dev/" style="color:#4dabf7;">Flecs ECS</a>.</p>
+
+        <h3>Units</h3>
+        <div class="stat-cards">
+            <div class="stat-card">
+                <div class="name red">Archer</div>
+                <div class="stat">HP: <b>10</b></div>
+                <div class="stat">Range: <b>3</b></div>
+                <div class="stat">Damage: <b>5</b></div>
+                <div class="stat">Speed: <b>1</b></div>
+                <div class="stat">Style: <b>Kite</b></div>
+            </div>
+            <div class="stat-card">
+                <div class="name blue">Knight</div>
+                <div class="stat">HP: <b>25</b></div>
+                <div class="stat">Range: <b>1</b></div>
+                <div class="stat">Damage: <b>5</b></div>
+                <div class="stat">Speed: <b>1</b></div>
+                <div class="stat">Style: <b>Charge</b></div>
+            </div>
+        </div>
+
+        <h3>How It Works</h3>
+        <p><b>Each turn:</b> all units move, then all units attack.</p>
+        <p><b>Knights</b> charge toward the nearest archer. When two moves are equally good, they prefer to stay backed by an ally, then prefer moves away from walls, then prefer closing the longer axis to their target.</p>
+        <p><b>Archers</b> try to stay at exactly their attack range. Too close and they retreat; too far and they advance. Same tiebreakers as knights.</p>
+        <p><b>Attack:</b> each unit hits the lowest-HP enemy within range. Knights must be adjacent; archers can shoot up to 3 tiles away.</p>
+        <p><b>Win condition:</b> the game ends when one side has no units left.</p>
+
+        <p style="margin-top:16px;">Check out the <a href="../avk-rt/" style="color:#4dabf7;">animated version</a> with sprites and phase animations.</p>
     </div>
 </div>
 <div id="footer-area">
