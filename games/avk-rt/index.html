@@ -21,7 +21,7 @@ body {
 }
 #header-area h1 { font-size: 1.4em; color: #f0f0f0; white-space: nowrap; }
 #status { font-size: 0.95em; color: #aaa; white-space: nowrap; font-family: monospace; }
-#game-over-msg { font-size: 1.1em; font-weight: bold; color: #ffd700; }
+#game-over-msg { font-size: 1.1em; font-weight: bold; color: #ffd700; height: 1.4em; line-height: 1.4em; }
 #middle { display: flex; align-items: center; justify-content: center; }
 canvas { border: 1px solid #333; border-radius: 4px; image-rendering: pixelated; }
 #footer-area {
@@ -63,7 +63,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="version">v0.0.14 (b7d9d0a)</div>
+    <div id="version">v0.0.14 (c115e8d)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -88,6 +88,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 
     let engine = null;
     let mapLabel = '';
+    const frameTimes = [];
+    let lastFrameTime = 0;
 
     /* ── Turn timing ─────────────────────────────────────────── */
     const TARGET_TURN_MS = 375;
@@ -322,10 +324,26 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             drawUnit(u, tMove, tAttack, tReact, tDefeat);
         }
 
+        /* FPS */
+        const now = performance.now();
+        if (lastFrameTime > 0) {
+            frameTimes.push(now - lastFrameTime);
+            if (frameTimes.length > 5) frameTimes.shift();
+        }
+        lastFrameTime = now;
+        const avgMs = frameTimes.length ? frameTimes.reduce((a,b) => a+b) / frameTimes.length : 0;
+        const fps = avgMs > 0 ? Math.round(1000 / avgMs) : 0;
+
         /* Status */
         const turn = engine.getTurn();
         const gameOver = engine.isGameOver();
-        if (gameOver) gameOverEl.textContent = engine.getMessage();
+        if (gameOver) {
+            gameOverEl.textContent = engine.getMessage();
+            gameOverEl.style.color = '#ffd700';
+        } else {
+            gameOverEl.textContent = fps > 0 ? fps + ' fps' : '';
+            gameOverEl.style.color = '#555';
+        }
         const aliveCount = viewUnits.filter(u => !u.dead && !u.isDying).length;
         const pad = (s, n) => (s + ' '.repeat(n)).slice(0, n);
         const padL = (s, n) => (' '.repeat(n) + s).slice(-n);
