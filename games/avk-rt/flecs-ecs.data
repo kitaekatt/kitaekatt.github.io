@@ -99,20 +99,30 @@ configs:
     knights: 536
     map_size: { x: 128, y: 72 }
     max_turns: 1000
-  wasm_11x:
-    archers: 256
-    knights: 1008
-    map_size: { x: 176, y: 99 }
+  wasm_12x:
+    archers: 302
+    knights: 1191
+    map_size: { x: 192, y: 108 }
     max_turns: 1000
-  wasm_14x:
-    archers: 413
-    knights: 1627
-    map_size: { x: 224, y: 126 }
+  wasm_17x:
+    archers: 605
+    knights: 2391
+    map_size: { x: 272, y: 153 }
     max_turns: 1000
-  wasm_18x:
-    archers: 680
-    knights: 2681
-    map_size: { x: 288, y: 162 }
+  wasm_23x:
+    archers: 1108
+    knights: 4377
+    map_size: { x: 368, y: 207 }
+    max_turns: 1000
+  wasm_30x:
+    archers: 1885
+    knights: 7446
+    map_size: { x: 480, y: 270 }
+    max_turns: 1000
+  wasm_38x:
+    archers: 3024
+    knights: 11947
+    map_size: { x: 608, y: 342 }
     max_turns: 1000
   console:
     archers: 105
@@ -120,11 +130,11 @@ configs:
     map_size: { x: 151, y: 49 }
     max_turns: 1000
 
-archers: 680
-knights: 2681
+archers: 3024
+knights: 11947
 map_size:
-  x: 288
-  y: 162
+  x: 608
+  y: 342
 max_turns: 1000
 templates:
   components: [Health, MovementSpeed, MovementType, Weapon, AttackDamage, RedFaction, BlueFaction, Location, MapSize, SpawnRequest, TookDamage]
@@ -1758,10 +1768,19 @@ var GameControls = (function() {
             else if (e.code === 'ArrowLeft' && heldKey === 'left') { stopHold(); heldKey = null; }
         });
 
+        function reset() {
+            stopHold();
+            playing = false;
+            cfg.btnPlay.textContent = 'Play';
+            cfg.btnPlay.classList.remove('active');
+            updateButtons();
+        }
+
         updateButtons();
 
         return {
             updateButtons: updateButtons,
+            reset: reset,
             isPlaying: function() { return playing; },
             togglePlay: togglePlay,
         };
@@ -4145,9 +4164,11 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <option value="wasm_3x" selected>48×27</option>
         <option value="wasm_5x">80×45</option>
         <option value="wasm_8x">128×72</option>
-        <option value="wasm_11x">176×99</option>
-        <option value="wasm_14x">224×126</option>
-        <option value="wasm_18x">288×162</option>
+        <option value="wasm_12x">192×108</option>
+        <option value="wasm_17x">272×153</option>
+        <option value="wasm_23x">368×207</option>
+        <option value="wasm_30x">480×270</option>
+        <option value="wasm_38x">608×342</option>
     </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
     <div id="version">v0.1.0</div>
@@ -4594,7 +4615,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         canvas.height = my * CELL;
         mapLabel = mx + 'x' + my + ' map';
         initViewFromModel();
-        controls.updateButtons();
+        controls.reset();
         requestAnimationFrame(render);
     });
 
@@ -5083,9 +5104,11 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <option value="wasm_3x">48×27</option>
         <option value="wasm_5x">80×45</option>
         <option value="wasm_8x">128×72</option>
-        <option value="wasm_11x">176×99</option>
-        <option value="wasm_14x">224×126</option>
-        <option value="wasm_18x" selected>288×162</option>
+        <option value="wasm_12x">192×108</option>
+        <option value="wasm_17x">272×153</option>
+        <option value="wasm_23x">368×207</option>
+        <option value="wasm_30x">480×270</option>
+        <option value="wasm_38x" selected>608×342</option>
     </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
     <div id="version">v0.1.0</div>
@@ -5108,7 +5131,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const loadingEl = document.getElementById('loading');
 
     let engine = null;
-    var currentConfig = 'wasm_18x';
+    var currentConfig = 'wasm_38x';
     let mapW = 288, mapH = 162;
     let CELL_W = 1, CELL_H = 1;
     const frameTimes = [];
@@ -5119,7 +5142,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const GRID_COLOR = '#1a1a30';
     const ARCHER_COLOR = '#ff6b6b';
     const KNIGHT_COLOR = '#4dabf7';
-    const HIT_COLOR = '#ffffff';
+    const ARCHER_HIT = 'hsl(0, 100%, 90%)';
+    const KNIGHT_HIT = 'hsl(213, 90%, 90%)';
     const BORDER_COLOR = '#333355';
 
     var gameLayout = GameLayout.init({
@@ -5180,12 +5204,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             if (faction === 0) archerCount++;
             else if (faction === 1) knightCount++;
 
-            if (tookDamage) {
-                ctx.fillStyle = HIT_COLOR;
-            } else if (faction === 0) {
-                ctx.fillStyle = ARCHER_COLOR;
+            if (faction === 0) {
+                ctx.fillStyle = tookDamage ? ARCHER_HIT : ARCHER_COLOR;
             } else {
-                ctx.fillStyle = KNIGHT_COLOR;
+                ctx.fillStyle = tookDamage ? KNIGHT_HIT : KNIGHT_COLOR;
             }
 
             ctx.fillRect((x - 1) * CELL_W + 1, (y - 1) * CELL_H + 1, CELL_W - 1, CELL_H - 1);
@@ -5292,7 +5314,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         gameLayout.resize();
         render();
         gameOverEl.textContent = '';
-        controls.updateButtons();
+        controls.reset();
     });
 
     /* Init */
@@ -5433,7 +5455,7 @@ typedef struct {
     int32_t attacked_id; /* entity_id of attack target, 0 = none */
 } WasmUnit;
 
-#define MAX_UNITS 4096
+#define MAX_UNITS 16384
 static WasmUnit g_units[MAX_UNITS];
 static int g_unit_count = 0;
 static int32_t g_map_size[2] = {0, 0};
@@ -5559,7 +5581,7 @@ int wasm_init(void) {
     }
 
     AppStartResult asr;
-    if (!engine_app_start(g_engine, "wasm_18x", &asr)) {
+    if (!engine_app_start(g_engine, "wasm_38x", &asr)) {
         engine_fini(g_engine);
         g_engine = NULL;
         return 0;
@@ -6202,8 +6224,8 @@ static ecs_entity_t ensure_took_damage_comp(Engine *engine) {
 
 /* ── Spatial grid for O(1) occupancy lookups ───────────────────────── */
 
-#define GRID_MAX_X 512
-#define GRID_MAX_Y 256
+#define GRID_MAX_X 768
+#define GRID_MAX_Y 512
 static int16_t g_occ_grid[GRID_MAX_X * GRID_MAX_Y]; /* unit index+1, 0=empty */
 
 static void grid_clear(int mx, int my) {
@@ -6235,7 +6257,7 @@ static void avk_start_of_turn(Engine *engine) {
 
     /* Clear TookDamage markers */
     if (td) {
-        ecs_entity_t to_clear[4096];
+        ecs_entity_t to_clear[16384];
         int clear_count = 0;
 
         ecs_query_t *q = ecs_query(engine->world, {
@@ -6244,7 +6266,7 @@ static void avk_start_of_turn(Engine *engine) {
         });
         ecs_iter_t it = ecs_query_iter(engine->world, q);
         while (ecs_query_next(&it)) {
-            for (int i = 0; i < it.count && clear_count < 4096; i++) {
+            for (int i = 0; i < it.count && clear_count < 16384; i++) {
                 to_clear[clear_count++] = it.entities[i];
             }
         }
@@ -6612,8 +6634,8 @@ static void avk_movement(Engine *engine) {
         if (ms) { mx = *(const int32_t *)ms; my = *((const int32_t *)ms + 1); }
     }
 
-    UnitData units[4096];
-    int count = collect_units(engine, units, 4096);
+    static UnitData units[16384];
+    int count = collect_units(engine, units, 16384);
     if (count == 0) return;
 
     ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
@@ -6643,10 +6665,10 @@ static void avk_movement(Engine *engine) {
     dbg_turn++;
 
     /* Pending moves buffer — applied in batch after each pass */
-    int pend_idx[4096], pend_x[4096], pend_y[4096];
+    static int pend_idx[16384], pend_x[16384], pend_y[16384];
 
     /* MovedSite buffers for incremental update */
-    MovedSite moved_red[4096], moved_blue[4096];
+    static MovedSite moved_red[16384], moved_blue[16384];
 
     /* Adaptive threshold: use incremental only when few units moved.
      * Incremental cost = O(voronoi_region_sum) + O(repair_bfs).
@@ -6872,8 +6894,8 @@ static void avk_movement(Engine *engine) {
 
 static void avk_attack(Engine *engine) {
     if (is_simulation_paused(engine)) return;
-    UnitData units[4096];
-    int count = collect_units(engine, units, 4096);
+    static UnitData units[16384];
+    int count = collect_units(engine, units, 16384);
 
     ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
     ecs_entity_t wpn_comp = ecs_lookup(engine->world, "Weapon");
@@ -6956,7 +6978,7 @@ static void avk_despawn(Engine *engine) {
     if (!hp_comp) return;
 
     /* Collect entities to delete (can't delete during iteration) */
-    ecs_entity_t to_delete[4096];
+    static ecs_entity_t to_delete[16384];
     int del_count = 0;
 
     ecs_query_t *q = ecs_query(engine->world, {
@@ -6967,7 +6989,7 @@ static void avk_despawn(Engine *engine) {
     while (ecs_query_next(&it)) {
         for (int i = 0; i < it.count; i++) {
             const int32_t *hp = (const int32_t *)ecs_get_id(engine->world, it.entities[i], hp_comp);
-            if (hp && *hp <= 0 && del_count < 4096)
+            if (hp && *hp <= 0 && del_count < 16384)
                 to_delete[del_count++] = it.entities[i];
         }
     }
@@ -6987,7 +7009,7 @@ static void avk_spawn(Engine *engine) {
 
     /* Collect spawn requests */
     typedef struct { ecs_entity_t eid; char template[64]; int x, y; } SpawnReq;
-    SpawnReq reqs[4096];
+    static SpawnReq reqs[16384];
     int req_count = 0;
 
     ecs_query_t *q = ecs_query(engine->world, {
@@ -6996,7 +7018,7 @@ static void avk_spawn(Engine *engine) {
     });
     ecs_iter_t it = ecs_query_iter(engine->world, q);
     while (ecs_query_next(&it)) {
-        for (int i = 0; i < it.count && req_count < 4096; i++) {
+        for (int i = 0; i < it.count && req_count < 16384; i++) {
             ecs_entity_t eid = it.entities[i];
             const void *sr = ecs_get_id(engine->world, eid, sr_comp);
             const void *loc = ecs_get_id(engine->world, eid, loc_comp);
