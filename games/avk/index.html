@@ -78,6 +78,8 @@ button {
     min-width: 70px;
 }
 button:hover { background: #3a3a5a; }
+button:disabled { opacity: 0.3; cursor: default; }
+button:disabled:hover { background: #2a2a4a; }
 button:active { background: #4a4a6a; }
 button.active { background: #4a6a4a; border-color: #6a8a6a; }
 #speed-group {
@@ -248,8 +250,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 <div id="ui-area">
     <div id="controls">
         <button id="btn-play" title="Space">Play</button>
-        <button id="btn-step" title="Right Arrow">Step</button>
         <button id="btn-rewind" title="Left Arrow">Rewind</button>
+        <button id="btn-step" title="Right Arrow">Step</button>
         <button id="btn-new">New Game</button>
         <div id="fps-bar-outer">
             <div id="fps-bar-inner"><span id="fps-text"></span></div>
@@ -267,6 +269,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 </div>
 
 <script src="flecs-ecs.js"></script>
+<script src="/lib/controls.js"></script>
+<script src="/lib/layout.js"></script>
 <script>
 (function() {
     const canvas = document.getElementById('canvas');
@@ -280,15 +284,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const loadingEl = document.getElementById('loading');
 
     let engine = null;
-    let playing = false;
-    let playInterval = null;
     let mapW = 288, mapH = 162;
     let CELL_W = 1, CELL_H = 1;
-    const GAME_ASPECT = 16 / 9;
     const frameTimes = [];
     let lastFrameTime = 0;
-    let heldKey = null;
-    let heldInterval = null;
     let maxTurnReached = 0;
     let scrubbing = false;
 
@@ -300,24 +299,17 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const HIT_COLOR = '#ffffff';
     const BORDER_COLOR = '#333355';
 
-    function layout() {
-        var totalH = window.innerHeight, totalW = window.innerWidth;
-        var uiH = 160;  /* controls + legend + padding */
-        var gameH = totalH - uiH;
-        var cw = gameH * GAME_ASPECT, ch = gameH;
-        if (cw > totalW) { cw = totalW; ch = cw / GAME_ASPECT; }
-        canvas.style.width = Math.floor(cw) + 'px';
-        canvas.style.height = Math.floor(ch) + 'px';
-        /* Internal resolution: 1 pixel per cell */
-        CELL_W = Math.max(1, Math.floor(cw / mapW));
-        CELL_H = CELL_W;
-        canvas.width = mapW * CELL_W;
-        canvas.height = mapH * CELL_H;
-    }
-
-    window.addEventListener('resize', function() {
-        layout();
-        if (engine) render();
+    var gameLayout = GameLayout.init({
+        canvas: canvas,
+        headerEl: document.getElementById('game-area'),
+        footerEl: document.getElementById('ui-area'),
+        onResize: function(cw, ch) {
+            CELL_W = Math.max(1, Math.floor(cw / mapW));
+            CELL_H = CELL_W;
+            canvas.width = mapW * CELL_W;
+            canvas.height = mapH * CELL_H;
+            if (engine) render();
+        },
     });
 
     function render() {
@@ -426,70 +418,53 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         }
     }
 
+    var playInterval = null;
+
     function tick() {
-        if (!engine) return;
-        if (engine.isGameOver()) return;
+        if (!engine || engine.isGameOver()) return;
         engine.turn();
         render();
     }
 
-    function step() {
-        if (playing) stopPlaying();
-        tick();
-    }
-
-    function startPlaying() {
-        if (playing) return;
-        playing = true;
-        btnPlay.textContent = 'Pause';
-        btnPlay.classList.add('active');
-        schedulePlay();
-    }
-
-    function stopPlaying() {
-        playing = false;
-        btnPlay.textContent = 'Play';
-        btnPlay.classList.remove('active');
-        if (playInterval) {
-            clearInterval(playInterval);
-            playInterval = null;
-        }
-    }
-
-    function schedulePlay() {
+    function startAutoPlay() {
         if (playInterval) clearInterval(playInterval);
-        const ms = 0;
-        playInterval = setInterval(() => {
-            if (!playing || !engine) { stopPlaying(); return; }
+        playInterval = setInterval(function() {
+            if (!controls.isPlaying() || !engine) return;
             tick();
-            if (engine.isGameOver()) stopPlaying();
-        }, ms);
+            if (engine.isGameOver()) { controls.togglePlay(); clearInterval(playInterval); playInterval = null; }
+        }, 0);
     }
 
-    function togglePlay() {
-        if (playing) { stopPlaying(); return; }
-        if (engine && engine.isGameOver()) { newGame(); startPlaying(); return; }
-        startPlaying();
-    }
-
-    function rewind() {
-        if (!engine) return;
-        if (playing) stopPlaying();
-        const turn = engine.getTurn();
-        if (turn <= 1) return;
-        engine.rewind(turn - 1);
-        render();
-    }
-
-    function newGame() {
-        if (!engine) return;
-        stopPlaying();
-        engine.reset();
-        maxTurnReached = 0;
-        engine.turn();
-        render();
-        gameOverEl.textContent = '';
-    }
+    var controls = GameControls.init({
+        btnPlay: btnPlay,
+        btnStep: btnStep,
+        btnRewind: btnRewind,
+        btnNew: btnNew,
+        onStep: function() {
+            tick();
+        },
+        onRewind: function() {
+            if (!engine) return;
+            var turn = engine.getTurn();
+            if (turn <= 1) return;
+            engine.rewind(turn - 1);
+            render();
+        },
+        onNewGame: function() {
+            if (!engine) return;
+            if (playInterval) { clearInterval(playInterval); playInterval = null; }
+            engine.reset();
+            maxTurnReached = 0;
+            engine.turn();
+            render();
+            gameOverEl.textContent = '';
+        },
+        onPlay: function() {
+            startAutoPlay();
+        },
+        canStep: function() { return !!engine && !engine.isGameOver(); },
+        canRewind: function() { return !!engine && engine.getTurn() > 1; },
+    });
 
     /* About toggle */
     var aboutShowing = false;
@@ -500,59 +475,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         document.getElementById('scrub-bar').style.display = aboutShowing ? 'none' : '';
         document.getElementById('scrub-label').style.display = aboutShowing ? 'none' : '';
     });
-
-    /* Controls */
-    btnPlay.addEventListener('click', togglePlay);
-    btnStep.addEventListener('click', step);
-    btnRewind.addEventListener('click', rewind);
-    btnNew.addEventListener('click', newGame);
-
-    /* Keyboard — single step on press, fast-forward after 500ms hold */
-    let heldTimeout = null;
-
-    function doRewind() {
-        if (!engine) return;
-        var turn = engine.getTurn();
-        if (turn <= 1) return;
-        engine.rewind(turn - 1);
-        render();
-    }
-
-    function startHold(key, fn) {
-        if (heldKey === key) return;
-        stopHold();
-        heldKey = key;
-        fn();
-        heldTimeout = setTimeout(function() {
-            heldInterval = setInterval(fn, 0);
-        }, 500);
-    }
-
-    function stopHold() {
-        heldKey = null;
-        if (heldTimeout) { clearTimeout(heldTimeout); heldTimeout = null; }
-        if (heldInterval) { clearInterval(heldInterval); heldInterval = null; }
-    }
-
-    document.addEventListener('keydown', (e) => {
-        if (e.code === 'Space') { e.preventDefault(); e.stopPropagation(); togglePlay(); }
-        else if (e.code === 'ArrowRight' || e.code === 'Period') {
-            e.preventDefault(); e.stopPropagation();
-            if (playing) stopPlaying();
-            startHold('right', tick);
-        }
-        else if (e.code === 'ArrowLeft') {
-            e.preventDefault(); e.stopPropagation();
-            if (playing) stopPlaying();
-            startHold('left', doRewind);
-        }
-    }, true);
-
-    document.addEventListener('keyup', (e) => {
-        if (e.code === 'ArrowRight' || e.code === 'Period' || e.code === 'ArrowLeft') {
-            stopHold();
-        }
-    }, true);
 
     /* Scrub bar drag */
     var scrubBar = document.getElementById('scrub-bar');
@@ -649,7 +571,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             mapW = engine.getMapX() || 288;
             mapH = engine.getMapY() || 162;
 
-            layout();
+            gameLayout.resize();
             render();
 
             markDone(stepInit);
