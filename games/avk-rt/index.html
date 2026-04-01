@@ -82,8 +82,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
-    <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:#1e1e32;color:#3a3a5a;border-color:#2a2a4a;">Debug</button>
-    <div id="version">v0.1.0 (c588047)</div>
+    <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
+    <div id="version">v0.1.0 (c88868c)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -519,7 +519,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                     return units;
                 },
             });
-            updateButtons();
+            controls.updateButtons();
             requestAnimationFrame(render);
         });
     });
