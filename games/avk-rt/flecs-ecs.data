@@ -75,23 +75,23 @@ description: "Red archers vs blue knights on a bounded grid map"
 
 configs:
   wasm:
-    archers: 698
-    knights: 2661
+    archers: 676
+    knights: 2683
     map_size: { x: 288, y: 162 }
     max_turns: 1000
   console:
-    archers: 104
-    knights: 427
+    archers: 107
+    knights: 425
     map_size: { x: 151, y: 49 }
     max_turns: 1000
   wasm-rt:
     archers: 20
-    knights: 76
+    knights: 78
     map_size: { x: 48, y: 27 }
     max_turns: 200
 
-archers: 698
-knights: 2661
+archers: 676
+knights: 2683
 map_size:
   x: 288
   y: 162
@@ -1621,6 +1621,180 @@ GameState game_state_fetch(void);
 void game_state_free(GameState *state);
 
 #endif
+/**
+ * Game controls: play/pause, step, rewind, hold behavior, button states.
+ *
+ * Usage:
+ *   const ctrl = GameControls.init({
+ *       btnPlay, btnStep, btnRewind, btnNew,
+ *       onStep: () => { ... },
+ *       onRewind: () => { ... },
+ *       onNewGame: () => { ... },
+ *       onPlay: () => { ... },
+ *       canStep: () => boolean,
+ *       canRewind: () => boolean,
+ *   });
+ *   // Call ctrl.updateButtons() after state changes
+ *   // Call ctrl.isPlaying() to check play state
+ */
+var GameControls = (function() {
+    function init(cfg) {
+        var playing = false;
+        var holdTimeout = null;
+        var holdInterval = null;
+        var heldKey = null;
+
+        function updateButtons() {
+            cfg.btnRewind.disabled = !cfg.canRewind();
+            cfg.btnStep.disabled = !cfg.canStep();
+        }
+
+        function startHold(action) {
+            stopHold();
+            action();
+            holdTimeout = setTimeout(function() {
+                holdInterval = setInterval(action, 100);
+            }, 300);
+        }
+
+        function stopHold() {
+            if (holdTimeout) { clearTimeout(holdTimeout); holdTimeout = null; }
+            if (holdInterval) { clearInterval(holdInterval); holdInterval = null; }
+        }
+
+        function togglePlay() {
+            if (!playing && cfg.isGameOver && cfg.isGameOver()) {
+                cfg.onNewGame();
+            }
+            playing = !playing;
+            cfg.btnPlay.textContent = playing ? 'Pause' : 'Play';
+            cfg.btnPlay.classList.toggle('active', playing);
+            if (playing && cfg.onPlay) cfg.onPlay();
+            updateButtons();
+        }
+
+        function doStep() {
+            if (playing) togglePlay();
+            cfg.onStep();
+            updateButtons();
+        }
+
+        function doRewind() {
+            if (playing) togglePlay();
+            cfg.onRewind();
+            updateButtons();
+        }
+
+        function doNewGame() {
+            stopHold();
+            if (playing) togglePlay();
+            cfg.onNewGame();
+            updateButtons();
+        }
+
+        /* Button events */
+        cfg.btnPlay.addEventListener('click', togglePlay);
+        cfg.btnNew.addEventListener('click', doNewGame);
+        cfg.btnStep.addEventListener('mousedown', function() { startHold(doStep); });
+        cfg.btnRewind.addEventListener('mousedown', function() { startHold(doRewind); });
+        document.addEventListener('mouseup', stopHold);
+
+        /* Keyboard */
+        document.addEventListener('keydown', function(e) {
+            if (e.repeat) return;
+            if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+            else if (e.code === 'ArrowRight') {
+                e.preventDefault();
+                heldKey = 'right';
+                startHold(doStep);
+            }
+            else if (e.code === 'ArrowLeft') {
+                e.preventDefault();
+                heldKey = 'left';
+                startHold(doRewind);
+            }
+        });
+        document.addEventListener('keyup', function(e) {
+            if (e.code === 'ArrowRight' && heldKey === 'right') { stopHold(); heldKey = null; }
+            else if (e.code === 'ArrowLeft' && heldKey === 'left') { stopHold(); heldKey = null; }
+        });
+
+        updateButtons();
+
+        return {
+            updateButtons: updateButtons,
+            isPlaying: function() { return playing; },
+            togglePlay: togglePlay,
+        };
+    }
+
+    return { init: init };
+})();
+/**
+ * Responsive canvas layout with aspect ratio preservation.
+ *
+ * Usage:
+ *   const lay = GameLayout.init({
+ *       canvas: canvasEl,
+ *       headerEl: headerEl,    // optional: element above canvas
+ *       footerEl: footerEl,    // optional: element below canvas
+ *       middleEl: middleEl,    // optional: canvas container
+ *       aspect: 16 / 9,
+ *       headerMin: 40, headerMax: 60,
+ *       footerMin: 40, footerMax: 60,
+ *       gameMin: 240,
+ *       onResize: (cw, ch) => { ... },  // optional callback after layout
+ *   });
+ *   lay.resize();  // force re-layout
+ */
+var GameLayout = (function() {
+    function init(cfg) {
+        var canvas = cfg.canvas;
+        var aspect = cfg.aspect || 16 / 9;
+        var headerMin = cfg.headerMin || 60;
+        var headerMax = cfg.headerMax || 90;
+        var footerMin = cfg.footerMin || 40;
+        var footerMax = cfg.footerMax || 60;
+        var gameMin = cfg.gameMin || 240;
+
+        function resize() {
+            var totalH = window.innerHeight, totalW = window.innerWidth;
+            var chromeMin = headerMin + footerMin;
+            var headerH, footerH, gameH;
+
+            if (totalH <= chromeMin) {
+                headerH = totalH / 2; footerH = totalH / 2; gameH = 0;
+            } else if (totalH < chromeMin + gameMin) {
+                headerH = headerMin; footerH = footerMin; gameH = totalH - chromeMin;
+            } else {
+                var avail = totalH - chromeMin - gameMin;
+                var extra = (headerMax - headerMin) + (footerMax - footerMin);
+                var t = Math.min(1, avail / extra);
+                headerH = headerMin + (headerMax - headerMin) * t;
+                footerH = footerMin + (footerMax - footerMin) * t;
+                gameH = totalH - headerH - footerH;
+            }
+
+            if (cfg.headerEl) cfg.headerEl.style.height = Math.floor(headerH) + 'px';
+            if (cfg.footerEl) cfg.footerEl.style.height = Math.floor(footerH) + 'px';
+            if (cfg.middleEl) cfg.middleEl.style.height = Math.floor(gameH) + 'px';
+
+            var cw = gameH * aspect, ch = gameH;
+            if (cw > totalW) { cw = totalW; ch = cw / aspect; }
+            canvas.style.width = Math.floor(cw) + 'px';
+            canvas.style.height = Math.floor(ch) + 'px';
+
+            if (cfg.onResize) cfg.onResize(Math.floor(cw), Math.floor(ch));
+        }
+
+        resize();
+        window.addEventListener('resize', resize);
+
+        return { resize: resize };
+    }
+
+    return { init: init };
+})();
 # AvK Real-Time Client (wasm-rt)
 
 Real-time visual client for AvK. Renders turn-based simulation with animated phase transitions.
@@ -3717,7 +3891,7 @@ body {
 }
 #header-area h1 { font-size: 1.4em; color: #f0f0f0; white-space: nowrap; }
 #status { font-size: 0.95em; color: #aaa; white-space: nowrap; font-family: monospace; }
-#game-over-msg { font-size: 1.1em; font-weight: bold; color: #ffd700; }
+#game-over-msg { font-size: 1.1em; font-weight: bold; color: #ffd700; height: 1.4em; line-height: 1.4em; }
 #middle { display: flex; align-items: center; justify-content: center; }
 canvas { border: 1px solid #333; border-radius: 4px; image-rendering: pixelated; }
 #footer-area {
@@ -3763,6 +3937,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 </div>
 
 <script src="flecs-ecs.js"></script>
+<script src="/lib/controls.js"></script>
+<script src="/lib/layout.js"></script>
 <script>
 (function() {
     const canvas = document.getElementById('canvas');
@@ -3781,8 +3957,9 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const BG = '#0f0f23';
 
     let engine = null;
-    let playing = false;
     let mapLabel = '';
+    const frameTimes = [];
+    let lastFrameTime = 0;
 
     /* ── Turn timing ─────────────────────────────────────────── */
     const TARGET_TURN_MS = 375;
@@ -3908,36 +4085,12 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     }
 
     /* ── Layout ──────────────────────────────────────────────── */
-    const HEADER_MIN = 40, HEADER_MAX = 60;
-    const FOOTER_MIN = 40, FOOTER_MAX = 60;
-    const GAME_MIN = 240, GAME_ASPECT = 16 / 9;
-
-    function layout() {
-        const totalH = window.innerHeight, totalW = window.innerWidth;
-        const chromeMin = HEADER_MIN + FOOTER_MIN;
-        let headerH, footerH, gameH;
-        if (totalH <= chromeMin) {
-            headerH = totalH / 2; footerH = totalH / 2; gameH = 0;
-        } else if (totalH < chromeMin + GAME_MIN) {
-            headerH = HEADER_MIN; footerH = FOOTER_MIN; gameH = totalH - chromeMin;
-        } else {
-            const avail = totalH - chromeMin - GAME_MIN;
-            const extra = (HEADER_MAX - HEADER_MIN) + (FOOTER_MAX - FOOTER_MIN);
-            const t = Math.min(1, avail / extra);
-            headerH = HEADER_MIN + (HEADER_MAX - HEADER_MIN) * t;
-            footerH = FOOTER_MIN + (FOOTER_MAX - FOOTER_MIN) * t;
-            gameH = totalH - headerH - footerH;
-        }
-        headerEl.style.height = Math.floor(headerH) + 'px';
-        footerEl.style.height = Math.floor(footerH) + 'px';
-        middleEl.style.height = Math.floor(gameH) + 'px';
-        let cw = gameH * GAME_ASPECT, ch = gameH;
-        if (cw > totalW) { cw = totalW; ch = cw / GAME_ASPECT; }
-        canvas.style.width = Math.floor(cw) + 'px';
-        canvas.style.height = Math.floor(ch) + 'px';
-    }
-    layout();
-    window.addEventListener('resize', layout);
+    GameLayout.init({
+        canvas: canvas,
+        headerEl: headerEl,
+        footerEl: footerEl,
+        middleEl: middleEl,
+    });
 
     /* ── Sprites ─────────────────────────────────────────────── */
     const SPRITE_NAMES = ['knight_body', 'archer_body', 'knight_weapon', 'archer_weapon'];
@@ -4041,10 +4194,26 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             drawUnit(u, tMove, tAttack, tReact, tDefeat);
         }
 
+        /* FPS */
+        const now = performance.now();
+        if (lastFrameTime > 0) {
+            frameTimes.push(now - lastFrameTime);
+            if (frameTimes.length > 5) frameTimes.shift();
+        }
+        lastFrameTime = now;
+        const avgMs = frameTimes.length ? frameTimes.reduce((a,b) => a+b) / frameTimes.length : 0;
+        const fps = avgMs > 0 ? Math.round(1000 / avgMs) : 0;
+
         /* Status */
         const turn = engine.getTurn();
         const gameOver = engine.isGameOver();
-        if (gameOver) gameOverEl.textContent = engine.getMessage();
+        if (gameOver) {
+            gameOverEl.textContent = engine.getMessage();
+            gameOverEl.style.color = '#ffd700';
+        } else {
+            gameOverEl.textContent = fps > 0 ? fps + ' fps' : '';
+            gameOverEl.style.color = '#555';
+        }
         const aliveCount = viewUnits.filter(u => !u.dead && !u.isDying).length;
         const pad = (s, n) => (s + ' '.repeat(n)).slice(0, n);
         const padL = (s, n) => (' '.repeat(n) + s).slice(-n);
@@ -4063,8 +4232,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 for (const u of viewUnits) {
                     if (u.isDying) u.dead = true;
                 }
-                updateButtons();
-                if (playing && !gameOver) {
+                controls.updateButtons();
+                if (controls.isPlaying() && !gameOver) {
                     startTurn();
                 }
                 return;
@@ -4100,107 +4269,42 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         requestAnimationFrame(render);
     }
 
-    function updateButtons() {
-        if (!engine) { btnRewind.disabled = true; btnStep.disabled = true; return; }
-        btnRewind.disabled = engine.getTurn() <= 1 || animating;
-        btnStep.disabled = engine.isGameOver() || animating;
-    }
-
-    function togglePlay() {
-        playing = !playing;
-        btnPlay.textContent = playing ? 'Pause' : 'Play';
-        btnPlay.classList.toggle('active', playing);
-        if (playing && !animating) startTurn();
-        updateButtons();
-    }
-
-    function rewindOne() {
-        if (!engine) return;
-        if (playing) togglePlay();
-        if (animating) return;
-        const turn = engine.getTurn();
-        if (turn <= 1) return;
-        engine.rewind(turn - 1);
-        gameOverEl.textContent = '';
-        initViewFromModel();
-        animating = false;
-        requestAnimationFrame(render);
-        updateButtons();
-    }
-
-    function quickStep() {
-        if (!engine || engine.isGameOver() || animating) return;
-        engine.turn();
-        updateViewForTurn();
-        /* Snap view to final positions (no animation) */
-        for (const u of viewUnits) {
-            u.prevX = u.x;
-            u.prevY = u.y;
-        }
-        requestAnimationFrame(render);
-        updateButtons();
-    }
-
-    function stepOne() {
-        if (playing) togglePlay();
-        startTurn();
-    }
-
-    function newGame() {
-        stopHold();
-        if (playing) togglePlay();
-        animating = false;
-        gameOverEl.textContent = '';
-        engine.initWithConfig('wasm-rt');
-        engine.turn();
-        initViewFromModel();
-        requestAnimationFrame(render);
-        updateButtons();
-    }
-
-    /* ── Hold behavior ──────────────────────────────────────── */
-    let holdTimeout = null;
-    let holdInterval = null;
-
-    function startHold(action) {
-        stopHold();
-        action();
-        holdTimeout = setTimeout(function() {
-            holdInterval = setInterval(action, 100);
-        }, 300);
-    }
-
-    function stopHold() {
-        if (holdTimeout) { clearTimeout(holdTimeout); holdTimeout = null; }
-        if (holdInterval) { clearInterval(holdInterval); holdInterval = null; }
-    }
-
-    /* ── Event wiring ───────────────────────────────────────── */
-    btnPlay.addEventListener('click', togglePlay);
-    btnNew.addEventListener('click', newGame);
-
-    btnStep.addEventListener('mousedown', function() { startHold(function() { if (playing) togglePlay(); quickStep(); }); });
-    btnRewind.addEventListener('mousedown', function() { startHold(function() { if (playing) togglePlay(); rewindOne(); }); });
-    document.addEventListener('mouseup', stopHold);
-
-    let heldKey = null;
-    document.addEventListener('keydown', function(e) {
-        if (e.repeat) return;
-        if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
-        else if (e.code === 'ArrowRight') {
-            e.preventDefault();
-            heldKey = 'right';
-            startHold(function() { if (playing) togglePlay(); quickStep(); });
-        }
-        else if (e.code === 'ArrowLeft') {
-            e.preventDefault();
-            heldKey = 'left';
-            startHold(function() { if (playing) togglePlay(); rewindOne(); });
-        }
-    });
-    document.addEventListener('keyup', function(e) {
-        if (e.code === 'ArrowRight' && heldKey === 'right') { stopHold(); heldKey = null; }
-        else if (e.code === 'ArrowLeft' && heldKey === 'left') { stopHold(); heldKey = null; }
+    var controls = GameControls.init({
+        btnPlay: btnPlay,
+        btnStep: btnStep,
+        btnRewind: btnRewind,
+        btnNew: btnNew,
+        onStep: function() {
+            if (!engine || engine.isGameOver() || animating) return;
+            engine.turn();
+            updateViewForTurn();
+            for (const u of viewUnits) { u.prevX = u.x; u.prevY = u.y; }
+            requestAnimationFrame(render);
+        },
+        onRewind: function() {
+            if (!engine || animating) return;
+            var turn = engine.getTurn();
+            if (turn <= 1) return;
+            engine.rewind(turn - 1);
+            gameOverEl.textContent = '';
+            initViewFromModel();
+            animating = false;
+            requestAnimationFrame(render);
+        },
+        onNewGame: function() {
+            animating = false;
+            gameOverEl.textContent = '';
+            engine.initWithConfig('wasm-rt');
+            engine.turn();
+            initViewFromModel();
+            requestAnimationFrame(render);
+        },
+        onPlay: function() {
+            if (!animating) startTurn();
+        },
+        canStep: function() { return !!engine && !engine.isGameOver() && !animating; },
+        canRewind: function() { return !!engine && engine.getTurn() > 1 && !animating; },
+        isGameOver: function() { return !!engine && engine.isGameOver(); },
     });
 
     /* ── Init ────────────────────────────────────────────────── */
@@ -4496,49 +4600,20 @@ body {
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
     display: flex;
     flex-direction: column;
-    align-items: center;
     height: 100vh;
-    padding: 8px;
 }
-#game-area {
-    flex: 4;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 0;
-    width: 100%;
+#header-area {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; overflow: hidden;
 }
-#ui-area {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-}
-h1 {
-    font-size: 1.4em;
-    margin-bottom: 8px;
-    color: #f0f0f0;
-}
-#status {
-    font-size: 0.95em;
-    margin-bottom: 8px;
-    height: 1.4em;
-    color: #aaa;
-}
-#game-over-msg {
-    font-size: 1.1em;
-    font-weight: bold;
-    color: #ffd700;
-    height: 1.4em;
-    margin-bottom: 4px;
-}
-canvas {
-    border: 1px solid #333;
-    border-radius: 4px;
-    image-rendering: pixelated;
+#header-area h1 { font-size: 1.4em; color: #f0f0f0; white-space: nowrap; }
+#status { font-size: 0.95em; color: #aaa; white-space: nowrap; font-family: monospace; }
+#game-over-msg { font-size: 1.1em; font-weight: bold; color: #ffd700; height: 1.4em; line-height: 1.4em; }
+#middle { display: flex; align-items: center; justify-content: center; }
+canvas { border: 1px solid #333; border-radius: 4px; image-rendering: pixelated; }
+#footer-area {
+    display: flex; align-items: center; justify-content: center;
+    gap: 8px; flex-wrap: wrap; overflow: hidden;
 }
 #controls {
     margin-top: 12px;
@@ -4559,6 +4634,8 @@ button {
     min-width: 70px;
 }
 button:hover { background: #3a3a5a; }
+button:disabled { opacity: 0.3; cursor: default; }
+button:disabled:hover { background: #2a2a4a; }
 button:active { background: #4a4a6a; }
 button.active { background: #4a6a4a; border-color: #6a8a6a; }
 #speed-group {
@@ -4567,38 +4644,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     gap: 4px;
     margin-left: 8px;
 }
-#speed-group label { font-size: 0.85em; color: #aaa; }
-#speed-label { font-size: 0.85em; min-width: 56px; text-align: right; }
-#fps-bar-outer {
-    width: 200px;
-    height: 16px;
-    background: #2a2a4a;
-    border-radius: 3px;
-    overflow: hidden;
-    position: relative;
-    margin-top: 4px;
-}
-#fps-bar-inner {
-    height: 100%;
-    background: #4dabf7;
-    border-radius: 3px;
-    width: 0%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: width 0.15s ease, background 0.15s ease;
-    min-width: 0;
-}
-#fps-text {
-    font-size: 0.7em;
-    font-family: monospace;
-    color: #fff;
-    position: absolute;
-    left: 0; right: 0;
-    text-align: center;
-    line-height: 16px;
-}
-#speed-slider { width: 100px; }
 #loading {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
@@ -4622,41 +4667,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 .load-step.active { color: #4dabf7; }
 .load-step.done { color: #69db7c; }
 .load-step .elapsed { color: #888; margin-left: 8px; font-size: 0.85em; }
-#scrub-bar {
-    width: 100%;
-    max-width: 900px;
-    height: 12px;
-    background: #444;
-    border-radius: 3px;
-    position: relative;
-    cursor: pointer;
-    margin-top: 8px;
-    flex-shrink: 0;
-}
-#scrub-fill {
-    height: 100%;
-    background: #4dabf7;
-    border-radius: 3px;
-    width: 0%;
-    pointer-events: none;
-}
-#scrub-head {
-    position: absolute;
-    top: -2px;
-    width: 4px;
-    height: 16px;
-    background: #fff;
-    border-radius: 2px;
-    pointer-events: none;
-    left: 0%;
-}
-#scrub-label {
-    font-size: 0.7em;
-    font-family: monospace;
-    color: #888;
-    margin-top: 2px;
-    flex-shrink: 0;
-}
 #info-btn {
     display: inline-block;
     width: 22px; height: 22px;
@@ -4705,49 +4715,34 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     </div>
 </div>
 
-<div id="game-area">
-    <div id="back-link" style="width:100%;text-align:left;display:none;"><a href="../" style="color:#666;text-decoration:none;font-size:0.85em;">&larr; Games</a></div>
-    <script>if(location.hostname.indexOf('github.io')>=0)document.getElementById('back-link').style.display='';</script>
+<div id="header-area">
     <h1>Archers vs Knights <span id="info-btn" title="About">?</span></h1>
     <div id="status">Initializing...</div>
     <div id="game-over-msg"></div>
     <div id="about-panel">
         <h3>About</h3>
         <p>Built in C with Flecs ECS, it simulates archers (red) fighting knights (blue) on a 16:9 grid. Combat is turn-based -- all units move one tile per turn. Knights have range 1 and 25 HP. Archers have range 3 and 10 HP. All attacks deal 5 damage.</p>
-        <p>The initial knight AI "move toward the closest archer" was terrible. Knights myopically blocked each other, creating traffic jams while archers kited freely. The fix was a tiered tiebreaker system for choosing between equally scored moves:</p>
-        <ol>
-            <li><strong>Spread:</strong> prefer moving away from an adjacent ally, so the knight behind you can advance into your space. This naturally forms surrounding formations.</li>
-            <li><strong>Center bias:</strong> prefer moves closer to the center of the map. This drives archers toward walls where they can't kite.</li>
-        </ol>
-        <p>Surrounding is the only way knights can kill archers -- with equal movement speed and shorter range, knights need to corner them against walls or each other.</p>
+        <p>Knights need to surround archers to kill them -- with equal movement speed and shorter range, knights must corner archers against walls or each other.</p>
     </div>
-    <canvas id="canvas"></canvas>
-    <div id="scrub-bar"><div id="scrub-fill"></div><div id="scrub-head"></div></div>
-    <div id="scrub-label"></div>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;"></div>
 </div>
-<div id="ui-area">
-    <div id="controls">
-        <button id="btn-play" title="Space">Play</button>
-        <button id="btn-step" title="Right Arrow">Step</button>
-        <button id="btn-rewind" title="Left Arrow">Rewind</button>
-        <button id="btn-new">New Game</button>
-        <div id="fps-bar-outer">
-            <div id="fps-bar-inner"><span id="fps-text"></span></div>
-        </div>
-    </div>
+<div id="middle">
+    <canvas id="canvas"></canvas>
+</div>
+<div id="footer-area">
+    <button id="btn-play" title="Space">Play</button>
+    <button id="btn-rewind" title="Left Arrow">Rewind</button>
+    <button id="btn-step" title="Right Arrow">Step</button>
+    <button id="btn-new">New Game</button>
     <div id="legend">
         <span class="red">&#9632; Archer</span>
         <span class="blue">&#9632; Knight</span>
-        <span class="white">&#9632; Hit</span>
-        <span>Space: Play/Pause</span>
-        <span>&#8594;: Step</span>
-        <span>&#8592;: Rewind</span>
     </div>
-    <div id="profile" style="font-family:monospace;font-size:0.75em;color:#666;margin-top:4px;"></div>
+    <div id="version"></div>
 </div>
 
 <script src="flecs-ecs.js"></script>
+<script src="/lib/controls.js"></script>
+<script src="/lib/layout.js"></script>
 <script>
 (function() {
     const canvas = document.getElementById('canvas');
@@ -4761,17 +4756,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const loadingEl = document.getElementById('loading');
 
     let engine = null;
-    let playing = false;
-    let playInterval = null;
     let mapW = 288, mapH = 162;
     let CELL_W = 1, CELL_H = 1;
-    const GAME_ASPECT = 16 / 9;
     const frameTimes = [];
     let lastFrameTime = 0;
-    let heldKey = null;
-    let heldInterval = null;
-    let maxTurnReached = 0;
-    let scrubbing = false;
 
     /* Colors */
     const BG_COLOR = '#0f0f23';
@@ -4781,24 +4769,18 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const HIT_COLOR = '#ffffff';
     const BORDER_COLOR = '#333355';
 
-    function layout() {
-        var totalH = window.innerHeight, totalW = window.innerWidth;
-        var uiH = 160;  /* controls + legend + padding */
-        var gameH = totalH - uiH;
-        var cw = gameH * GAME_ASPECT, ch = gameH;
-        if (cw > totalW) { cw = totalW; ch = cw / GAME_ASPECT; }
-        canvas.style.width = Math.floor(cw) + 'px';
-        canvas.style.height = Math.floor(ch) + 'px';
-        /* Internal resolution: 1 pixel per cell */
-        CELL_W = Math.max(1, Math.floor(cw / mapW));
-        CELL_H = CELL_W;
-        canvas.width = mapW * CELL_W;
-        canvas.height = mapH * CELL_H;
-    }
-
-    window.addEventListener('resize', function() {
-        layout();
-        if (engine) render();
+    var gameLayout = GameLayout.init({
+        canvas: canvas,
+        headerEl: document.getElementById('header-area'),
+        footerEl: document.getElementById('footer-area'),
+        middleEl: document.getElementById('middle'),
+        onResize: function(cw, ch) {
+            CELL_W = Math.max(1, Math.floor(cw / mapW));
+            CELL_H = CELL_W;
+            canvas.width = mapW * CELL_W;
+            canvas.height = mapH * CELL_H;
+            if (engine) render();
+        },
     });
 
     function render() {
@@ -4866,111 +4848,66 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         const avgMs = frameTimes.length ? frameTimes.reduce((a,b) => a+b) / frameTimes.length : 0;
         const fps = avgMs > 0 ? Math.round(1000 / avgMs) : 0;
 
-        /* FPS bar — always blue, full = 240 fps */
-        var fpsBar = document.getElementById('fps-bar-inner');
-        var fpsText = document.getElementById('fps-text');
-        fpsBar.style.width = Math.min(100, (fps / 240) * 100) + '%';
-        fpsText.textContent = fps + ' fps';
-
-        /* Scrub bar */
-        if (turn > maxTurnReached) maxTurnReached = turn;
-        if (maxTurnReached > 0) {
-            var scrubPct = (turn / maxTurnReached) * 100;
-            document.getElementById('scrub-fill').style.width = '100%';
-            document.getElementById('scrub-head').style.left = scrubPct + '%';
-            document.getElementById('scrub-label').textContent = 'Turn ' + turn + ' / ' + maxTurnReached;
-        }
-
-        /* Profiling — top 3 systems by time */
-        var sysNames = ['rewind','start_of_turn','app_start','movement','attack','despawn','spawn','app_stop','history'];
-        var sysCount = engine.getSystemCount();
-        var totalMs = engine.getTotalTime();
-        var entries = [];
-        for (var s = 0; s < sysCount && s < sysNames.length; s++) {
-            entries.push({name: sysNames[s], ms: engine.getSystemTime(s)});
-        }
-        var collectMs = engine.getCollectTime();
-        if (collectMs > 0) entries.push({name: 'collect', ms: collectMs});
-        entries.sort(function(a, b) { return b.ms - a.ms; });
-        var top3 = entries.slice(0, 3).map(function(e) { return e.name + ' ' + e.ms.toFixed(1) + 'ms'; });
-        document.getElementById('profile').textContent = top3.join(', ') + '  (' + totalMs.toFixed(1) + 'ms total)';
-
         /* Status */
         statusEl.innerHTML = `Turn ${turn} &nbsp;|&nbsp; <span class="red">Archers: ${archerCount}</span> &nbsp;|&nbsp; <span class="blue">Knights: ${knightCount}</span>`;
 
         if (gameOver) {
             const msg = engine.getMessage();
             gameOverEl.textContent = msg;
-            stopPlaying();
+            gameOverEl.style.color = '#ffd700';
         } else {
-            gameOverEl.textContent = '';
+            gameOverEl.textContent = fps > 0 ? fps + ' fps' : '';
+            gameOverEl.style.color = '#555';
         }
     }
+
+    var playInterval = null;
 
     function tick() {
-        if (!engine) return;
-        if (engine.isGameOver()) return;
+        if (!engine || engine.isGameOver()) return;
         engine.turn();
         render();
     }
 
-    function step() {
-        if (playing) stopPlaying();
-        tick();
-    }
-
-    function startPlaying() {
-        if (playing) return;
-        playing = true;
-        btnPlay.textContent = 'Pause';
-        btnPlay.classList.add('active');
-        schedulePlay();
-    }
-
-    function stopPlaying() {
-        playing = false;
-        btnPlay.textContent = 'Play';
-        btnPlay.classList.remove('active');
-        if (playInterval) {
-            clearInterval(playInterval);
-            playInterval = null;
-        }
-    }
-
-    function schedulePlay() {
+    function startAutoPlay() {
         if (playInterval) clearInterval(playInterval);
-        const ms = 0;
-        playInterval = setInterval(() => {
-            if (!playing || !engine) { stopPlaying(); return; }
+        playInterval = setInterval(function() {
+            if (!controls.isPlaying() || !engine) return;
             tick();
-            if (engine.isGameOver()) stopPlaying();
-        }, ms);
+            if (engine.isGameOver()) { controls.togglePlay(); clearInterval(playInterval); playInterval = null; }
+        }, 0);
     }
 
-    function togglePlay() {
-        if (playing) { stopPlaying(); return; }
-        if (engine && engine.isGameOver()) { newGame(); startPlaying(); return; }
-        startPlaying();
-    }
-
-    function rewind() {
-        if (!engine) return;
-        if (playing) stopPlaying();
-        const turn = engine.getTurn();
-        if (turn <= 1) return;
-        engine.rewind(turn - 1);
-        render();
-    }
-
-    function newGame() {
-        if (!engine) return;
-        stopPlaying();
-        engine.reset();
-        maxTurnReached = 0;
-        engine.turn();
-        render();
-        gameOverEl.textContent = '';
-    }
+    var controls = GameControls.init({
+        btnPlay: btnPlay,
+        btnStep: btnStep,
+        btnRewind: btnRewind,
+        btnNew: btnNew,
+        onStep: function() {
+            tick();
+        },
+        onRewind: function() {
+            if (!engine) return;
+            var turn = engine.getTurn();
+            if (turn <= 1) return;
+            engine.rewind(turn - 1);
+            render();
+        },
+        onNewGame: function() {
+            if (!engine) return;
+            if (playInterval) { clearInterval(playInterval); playInterval = null; }
+            engine.reset();
+            engine.turn();
+            render();
+            gameOverEl.textContent = '';
+        },
+        onPlay: function() {
+            startAutoPlay();
+        },
+        canStep: function() { return !!engine && !engine.isGameOver(); },
+        canRewind: function() { return !!engine && engine.getTurn() > 1; },
+        isGameOver: function() { return !!engine && engine.isGameOver(); },
+    });
 
     /* About toggle */
     var aboutShowing = false;
@@ -4978,102 +4915,9 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         aboutShowing = !aboutShowing;
         document.getElementById('about-panel').style.display = aboutShowing ? 'block' : 'none';
         canvas.style.display = aboutShowing ? 'none' : '';
-        document.getElementById('scrub-bar').style.display = aboutShowing ? 'none' : '';
-        document.getElementById('scrub-label').style.display = aboutShowing ? 'none' : '';
     });
-
-    /* Controls */
-    btnPlay.addEventListener('click', togglePlay);
-    btnStep.addEventListener('click', step);
-    btnRewind.addEventListener('click', rewind);
-    btnNew.addEventListener('click', newGame);
-
-    /* Keyboard — single step on press, fast-forward after 500ms hold */
-    let heldTimeout = null;
-
-    function doRewind() {
-        if (!engine) return;
-        var turn = engine.getTurn();
-        if (turn <= 1) return;
-        engine.rewind(turn - 1);
-        render();
-    }
-
-    function startHold(key, fn) {
-        if (heldKey === key) return;
-        stopHold();
-        heldKey = key;
-        fn();
-        heldTimeout = setTimeout(function() {
-            heldInterval = setInterval(fn, 0);
-        }, 500);
-    }
-
-    function stopHold() {
-        heldKey = null;
-        if (heldTimeout) { clearTimeout(heldTimeout); heldTimeout = null; }
-        if (heldInterval) { clearInterval(heldInterval); heldInterval = null; }
-    }
-
-    document.addEventListener('keydown', (e) => {
-        if (e.code === 'Space') { e.preventDefault(); e.stopPropagation(); togglePlay(); }
-        else if (e.code === 'ArrowRight' || e.code === 'Period') {
-            e.preventDefault(); e.stopPropagation();
-            if (playing) stopPlaying();
-            startHold('right', tick);
-        }
-        else if (e.code === 'ArrowLeft') {
-            e.preventDefault(); e.stopPropagation();
-            if (playing) stopPlaying();
-            startHold('left', doRewind);
-        }
-    }, true);
-
-    document.addEventListener('keyup', (e) => {
-        if (e.code === 'ArrowRight' || e.code === 'Period' || e.code === 'ArrowLeft') {
-            stopHold();
-        }
-    }, true);
 
     /* Scrub bar drag */
-    var scrubBar = document.getElementById('scrub-bar');
-
-    function scrubTo(e) {
-        if (!engine || maxTurnReached <= 1) return;
-        var rect = scrubBar.getBoundingClientRect();
-        var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        var targetTurn = Math.max(1, Math.round(pct * maxTurnReached));
-        var currentTurn = engine.getTurn();
-        if (targetTurn === currentTurn) return;
-
-        if (targetTurn < currentTurn) {
-            engine.rewind(targetTurn);
-        } else {
-            for (var t = currentTurn; t < targetTurn; t++) {
-                engine.turn();
-                if (engine.isGameOver()) break;
-            }
-        }
-        /* Force scrub head update */
-        var turn = engine.getTurn();
-        var headPct = maxTurnReached > 0 ? (turn / maxTurnReached) * 100 : 0;
-        document.getElementById('scrub-head').style.left = headPct + '%';
-        document.getElementById('scrub-label').textContent = 'Turn ' + turn + ' / ' + maxTurnReached;
-        render();
-    }
-
-    scrubBar.addEventListener('mousedown', function(e) {
-        scrubbing = true;
-        if (playing) stopPlaying();
-        scrubTo(e);
-    });
-    document.addEventListener('mousemove', function(e) {
-        if (scrubbing) scrubTo(e);
-    });
-    document.addEventListener('mouseup', function() {
-        scrubbing = false;
-    });
-
     /* Init */
     const stepLoad = document.getElementById('step-load');
     const stepInit = document.getElementById('step-init');
@@ -5130,7 +4974,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             mapW = engine.getMapX() || 288;
             mapH = engine.getMapY() || 162;
 
-            layout();
+            gameLayout.resize();
             render();
 
             markDone(stepInit);
@@ -6343,17 +6187,11 @@ static int score_cell(int nx, int ny, int move_type, int range,
         /* Knight: minimize distance to nearest enemy */
         return -d;
     } else {
-        /* Archer: safe with targets in range is ideal */
-        bool safe = (d >= range);
-        if (safe) {
-            int in_range = count_enemies_in_range(nx, ny, range, faction, units);
-            if (in_range > 0)
-                return 20000 + in_range;
-            else
-                return -d; /* safe but nothing to shoot, approach */
-        } else {
-            return d * 1000; /* too close, flee */
-        }
+        /* Archer: prefer being at exactly range distance */
+        if (d <= range)
+            return -(range - d + 1);  /* dist 1=-3, 2=-2, 3=-1 */
+        else
+            return -d;                /* dist 4=-4, 5=-5, ... */
     }
 }
 
