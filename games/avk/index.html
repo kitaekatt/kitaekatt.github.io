@@ -160,12 +160,14 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <option value="wasm_3x">48×27</option>
         <option value="wasm_5x">80×45</option>
         <option value="wasm_8x">128×72</option>
-        <option value="wasm_11x">176×99</option>
-        <option value="wasm_14x">224×126</option>
-        <option value="wasm_18x" selected>288×162</option>
+        <option value="wasm_12x">192×108</option>
+        <option value="wasm_17x">272×153</option>
+        <option value="wasm_23x">368×207</option>
+        <option value="wasm_30x">480×270</option>
+        <option value="wasm_38x" selected>608×342</option>
     </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
-    <div id="version">v0.1.0 (aa2523a)</div>
+    <div id="version">v0.1.0 (9c591b7)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -185,7 +187,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const loadingEl = document.getElementById('loading');
 
     let engine = null;
-    var currentConfig = 'wasm_18x';
+    var currentConfig = 'wasm_38x';
     let mapW = 288, mapH = 162;
     let CELL_W = 1, CELL_H = 1;
     const frameTimes = [];
