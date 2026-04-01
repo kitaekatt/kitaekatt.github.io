@@ -15,49 +15,20 @@ body {
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
     display: flex;
     flex-direction: column;
-    align-items: center;
     height: 100vh;
-    padding: 8px;
 }
-#game-area {
-    flex: 4;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 0;
-    width: 100%;
+#header-area {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; overflow: hidden;
 }
-#ui-area {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-}
-h1 {
-    font-size: 1.4em;
-    margin-bottom: 8px;
-    color: #f0f0f0;
-}
-#status {
-    font-size: 0.95em;
-    margin-bottom: 8px;
-    height: 1.4em;
-    color: #aaa;
-}
-#game-over-msg {
-    font-size: 1.1em;
-    font-weight: bold;
-    color: #ffd700;
-    height: 1.4em;
-    margin-bottom: 4px;
-}
-canvas {
-    border: 1px solid #333;
-    border-radius: 4px;
-    image-rendering: pixelated;
+#header-area h1 { font-size: 1.4em; color: #f0f0f0; white-space: nowrap; }
+#status { font-size: 0.95em; color: #aaa; white-space: nowrap; font-family: monospace; }
+#game-over-msg { font-size: 1.1em; font-weight: bold; color: #ffd700; }
+#middle { display: flex; align-items: center; justify-content: center; }
+canvas { border: 1px solid #333; border-radius: 4px; image-rendering: pixelated; }
+#footer-area {
+    display: flex; align-items: center; justify-content: center;
+    gap: 8px; flex-wrap: wrap; overflow: hidden;
 }
 #controls {
     margin-top: 12px;
@@ -88,38 +59,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     gap: 4px;
     margin-left: 8px;
 }
-#speed-group label { font-size: 0.85em; color: #aaa; }
-#speed-label { font-size: 0.85em; min-width: 56px; text-align: right; }
-#fps-bar-outer {
-    width: 200px;
-    height: 16px;
-    background: #2a2a4a;
-    border-radius: 3px;
-    overflow: hidden;
-    position: relative;
-    margin-top: 4px;
-}
-#fps-bar-inner {
-    height: 100%;
-    background: #4dabf7;
-    border-radius: 3px;
-    width: 0%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: width 0.15s ease, background 0.15s ease;
-    min-width: 0;
-}
-#fps-text {
-    font-size: 0.7em;
-    font-family: monospace;
-    color: #fff;
-    position: absolute;
-    left: 0; right: 0;
-    text-align: center;
-    line-height: 16px;
-}
-#speed-slider { width: 100px; }
 #loading {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
@@ -143,8 +82,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 .load-step.active { color: #4dabf7; }
 .load-step.done { color: #69db7c; }
 .load-step .elapsed { color: #888; margin-left: 8px; font-size: 0.85em; }
-    background: #fff;
-    border-radius: 2px;
 #info-btn {
     display: inline-block;
     width: 22px; height: 22px;
@@ -193,44 +130,29 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     </div>
 </div>
 
-<div id="game-area">
-    <div id="back-link" style="width:100%;text-align:left;display:none;"><a href="../" style="color:#666;text-decoration:none;font-size:0.85em;">&larr; Games</a></div>
-    <script>if(location.hostname.indexOf('github.io')>=0)document.getElementById('back-link').style.display='';</script>
+<div id="header-area">
     <h1>Archers vs Knights <span id="info-btn" title="About">?</span></h1>
     <div id="status">Initializing...</div>
     <div id="game-over-msg"></div>
     <div id="about-panel">
         <h3>About</h3>
         <p>Built in C with Flecs ECS, it simulates archers (red) fighting knights (blue) on a 16:9 grid. Combat is turn-based -- all units move one tile per turn. Knights have range 1 and 25 HP. Archers have range 3 and 10 HP. All attacks deal 5 damage.</p>
-        <p>The initial knight AI "move toward the closest archer" was terrible. Knights myopically blocked each other, creating traffic jams while archers kited freely. The fix was a tiered tiebreaker system for choosing between equally scored moves:</p>
-        <ol>
-            <li><strong>Spread:</strong> prefer moving away from an adjacent ally, so the knight behind you can advance into your space. This naturally forms surrounding formations.</li>
-            <li><strong>Center bias:</strong> prefer moves closer to the center of the map. This drives archers toward walls where they can't kite.</li>
-        </ol>
-        <p>Surrounding is the only way knights can kill archers -- with equal movement speed and shorter range, knights need to corner them against walls or each other.</p>
+        <p>Knights need to surround archers to kill them -- with equal movement speed and shorter range, knights must corner archers against walls or each other.</p>
     </div>
-    <canvas id="canvas"></canvas>
-    <div id="version" style="font-size:0.6em;color:#555;margin-top:2px;flex-shrink:0;"></div>
 </div>
-<div id="ui-area">
-    <div id="controls">
-        <button id="btn-play" title="Space">Play</button>
-        <button id="btn-rewind" title="Left Arrow">Rewind</button>
-        <button id="btn-step" title="Right Arrow">Step</button>
-        <button id="btn-new">New Game</button>
-        <div id="fps-bar-outer">
-            <div id="fps-bar-inner"><span id="fps-text"></span></div>
-        </div>
-    </div>
+<div id="middle">
+    <canvas id="canvas"></canvas>
+</div>
+<div id="footer-area">
+    <button id="btn-play" title="Space">Play</button>
+    <button id="btn-rewind" title="Left Arrow">Rewind</button>
+    <button id="btn-step" title="Right Arrow">Step</button>
+    <button id="btn-new">New Game</button>
     <div id="legend">
         <span class="red">&#9632; Archer</span>
         <span class="blue">&#9632; Knight</span>
-        <span class="white">&#9632; Hit</span>
-        <span>Space: Play/Pause</span>
-        <span>&#8594;: Step</span>
-        <span>&#8592;: Rewind</span>
     </div>
-    <div id="profile" style="font-family:monospace;font-size:0.75em;color:#666;margin-top:4px;"></div>
+    <div id="version">v (21b2686)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -264,9 +186,9 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 
     var gameLayout = GameLayout.init({
         canvas: canvas,
-        headerEl: document.getElementById('game-area'),
-        footerEl: document.getElementById('ui-area'),
-        footerMin: 100, footerMax: 120,
+        headerEl: document.getElementById('header-area'),
+        footerEl: document.getElementById('footer-area'),
+        middleEl: document.getElementById('middle'),
         onResize: function(cw, ch) {
             CELL_W = Math.max(1, Math.floor(cw / mapW));
             CELL_H = CELL_W;
@@ -340,27 +262,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         lastFrameTime = now;
         const avgMs = frameTimes.length ? frameTimes.reduce((a,b) => a+b) / frameTimes.length : 0;
         const fps = avgMs > 0 ? Math.round(1000 / avgMs) : 0;
-
-        /* FPS bar — always blue, full = 240 fps */
-        var fpsBar = document.getElementById('fps-bar-inner');
-        var fpsText = document.getElementById('fps-text');
-        fpsBar.style.width = Math.min(100, (fps / 240) * 100) + '%';
-        fpsText.textContent = fps + ' fps';
-
-
-        /* Profiling — top 3 systems by time */
-        var sysNames = ['rewind','start_of_turn','app_start','movement','attack','despawn','spawn','app_stop','history'];
-        var sysCount = engine.getSystemCount();
-        var totalMs = engine.getTotalTime();
-        var entries = [];
-        for (var s = 0; s < sysCount && s < sysNames.length; s++) {
-            entries.push({name: sysNames[s], ms: engine.getSystemTime(s)});
-        }
-        var collectMs = engine.getCollectTime();
-        if (collectMs > 0) entries.push({name: 'collect', ms: collectMs});
-        entries.sort(function(a, b) { return b.ms - a.ms; });
-        var top3 = entries.slice(0, 3).map(function(e) { return e.name + ' ' + e.ms.toFixed(1) + 'ms'; });
-        document.getElementById('profile').textContent = top3.join(', ') + '  (' + totalMs.toFixed(1) + 'ms total)';
 
         /* Status */
         statusEl.innerHTML = `Turn ${turn} &nbsp;|&nbsp; <span class="red">Archers: ${archerCount}</span> &nbsp;|&nbsp; <span class="blue">Knights: ${knightCount}</span>`;
