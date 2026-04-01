@@ -29,7 +29,7 @@ All systems implemented in C at `systems/native/systems.c`. Execution order defi
 - Knights: move toward nearest enemy (melee engage)
 - Archers: kite away from nearest enemy if too close, approach if too far (maintain range)
 - Speed is always 1 (one cell per turn). Speed > 1 causes infinite oscillation.
-- Tiebreaking: uses EntityId (lower ID has priority) with momentum tiebreaker to prevent oscillation
+- Tiebreaking: backed-by-ally (knights), then farthest-from-nearest-wall, then iteration order
 
 **attack**:
 - Each unit attacks the lowest-health enemy within its Weapon.range
@@ -44,7 +44,7 @@ All systems implemented in C at `systems/native/systems.c`. Execution order defi
 ## Components
 
 Defined in `components/`. Mutable per-turn components:
-- `Location { x: i32, y: i32 }` -- modified by movement
+- `Location { x: i32, y: i32 }` -- modified by movement, 1-based (min is 1,1)
 - `Health { base: i32 }` -- modified by attack
 
 Immutable (set at spawn from prefab, never changed):
@@ -75,21 +75,26 @@ description: "Red archers vs blue knights on a bounded grid map"
 
 configs:
   default:
-    archers: 1127
-    knights: 2649
-    map_size: { x: 320, y: 144 }
+    archers: 995
+    knights: 2781
+    map_size: { x: 321, y: 145 }
     max_turns: 1000
   console:
-    archers: 136
-    knights: 454
-    map_size: { x: 150, y: 48 }
+    archers: 157
+    knights: 433
+    map_size: { x: 151, y: 49 }
     max_turns: 1000
+  wasm-rt:
+    archers: 4
+    knights: 8
+    map_size: { x: 16, y: 9 }
+    max_turns: 200
 
-archers: 1127
-knights: 2649
+archers: 995
+knights: 2781
 map_size:
-  x: 320
-  y: 144
+  x: 321
+  y: 145
 max_turns: 1000
 templates:
   components: [Health, MovementSpeed, MovementType, Weapon, AttackDamage, RedFaction, BlueFaction, Location, MapSize, SpawnRequest, TookDamage]
@@ -714,6 +719,7 @@ typedef struct {
     char record_path[256]; /* --record FILE, empty = no recording */
     char image_dir[256];  /* --image DIR, empty = no frame dump */
     char overrides_dir[256]; /* --overrides DIR, empty = none */
+    char config_name[64];   /* --config NAME, empty = "console" */
 } ClientFlags;
 
 static bool load_config(const char *path, ClientConfig *cfg) {
@@ -842,7 +848,8 @@ static bool setup_rest(ClientConfig *cfg) {
 
 /* ── Direct mode ────────────────────────────────────────────────────── */
 
-static Engine *setup_direct(ClientConfig *cfg, const char *overrides_dir) {
+static Engine *setup_direct(ClientConfig *cfg, const char *overrides_dir,
+                            const char *config_name) {
     Engine *engine = engine_init(NULL);
     if (!engine) { fprintf(stderr, "Failed to init engine\n"); return NULL; }
 
@@ -854,8 +861,9 @@ static Engine *setup_direct(ClientConfig *cfg, const char *overrides_dir) {
         engine_fini(engine); return NULL;
     }
 
+    const char *cn = (config_name && config_name[0]) ? config_name : "console";
     AppStartResult asr;
-    if (!engine_app_start(engine, "console", &asr)) {
+    if (!engine_app_start(engine, cn, &asr)) {
         fprintf(stderr, "Failed to start app for sandbox '%s'\n", cfg->sandbox);
         engine_fini(engine); return NULL;
     }
@@ -982,6 +990,9 @@ int main(int argc, char *argv[]) {
         else if (strcmp(argv[i], "--overrides") == 0 && i + 1 < argc) {
             snprintf(flags.overrides_dir, sizeof(flags.overrides_dir), "%s", argv[++i]);
         }
+        else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            snprintf(flags.config_name, sizeof(flags.config_name), "%s", argv[++i]);
+        }
     }
 
     if (flags.benchmark) {
@@ -1000,7 +1011,7 @@ int main(int argc, char *argv[]) {
             double game_start = now_ms();
 
             if (flags.direct) {
-                engine = setup_direct(&cfg, flags.overrides_dir);
+                engine = setup_direct(&cfg, flags.overrides_dir, flags.config_name);
                 if (!engine) return 1;
             } else {
                 if (!setup_rest(&cfg)) return 1;
@@ -1046,7 +1057,7 @@ int main(int argc, char *argv[]) {
     /* Setup engine/REST */
     Engine *engine = NULL;
     if (flags.direct) {
-        engine = setup_direct(&cfg, flags.overrides_dir);
+        engine = setup_direct(&cfg, flags.overrides_dir, flags.config_name);
         if (!engine) return 1;
     } else {
         if (!setup_rest(&cfg)) return 1;
@@ -1344,8 +1355,8 @@ int main(int argc, char *argv[]) {
 #include <string.h>
 
 CellGrid render_to_cellgrid(const GameState *state, int map_w, int map_h) {
-    int gw = map_w + 1;  /* grid cells: 0..map_w */
-    int gh = map_h + 1;  /* grid cells: 0..map_h */
+    int gw = map_w;  /* grid cells: 1..map_w */
+    int gh = map_h;  /* grid cells: 1..map_h */
 
     /* Count units by faction */
     int archers = 0, knights = 0;
@@ -1378,21 +1389,21 @@ CellGrid render_to_cellgrid(const GameState *state, int map_w, int map_h) {
     cellgrid_set(&grid, row, 1 + gw, '+', COLOR_GRAY);
     row++;
 
-    /* Build occupancy lookup */
-    int *occ = malloc(gw * gh * sizeof(int));
-    memset(occ, -1, gw * gh * sizeof(int));
+    /* Build occupancy lookup (1-based: index by y*gw+x, x/y start at 1) */
+    int *occ = malloc((gw + 1) * (gh + 1) * sizeof(int));
+    memset(occ, -1, (gw + 1) * (gh + 1) * sizeof(int));
     for (int i = 0; i < state->unit_count; i++) {
         int x = state->units[i].x;
         int y = state->units[i].y;
-        if (x >= 0 && x < gw && y >= 0 && y < gh)
-            occ[y * gw + x] = i;
+        if (x >= 1 && x <= gw && y >= 1 && y <= gh)
+            occ[y * (gw + 1) + x] = i;
     }
 
-    /* Grid rows (top = max y, bottom = 0) */
-    for (int y = map_h; y >= 0; y--) {
+    /* Grid rows (top = max y, bottom = 1) */
+    for (int y = map_h; y >= 1; y--) {
         cellgrid_set(&grid, row, 0, '|', COLOR_GRAY);
-        for (int x = 0; x < gw; x++) {
-            int idx = occ[y * gw + x];
+        for (int x = 1; x <= gw; x++) {
+            int idx = occ[y * (gw + 1) + x];
             if (idx >= 0) {
                 const Unit *u = &state->units[idx];
                 char letter = (strcmp(u->unit_type, "Archer") == 0) ? 'A' : 'K';
@@ -1403,7 +1414,7 @@ CellGrid render_to_cellgrid(const GameState *state, int map_w, int map_h) {
                     color = COLOR_RED;
                 else
                     color = COLOR_BLUE;
-                cellgrid_set(&grid, row, 1 + x, letter, color);
+                cellgrid_set(&grid, row, x, letter, color);
             }
             /* empty cells stay black (default from calloc) */
         }
@@ -1610,6 +1621,65 @@ GameState game_state_fetch(void);
 void game_state_free(GameState *state);
 
 #endif
+# AvK Real-Time Client (wasm-rt)
+
+Real-time visual client for AvK. Renders turn-based simulation with animated phase transitions.
+
+## Architecture
+
+Two-world MVC pattern:
+- **ModelWorld**: identical to AvK, managed by the WASM engine
+- **ViewWorld**: persistent view units in JavaScript, tracks animation state
+
+The client advances one ModelWorld turn, then visualizes it over 500ms (4 phases × 125ms).
+
+## Phase Animation
+
+Each turn plays through four sequential phases:
+1. **Movement** (125ms): units slide from previous position to new position
+2. **Attack** (125ms): weapon sprites move toward attack target
+3. **Reaction** (125ms): hit units flash through hit animation (frames 1-8)
+4. **Defeat** (125ms): dying units shrink (frames 9-16), weapon hidden
+
+## View Units (Persistent)
+
+View units persist across turns. They are NOT rebuilt from model snapshots each turn.
+
+- `updateViewForTurn()`: after model advances, updates existing view units with new positions/state, removes dead units, adds new spawns
+- `initViewFromModel()`: used on game start and rewind to sync view from model
+- Previous positions tracked in view units, not via before/after model snapshots
+
+## Sprite System
+
+Sprite sheets in `assets/sprites/`:
+- `knight_body/`: 17 frames (idle=0, hit=1-8, defeat=9-16), 64x64px
+- `archer_body/`: 17 frames (same layout)
+- `knight_weapon/`: 1 frame (short arrow, pointing up)
+- `archer_weapon/`: 1 frame (long arrow, pointing up)
+
+Each sheet has a `sheet.yaml` manifest. Weapons rotate to face attack target via canvas transform.
+
+## WASM Exports Used
+
+| Function | Purpose |
+|----------|---------|
+| `wasm_init_with_config(name)` | Start game with named config (e.g. "wasm-rt") |
+| `wasm_turn()` | Advance one ModelWorld turn |
+| `wasm_get_unit_entity_id(i)` | Stable entity ID for view unit tracking |
+| `wasm_get_unit_x/y(i)` | Position after turn |
+| `wasm_get_unit_health(i)` | Health (<=0 = dying) |
+| `wasm_get_unit_faction(i)` | 0=archer, 1=knight |
+| `wasm_get_unit_took_damage(i)` | Hit this turn |
+| `wasm_get_unit_attacked_id(i)` | Entity ID of attack target |
+| `wasm_rewind(turn)` | Rewind to specific turn |
+
+## Layout
+
+Responsive 16:9 canvas (1024x576 internal, CSS-scaled). Header/footer with min/max pixel budgets. Canvas fills remaining space.
+
+## Config
+
+Uses `wasm-rt` named config from app.yaml: 4 archers vs 8 knights on 15x8 (16x9 cells) board.
 �PNG
 
    IHDR   @   @   �iq�  �IDATx���q� g'��3�ˡ�u���(�uU*J:X�Q?O��Ppss��9����_i����!��(��2�F��;R�4M�Ҿ�y�<��-�#�ƌV#��!�cF�	�����sFԚ`f�g60���q�;�EI�^K���$�%���h���*]
@@ -3464,179 +3534,460 @@ body {
     flex-direction: column;
     height: 100vh;
 }
-
-/* Header */
 #header-area {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    gap: 16px; overflow: hidden;
 }
-#header-area h1 {
-    font-size: 1.4em;
-    color: #f0f0f0;
-    white-space: nowrap;
-}
-#status {
-    font-size: 0.95em;
-    color: #aaa;
-    white-space: nowrap;
-}
-#game-over-msg {
-    font-size: 1.1em;
-    font-weight: bold;
-    color: #ffd700;
-}
-
-/* Middle: game area */
-#middle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-canvas {
-    border: 1px solid #333;
-    border-radius: 4px;
-}
-
-/* Footer */
+#header-area h1 { font-size: 1.4em; color: #f0f0f0; white-space: nowrap; }
+#status { font-size: 0.95em; color: #aaa; white-space: nowrap; }
+#game-over-msg { font-size: 1.1em; font-weight: bold; color: #ffd700; }
+#middle { display: flex; align-items: center; justify-content: center; }
+canvas { border: 1px solid #333; border-radius: 4px; image-rendering: pixelated; }
 #footer-area {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    gap: 8px; flex-wrap: wrap; overflow: hidden;
 }
 button {
-    background: #2a2a4a;
-    color: #e0e0e0;
-    border: 1px solid #444;
-    border-radius: 4px;
-    padding: 8px 16px;
-    font-size: 0.9em;
-    cursor: pointer;
-    min-width: 70px;
+    background: #2a2a4a; color: #e0e0e0; border: 1px solid #444;
+    border-radius: 4px; padding: 8px 16px; font-size: 0.9em;
+    cursor: pointer; min-width: 70px;
 }
 button:hover { background: #3a3a5a; }
-button:active { background: #4a4a6a; }
-#legend {
-    font-size: 0.8em;
-    color: #888;
-}
+button.active { background: #4a6a4a; border-color: #6a8a6a; }
+#legend { font-size: 0.8em; color: #888; }
 #legend span { margin: 0 8px; }
-.red { color: #ff6b6b; }
-.blue { color: #4dabf7; }
-#version {
-    font-size: 0.6em;
-    color: #555;
-}
+.green { color: #78be64; }
+.blue { color: #4d94d2; }
+#version { font-size: 0.6em; color: #555; }
 </style>
 </head>
 <body>
 
 <div id="header-area">
     <h1>Archers vs Knights RT</h1>
-    <div id="status">Initializing...</div>
+    <div id="status">Loading...</div>
     <div id="game-over-msg"></div>
 </div>
-
 <div id="middle">
-    <canvas id="canvas" width="640" height="480"></canvas>
+    <canvas id="canvas" width="1024" height="576"></canvas>
 </div>
-
 <div id="footer-area">
     <button id="btn-play" title="Space">Play</button>
     <button id="btn-step" title="Right Arrow">Step</button>
     <button id="btn-rewind" title="Left Arrow">Rewind</button>
     <button id="btn-new">New Game</button>
     <div id="legend">
-        <span class="red">&#9632; Archer</span>
-        <span class="blue">&#9632; Knight</span>
+        <span class="green">&#9679; Archer</span>
+        <span class="blue">&#9679; Knight</span>
     </div>
-    <div id="version">v0.0.4</div>
+    <div id="version">v0.0.14</div>
 </div>
 
+<script src="flecs-ecs.js"></script>
 <script>
 (function() {
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const statusEl = document.getElementById('status');
+    const gameOverEl = document.getElementById('game-over-msg');
+    const btnPlay = document.getElementById('btn-play');
+    const btnStep = document.getElementById('btn-step');
+    const btnRewind = document.getElementById('btn-rewind');
+    const btnNew = document.getElementById('btn-new');
     const headerEl = document.getElementById('header-area');
     const middleEl = document.getElementById('middle');
     const footerEl = document.getElementById('footer-area');
 
-    /* Layout budget (pixels) */
-    const HEADER_MIN = 40;
-    const HEADER_MAX = 60;
-    const FOOTER_MIN = 40;
-    const FOOTER_MAX = 60;
-    const GAME_MIN = 240;  /* minimum game area height */
-    const GAME_ASPECT = 16 / 9;
+    const CELL = 64, COLS = 16, ROWS = 9;
+    const BG = '#0f0f23';
 
-    function layout() {
-        const totalH = window.innerHeight;
-        const totalW = window.innerWidth;
+    let engine = null;
+    let playing = false;
+    let mapLabel = '';
 
-        /* Step 1: ensure min header + footer */
-        const chromeMin = HEADER_MIN + FOOTER_MIN;
-        const chromeMax = HEADER_MAX + FOOTER_MAX;
-        const gameMinTotal = chromeMin + GAME_MIN;
+    /* ── Turn timing ─────────────────────────────────────────── */
+    const PHASE_MS = 125;
+    const PHASES = ['movement', 'attack', 'reaction', 'defeat'];
 
-        let headerH, footerH, gameH;
+    /* ── View state (persistent across turns) ───────────────── */
+    let viewUnits = [];       /* persistent view units, keyed by entityId */
+    let currentPhase = -1;    /* -1=idle, 0-3=animating phase */
+    let phaseStartTime = 0;
+    let animating = false;
 
-        if (totalH <= chromeMin) {
-            /* Not even enough for header + footer */
-            headerH = totalH / 2;
-            footerH = totalH / 2;
-            gameH = 0;
-        } else if (totalH < gameMinTotal) {
-            /* Enough for header + footer but game area below minimum */
-            headerH = HEADER_MIN;
-            footerH = FOOTER_MIN;
-            gameH = totalH - chromeMin;
-        } else {
-            /* Enough for everything — scale proportionally toward max */
-            const available = totalH - chromeMin - GAME_MIN;
-            const chromeExtra = (HEADER_MAX - HEADER_MIN) + (FOOTER_MAX - FOOTER_MIN);
-            const chromeT = Math.min(1, available / chromeExtra);
+    /* Read all units from WASM into a map keyed by entity_id */
+    function readUnits() {
+        const map = {};
+        const count = engine.getUnitCount();
+        for (let i = 0; i < count; i++) {
+            const eid = engine.getEntityId(i);
+            map[eid] = {
+                entityId: eid,
+                x: engine.getUnitX(i),
+                y: engine.getUnitY(i),
+                health: engine.getHealth(i),
+                faction: engine.getUnitFaction(i),
+                damaged: engine.getUnitDamaged(i),
+                attackedId: engine.getAttackedId(i),
+            };
+        }
+        return map;
+    }
 
-            headerH = HEADER_MIN + (HEADER_MAX - HEADER_MIN) * chromeT;
-            footerH = FOOTER_MIN + (FOOTER_MAX - FOOTER_MIN) * chromeT;
-            gameH = totalH - headerH - footerH;
+    /* Create a new view unit */
+    function makeViewUnit(entityId, x, y, faction) {
+        return {
+            entityId: entityId,
+            x: x, y: y,
+            prevX: x, prevY: y,
+            faction: faction,
+            health: 0,
+            wasDamaged: false,
+            isDying: false,
+            dead: false,
+            attackedId: 0,
+            attackAngle: 0,
+        };
+    }
+
+    /* Initialize view from ModelWorld (used on game start and rewind) */
+    function initViewFromModel() {
+        const model = readUnits();
+        viewUnits = [];
+        for (const eid in model) {
+            const m = model[eid];
+            if (m.health <= 0) continue; /* skip dead units waiting for despawn */
+            const vu = makeViewUnit(m.entityId, m.x, m.y, m.faction);
+            vu.health = m.health;
+            viewUnits.push(vu);
+        }
+    }
+
+    /* Update persistent view units from ModelWorld after a turn */
+    function updateViewForTurn() {
+        const model = readUnits();
+        const viewById = {};
+        for (const vu of viewUnits) viewById[vu.entityId] = vu;
+
+        /* Update existing view units with new model state */
+        for (const eid in model) {
+            const m = model[eid];
+            let vu = viewById[eid];
+
+            if (!vu) {
+                /* New unit (spawned this turn) */
+                vu = makeViewUnit(m.entityId, m.x, m.y, m.faction);
+                viewUnits.push(vu);
+                viewById[eid] = vu;
+            }
+
+            /* Store previous position (where the view unit currently is) */
+            vu.prevX = vu.x;
+            vu.prevY = vu.y;
+
+            /* Update to new model state */
+            vu.x = m.x;
+            vu.y = m.y;
+            vu.health = m.health;
+            vu.wasDamaged = m.damaged;
+            vu.isDying = m.health <= 0;
+            vu.attackedId = m.attackedId;
+            vu.attackAngle = 0;
         }
 
-        /* Apply header/footer sizes */
+        /* Mark units that were despawned (in view but not in model) as dead.
+           These already played their defeat animation last turn. */
+        for (const vu of viewUnits) {
+            if (!model[vu.entityId] && !vu.dead) {
+                vu.dead = true;
+            }
+        }
+
+        /* Remove dead units (defeat animation already played) */
+        viewUnits = viewUnits.filter(vu => !vu.dead);
+
+        /* Compute attack angles */
+        const byId = {};
+        for (const vu of viewUnits) byId[vu.entityId] = vu;
+        for (const vu of viewUnits) {
+            if (vu.attackedId && byId[vu.attackedId]) {
+                const target = byId[vu.attackedId];
+                vu.attackAngle = Math.atan2(target.y - vu.y, target.x - vu.x) + Math.PI / 2;
+            }
+        }
+    }
+
+    /* Find a view unit by entity_id */
+    function findViewUnit(entityId) {
+        return viewUnits.find(u => u.entityId === entityId);
+    }
+
+    /* ── Layout ──────────────────────────────────────────────── */
+    const HEADER_MIN = 40, HEADER_MAX = 60;
+    const FOOTER_MIN = 40, FOOTER_MAX = 60;
+    const GAME_MIN = 240, GAME_ASPECT = 16 / 9;
+
+    function layout() {
+        const totalH = window.innerHeight, totalW = window.innerWidth;
+        const chromeMin = HEADER_MIN + FOOTER_MIN;
+        let headerH, footerH, gameH;
+        if (totalH <= chromeMin) {
+            headerH = totalH / 2; footerH = totalH / 2; gameH = 0;
+        } else if (totalH < chromeMin + GAME_MIN) {
+            headerH = HEADER_MIN; footerH = FOOTER_MIN; gameH = totalH - chromeMin;
+        } else {
+            const avail = totalH - chromeMin - GAME_MIN;
+            const extra = (HEADER_MAX - HEADER_MIN) + (FOOTER_MAX - FOOTER_MIN);
+            const t = Math.min(1, avail / extra);
+            headerH = HEADER_MIN + (HEADER_MAX - HEADER_MIN) * t;
+            footerH = FOOTER_MIN + (FOOTER_MAX - FOOTER_MIN) * t;
+            gameH = totalH - headerH - footerH;
+        }
         headerEl.style.height = Math.floor(headerH) + 'px';
         footerEl.style.height = Math.floor(footerH) + 'px';
         middleEl.style.height = Math.floor(gameH) + 'px';
-
-        /* Scale canvas to fit game area maintaining 4:3 aspect */
-        let canvasW = gameH * GAME_ASPECT;
-        let canvasH = gameH;
-
-        /* Also constrain by available width */
-        if (canvasW > totalW) {
-            canvasW = totalW;
-            canvasH = canvasW / GAME_ASPECT;
-        }
-
-        canvas.style.width = Math.floor(canvasW) + 'px';
-        canvas.style.height = Math.floor(canvasH) + 'px';
-
-        statusEl.textContent = `${Math.floor(canvasW)}x${Math.floor(canvasH)} (${totalW}x${totalH})`;
+        let cw = gameH * GAME_ASPECT, ch = gameH;
+        if (cw > totalW) { cw = totalW; ch = cw / GAME_ASPECT; }
+        canvas.style.width = Math.floor(cw) + 'px';
+        canvas.style.height = Math.floor(ch) + 'px';
     }
-
     layout();
     window.addEventListener('resize', layout);
 
-    /* Draw pink rectangle */
-    ctx.fillStyle = '#ff69b4';
-    ctx.fillRect(0, 0, 640, 480);
+    /* ── Sprites ─────────────────────────────────────────────── */
+    const SPRITE_NAMES = ['knight_body', 'archer_body', 'knight_weapon', 'archer_weapon'];
+    const SPRITE_COUNTS = { knight_body: 17, archer_body: 17, knight_weapon: 1, archer_weapon: 1 };
+    const sprites = {};
+    let spritesLoaded = 0, spritesTotal = 0;
+
+    function loadSprites(basePath, cb) {
+        for (const name of SPRITE_NAMES) {
+            const count = SPRITE_COUNTS[name];
+            spritesTotal += count;
+            sprites[name] = { frames: [] };
+            for (let i = 0; i < count; i++) {
+                const img = new Image();
+                img.onload = img.onerror = function() { spritesLoaded++; if (spritesLoaded === spritesTotal) cb(); };
+                img.src = `${basePath}/${name}/frame_${String(i).padStart(2,'0')}.png`;
+                sprites[name].frames.push(img);
+            }
+        }
+    }
+
+    /* ── Rendering ───────────────────────────────────────────── */
+    function drawGrid() {
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= COLS; x++) { ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,ROWS*CELL); ctx.stroke(); }
+        for (let y = 0; y <= ROWS; y++) { ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(COLS*CELL,y*CELL); ctx.stroke(); }
+    }
+
+    function drawUnit(u, phase, t) {
+        const bodyName = u.faction === 0 ? 'archer_body' : 'knight_body';
+        const weaponName = u.faction === 0 ? 'archer_weapon' : 'knight_weapon';
+        let drawX, drawY, bodyFrame = 0, scale = 1, showWeapon = true;
+        let weaponOffX = 0, weaponOffY = 0;
+
+        switch (phase) {
+            case 'movement':
+                drawX = (u.prevX + (u.x - u.prevX) * t - 1) * CELL;
+                drawY = (u.prevY + (u.y - u.prevY) * t - 1) * CELL;
+                break;
+
+            case 'attack':
+                drawX = (u.x - 1) * CELL;
+                drawY = (u.y - 1) * CELL;
+                /* Animate weapon toward target */
+                if (u.attackedId) {
+                    const target = findViewUnit(u.attackedId);
+                    if (target) {
+                        weaponOffX = (target.x - u.x) * CELL * t;
+                        weaponOffY = (target.y - u.y) * CELL * t;
+                    }
+                }
+                break;
+
+            case 'reaction':
+                drawX = (u.x - 1) * CELL;
+                drawY = (u.y - 1) * CELL;
+                if (u.wasDamaged) {
+                    /* frames 1-8: lighten then return */
+                    bodyFrame = 1 + Math.min(7, Math.floor(t * 8));
+                }
+                break;
+
+            case 'defeat':
+                drawX = (u.x - 1) * CELL;
+                drawY = (u.y - 1) * CELL;
+                if (u.isDying) {
+                    bodyFrame = 9 + Math.min(7, Math.floor(t * 8));
+                    scale = 1 - t * 0.9;
+                    showWeapon = false;
+                }
+                break;
+
+            default: /* idle */
+                drawX = (u.x - 1) * CELL;
+                drawY = (u.y - 1) * CELL;
+        }
+
+        /* Draw body */
+        const bodyImg = sprites[bodyName].frames[Math.min(bodyFrame, sprites[bodyName].frames.length - 1)];
+        if (bodyImg && bodyImg.complete) {
+            const size = CELL * scale;
+            const off = (CELL - size) / 2;
+            ctx.drawImage(bodyImg, drawX + off, drawY + off, size, size);
+        }
+
+        /* Draw weapon (rotated to face attack target) */
+        if (showWeapon) {
+            const wImg = sprites[weaponName].frames[0];
+            if (wImg && wImg.complete) {
+                const size = CELL * scale;
+                const cx = drawX + CELL / 2 + weaponOffX;
+                const cy = drawY + CELL / 2 + weaponOffY;
+                ctx.save();
+                ctx.translate(cx, cy);
+                if (u.attackAngle) ctx.rotate(u.attackAngle);
+                ctx.drawImage(wImg, -size / 2, -size / 2, size, size);
+                ctx.restore();
+            }
+        }
+    }
+
+    function render(timestamp) {
+        if (!engine) return;
+
+        ctx.fillStyle = BG;
+        ctx.fillRect(0, 0, 1024, 576);
+        drawGrid();
+
+        const phase = currentPhase >= 0 ? PHASES[currentPhase] : 'idle';
+        let t = 0;
+        if (currentPhase >= 0 && phaseStartTime > 0) {
+            t = Math.min(1, (timestamp - phaseStartTime) / PHASE_MS);
+        }
+
+        for (const u of viewUnits) {
+            if (u.dead) continue;
+            drawUnit(u, phase, t);
+        }
+
+        /* Status */
+        const turn = engine.getTurn();
+        const gameOver = engine.isGameOver();
+        if (gameOver) gameOverEl.textContent = engine.getMessage();
+        const aliveCount = viewUnits.filter(u => !u.dead && !u.isDying).length;
+        const phaseLabel = currentPhase >= 0 ? ` | ${phase} ${Math.floor(t*100)}%` : '';
+        statusEl.textContent = `${mapLabel} | Turn ${turn} | ${aliveCount} units${phaseLabel}`;
+
+        /* Phase progression */
+        if (currentPhase >= 0) {
+            if (t >= 1) {
+                currentPhase++;
+                if (currentPhase >= PHASES.length) {
+                    currentPhase = -1;
+                    animating = false;
+                    /* Mark dying units as dead — they'll be removed at next turn start */
+                    for (const u of viewUnits) {
+                        if (u.isDying) u.dead = true;
+                    }
+                    if (playing && !gameOver) {
+                        startTurn();
+                    }
+                    return;
+                }
+                phaseStartTime = timestamp;
+            }
+            requestAnimationFrame(render);
+        }
+    }
+
+    /* ── Controls ────────────────────────────────────────────── */
+    function startTurn() {
+        if (!engine || engine.isGameOver() || animating) return;
+        animating = true;
+        engine.turn();
+        updateViewForTurn();
+        currentPhase = 0;
+        phaseStartTime = performance.now();
+        requestAnimationFrame(render);
+    }
+
+    function togglePlay() {
+        playing = !playing;
+        btnPlay.textContent = playing ? 'Pause' : 'Play';
+        btnPlay.classList.toggle('active', playing);
+        if (playing && !animating) startTurn();
+    }
+
+    function rewindOne() {
+        if (!engine || animating) return;
+        const turn = engine.getTurn();
+        if (turn > 1) {
+            engine.rewind(turn - 1);
+            gameOverEl.textContent = '';
+            initViewFromModel();
+            currentPhase = -1;
+            requestAnimationFrame(render);
+        }
+    }
+
+    function newGame() {
+        if (playing) togglePlay();
+        animating = false;
+        currentPhase = -1;
+        gameOverEl.textContent = '';
+        engine.initWithConfig('wasm-rt');
+        initViewFromModel();
+        requestAnimationFrame(render);
+    }
+
+    btnPlay.addEventListener('click', togglePlay);
+    btnStep.addEventListener('click', startTurn);
+    btnRewind.addEventListener('click', rewindOne);
+    btnNew.addEventListener('click', newGame);
+    document.addEventListener('keydown', function(e) {
+        if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+        else if (e.code === 'ArrowRight') { e.preventDefault(); startTurn(); }
+        else if (e.code === 'ArrowLeft') { e.preventDefault(); rewindOne(); }
+    });
+
+    /* ── Init ────────────────────────────────────────────────── */
+    statusEl.textContent = 'Loading sprites...';
+    loadSprites('assets/sprites', function() {
+        statusEl.textContent = 'Loading engine...';
+        FlecsECS().then(function(M) {
+            engine = {
+                init: M.cwrap('wasm_init', 'number', []),
+                initWithConfig: M.cwrap('wasm_init_with_config', 'number', ['string']),
+                turn: M.cwrap('wasm_turn', 'number', []),
+                getTurn: M.cwrap('wasm_get_turn', 'number', []),
+                getUnitCount: M.cwrap('wasm_get_unit_count', 'number', []),
+                getUnitX: M.cwrap('wasm_get_unit_x', 'number', ['number']),
+                getUnitY: M.cwrap('wasm_get_unit_y', 'number', ['number']),
+                getUnitFaction: M.cwrap('wasm_get_unit_faction', 'number', ['number']),
+                getUnitDamaged: M.cwrap('wasm_get_unit_took_damage', 'number', ['number']),
+                getHealth: M.cwrap('wasm_get_unit_health', 'number', ['number']),
+                getAttackedId: M.cwrap('wasm_get_unit_attacked_id', 'number', ['number']),
+                getEntityId: M.cwrap('wasm_get_unit_entity_id', 'number', ['number']),
+                getMapX: M.cwrap('wasm_get_map_x', 'number', []),
+                getMapY: M.cwrap('wasm_get_map_y', 'number', []),
+                isGameOver: M.cwrap('wasm_is_game_over', 'number', []),
+                getMessage: M.cwrap('wasm_get_game_over_message', 'string', []),
+                rewind: M.cwrap('wasm_rewind', 'number', ['number']),
+                reset: M.cwrap('wasm_reset', 'number', []),
+            };
+            engine.initWithConfig('wasm-rt');
+            const mx = engine.getMapX();
+            const my = engine.getMapY();
+            mapLabel = `${mx}x${my} map`;
+            initViewFromModel();
+            requestAnimationFrame(render);
+        });
+    });
 })();
 </script>
-
 </body>
 </html>
 name: animation
@@ -4250,7 +4601,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 ctx.fillStyle = KNIGHT_COLOR;
             }
 
-            ctx.fillRect(x * CELL_W + 1, y * CELL_H + 1, CELL_W - 1, CELL_H - 1);
+            ctx.fillRect((x - 1) * CELL_W + 1, (y - 1) * CELL_H + 1, CELL_W - 1, CELL_H - 1);
         }
 
         /* FPS */
@@ -4586,6 +4937,7 @@ typedef struct {
     int32_t unit_type;   /* 0=archer, 1=knight */
     int32_t took_damage; /* 0 or 1 */
     int32_t entity_id;
+    int32_t attacked_id; /* entity_id of attack target, 0 = none */
 } WasmUnit;
 
 #define MAX_UNITS 4096
@@ -4601,6 +4953,7 @@ static void collect_wasm_units(Engine *engine) {
     ecs_entity_t red_comp  = ecs_lookup(engine->world, "RedFaction");
     ecs_entity_t blue_comp = ecs_lookup(engine->world, "BlueFaction");
     ecs_entity_t td_comp   = ecs_lookup(engine->world, "TookDamage");
+    ecs_entity_t wpn_comp  = ecs_lookup(engine->world, "Weapon");
 
     if (!loc_comp || !hp_comp) { g_unit_count = 0; return; }
 
@@ -4620,7 +4973,8 @@ static void collect_wasm_units(Engine *engine) {
             ecs_entity_t eid = it.entities[i];
 
             const int32_t *hp = (const int32_t *)ecs_get_id(engine->world, eid, hp_comp);
-            if (!hp || *hp <= 0) continue;
+            if (!hp) continue;
+            /* Include dead units (health <= 0) — they persist for one turn for defeat animation */
 
             WasmUnit *u = &g_units[count];
 
@@ -4661,6 +5015,22 @@ static void collect_wasm_units(Engine *engine) {
                 engine->world, eid, engine->entity_id_comp);
             u->entity_id = eid_val ? *eid_val : 0;
 
+            /* Weapon.attacked (entity_id of target, second field after range) */
+            u->attacked_id = 0;
+            if (wpn_comp && ecs_has_id(engine->world, eid, wpn_comp)) {
+                const void *wpn = ecs_get_id(engine->world, eid, wpn_comp);
+                if (wpn) {
+                    /* attacked is second field: offset sizeof(int32_t) from start */
+                    const ecs_entity_t *att = (const ecs_entity_t *)((const char *)wpn + sizeof(int32_t));
+                    if (*att) {
+                        /* Convert entity_t to entity_id for JS */
+                        const int32_t *tid = (const int32_t *)ecs_get_id(
+                            engine->world, *att, engine->entity_id_comp);
+                        u->attacked_id = tid ? *tid : 0;
+                    }
+                }
+            }
+
             count++;
         }
     }
@@ -4697,6 +5067,29 @@ int wasm_init(void) {
 
     AppStartResult asr;
     if (!engine_app_start(g_engine, NULL, &asr)) {
+        engine_fini(g_engine);
+        g_engine = NULL;
+        return 0;
+    }
+
+    return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_init_with_config(const char *config_name) {
+    if (g_engine) engine_fini(g_engine);
+
+    g_engine = engine_init(NULL);
+    if (!g_engine) return 0;
+
+    if (!engine_sandbox_select(g_engine, "avk")) {
+        engine_fini(g_engine);
+        g_engine = NULL;
+        return 0;
+    }
+
+    AppStartResult asr;
+    if (!engine_app_start(g_engine, config_name, &asr)) {
         engine_fini(g_engine);
         g_engine = NULL;
         return 0;
@@ -4782,6 +5175,15 @@ int wasm_get_unit_faction(int i) { return (i >= 0 && i < g_unit_count) ? g_units
 
 EMSCRIPTEN_KEEPALIVE
 int wasm_get_unit_took_damage(int i) { return (i >= 0 && i < g_unit_count) ? g_units[i].took_damage : 0; }
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_get_unit_health(int i) { return (i >= 0 && i < g_unit_count) ? g_units[i].health : 0; }
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_get_unit_attacked_id(int i) { return (i >= 0 && i < g_unit_count) ? g_units[i].attacked_id : 0; }
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_get_unit_entity_id(int i) { return (i >= 0 && i < g_unit_count) ? g_units[i].entity_id : 0; }
 
 EMSCRIPTEN_KEEPALIVE
 int wasm_get_map_x(void) {
@@ -5309,17 +5711,17 @@ static void grid_clear(int mx, int my) {
 }
 
 static void grid_set(int x, int y, int unit_idx) {
-    if (x >= 0 && x < GRID_MAX_X && y >= 0 && y < GRID_MAX_Y)
+    if (x >= 1 && x < GRID_MAX_X && y >= 1 && y < GRID_MAX_Y)
         g_occ_grid[y * GRID_MAX_X + x] = (int16_t)(unit_idx + 1);
 }
 
 static bool grid_occupied(int x, int y) {
-    if (x < 0 || x >= GRID_MAX_X || y < 0 || y >= GRID_MAX_Y) return true;
+    if (x < 1 || x >= GRID_MAX_X || y < 1 || y >= GRID_MAX_Y) return true;
     return g_occ_grid[y * GRID_MAX_X + x] != 0;
 }
 
 static int grid_unit_at(int x, int y) {
-    if (x < 0 || x >= GRID_MAX_X || y < 0 || y >= GRID_MAX_Y) return -1;
+    if (x < 1 || x >= GRID_MAX_X || y < 1 || y >= GRID_MAX_Y) return -1;
     return g_occ_grid[y * GRID_MAX_X + x] - 1;
 }
 
@@ -5404,7 +5806,7 @@ static void avk_app_start(Engine *engine) {
     int num_knights = app->knights;
 
     int total = num_archers + num_knights;
-    int cells = (mx + 1) * (my + 1);
+    int cells = mx * my;
     if (total > cells) {
         fprintf(stderr, "Error: %d units > %d cells, can't place without overlap\n", total, cells);
         return;
@@ -5425,7 +5827,7 @@ static void avk_app_start(Engine *engine) {
         if (sr) { *(char **)sr = ecs_os_strdup("Knight"); ecs_modified_id(engine->world, e, sr_comp); }
 
         int px, py;
-        do { px = rand() % (mx + 1); py = rand() % (my + 1); } while (grid_occupied(px, py));
+        do { px = 1 + rand() % mx; py = 1 + rand() % my; } while (grid_occupied(px, py));
         grid_set(px, py, 1);
 
         ecs_add_id(engine->world, e, loc_comp);
@@ -5443,7 +5845,7 @@ static void avk_app_start(Engine *engine) {
         if (sr) { *(char **)sr = ecs_os_strdup("Archer"); ecs_modified_id(engine->world, e, sr_comp); }
 
         int px, py;
-        do { px = rand() % (mx + 1); py = rand() % (my + 1); } while (grid_occupied(px, py));
+        do { px = 1 + rand() % mx; py = 1 + rand() % my; } while (grid_occupied(px, py));
         grid_set(px, py, 1);
 
         ecs_add_id(engine->world, e, loc_comp);
@@ -5471,20 +5873,18 @@ static int32_t g_bfs_queue[BFS_MAX];
 
 static void build_distance_field(int16_t *dist, UnitData *units, int count,
                                  int faction, int mx, int my) {
-    int w = mx + 1, h = my + 1;
-    /* Init all to -1 (unvisited) */
-    for (int y = 0; y < h; y++)
-        for (int x = 0; x < w; x++)
-            dist[y * GRID_MAX_X + x] = -1;
+    /* Coordinates are 1-based: valid range is 1..mx, 1..my */
+    /* Init all to -1 (unvisited) — 0xFF bytes produce -1 in int16 two's complement */
+    memset(dist, 0xFF, (size_t)(my + 1) * GRID_MAX_X * sizeof(int16_t));
 
     /* Seed BFS with all units of the target faction */
     int head = 0, tail = 0;
     for (int i = 0; i < count; i++) {
         if (units[i].faction != faction) continue;
         int x = units[i].x, y = units[i].y;
-        if (x >= 0 && x < w && y >= 0 && y < h && dist[y * GRID_MAX_X + x] < 0) {
+        if (x >= 1 && x <= mx && y >= 1 && y <= my && dist[y * GRID_MAX_X + x] < 0) {
             dist[y * GRID_MAX_X + x] = 0;
-            g_bfs_queue[tail++] = y * w + x;
+            g_bfs_queue[tail++] = y * (mx + 1) + x;
         }
     }
 
@@ -5493,20 +5893,20 @@ static void build_distance_field(int16_t *dist, UnitData *units, int count,
     static const int dy[] = {-1, 1, 0, 0};
     while (head < tail) {
         int pos = g_bfs_queue[head++];
-        int cy = pos / w, cx = pos % w;
+        int cy = pos / (mx + 1), cx = pos % (mx + 1);
         int16_t d = dist[cy * GRID_MAX_X + cx];
         for (int dir = 0; dir < 4; dir++) {
             int nx = cx + dx[dir], ny = cy + dy[dir];
-            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+            if (nx < 1 || nx > mx || ny < 1 || ny > my) continue;
             if (dist[ny * GRID_MAX_X + nx] >= 0) continue;
             dist[ny * GRID_MAX_X + nx] = d + 1;
-            g_bfs_queue[tail++] = ny * w + nx;
+            g_bfs_queue[tail++] = ny * (mx + 1) + nx;
         }
     }
 }
 
 static int dist_field_get(int16_t *dist, int x, int y) {
-    if (x < 0 || x >= GRID_MAX_X || y < 0 || y >= GRID_MAX_Y) return 9999;
+    if (x < 1 || x >= GRID_MAX_X || y < 1 || y >= GRID_MAX_Y) return 9999;
     int16_t v = dist[y * GRID_MAX_X + x];
     return v >= 0 ? v : 9999;
 }
@@ -5574,16 +5974,21 @@ static void avk_movement(Engine *engine) {
     for (int i = 0; i < count; i++)
         grid_set(units[i].x, units[i].y, i);
 
-    /* Build distance fields — O(cells) via BFS */
-    build_distance_field(g_dist_to_red, units, count, 0, mx, my);
-    build_distance_field(g_dist_to_blue, units, count, 1, mx, my);
-
     static const int dirs[][2] = {{0,-1},{0,1},{-1,0},{1,0},{0,0}};
-    int half_mx = mx / 2, half_my = my / 2;
+
+    /* Pending moves buffer — applied in batch after each pass */
+    int pend_idx[4096], pend_x[4096], pend_y[4096];
 
     bool moved = true;
     while (moved) {
         moved = false;
+
+        /* Rebuild distance fields from current positions each pass */
+        build_distance_field(g_dist_to_red, units, count, 0, mx, my);
+        build_distance_field(g_dist_to_blue, units, count, 1, mx, my);
+
+        /* Phase 1: decide moves for all units */
+        int npend = 0;
         for (int i = 0; i < count; i++) {
             UnitData *ent = &units[i];
             if (ent->energy <= 0) continue;
@@ -5599,7 +6004,7 @@ static void avk_movement(Engine *engine) {
                 int nx = ent->x + dirs[d][0];
                 int ny = ent->y + dirs[d][1];
 
-                if (nx < 0 || nx > mx || ny < 0 || ny > my) continue;
+                if (nx < 1 || nx > mx || ny < 1 || ny > my) continue;
                 if (d != 4 && grid_occupied(nx, ny)) continue;
 
                 int score = score_cell(nx, ny, ent->move_type, ent->range,
@@ -5626,8 +6031,8 @@ static void avk_movement(Engine *engine) {
                 }
             }
 
-            /* Tiebreaker 2: most central */
-            int best_cdist = 999999;
+            /* Tiebreaker 2: farthest from nearest wall */
+            int best_wdist = -1;
             for (int c = 0; c < ncand; c++) {
                 if (cand_score[c] != best_score) continue;
                 if (ent->move_type == 1 && best_backed) {
@@ -5637,8 +6042,10 @@ static void avk_movement(Engine *engine) {
                     if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
                         continue;
                 }
-                int cd = abs(cand_x[c] - half_mx) + abs(cand_y[c] - half_my);
-                if (cd < best_cdist) best_cdist = cd;
+                int wx = cand_x[c] - 1 < mx - cand_x[c] ? cand_x[c] - 1 : mx - cand_x[c];
+                int wy = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
+                int wd = wx < wy ? wx : wy;
+                if (wd > best_wdist) best_wdist = wd;
             }
 
             /* Pick first matching candidate */
@@ -5653,25 +6060,38 @@ static void avk_movement(Engine *engine) {
                     if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
                         continue;
                 }
-                int cd = abs(cand_x[c] - half_mx) + abs(cand_y[c] - half_my);
-                if (cd != best_cdist) continue;
+                int wx = cand_x[c] - 1 < mx - cand_x[c] ? cand_x[c] - 1 : mx - cand_x[c];
+                int wy = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
+                int wd = wx < wy ? wx : wy;
+                if (wd != best_wdist) continue;
                 bx = cand_x[c]; by = cand_y[c];
                 found = true;
                 break;
             }
 
             if (found && (bx != ent->x || by != ent->y)) {
-                g_occ_grid[ent->y * GRID_MAX_X + ent->x] = 0;
-                ent->x = bx; ent->y = by;
-                grid_set(bx, by, i);
-                ent->energy--;
-
-                int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, ent->eid, loc_comp);
-                if (loc) { loc[0] = ent->x; loc[1] = ent->y; ecs_modified_id(engine->world, ent->eid, loc_comp); }
-                moved = true;
+                pend_idx[npend] = i;
+                pend_x[npend] = bx;
+                pend_y[npend] = by;
+                npend++;
             } else if (!found) {
                 ent->energy = 0;
             }
+        }
+
+        /* Phase 2: apply moves, skip if target now occupied */
+        for (int p = 0; p < npend; p++) {
+            int i = pend_idx[p];
+            UnitData *ent = &units[i];
+            if (grid_occupied(pend_x[p], pend_y[p])) continue;
+            g_occ_grid[ent->y * GRID_MAX_X + ent->x] = 0;
+            ent->x = pend_x[p]; ent->y = pend_y[p];
+            grid_set(ent->x, ent->y, i);
+            ent->energy--;
+
+            int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, ent->eid, loc_comp);
+            if (loc) { loc[0] = ent->x; loc[1] = ent->y; ecs_modified_id(engine->world, ent->eid, loc_comp); }
+            moved = true;
         }
     }
 }
