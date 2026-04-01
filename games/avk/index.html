@@ -58,9 +58,6 @@ canvas {
     border: 1px solid #333;
     border-radius: 4px;
     image-rendering: pixelated;
-    max-width: 100%;
-    max-height: 60vh;
-    object-fit: contain;
 }
 #controls {
     margin-top: 12px;
@@ -235,7 +232,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <div id="game-over-msg"></div>
     <div id="about-panel">
         <h3>About</h3>
-        <p>Built in C with Flecs ECS, it simulates 1,127 archers (red) fighting 2,649 knights (blue) on a 320x144 grid. Combat is turn-based -- all units move one tile per turn. Knights have range 1 and 35 HP. Archers have range 3 and 10 HP. All attacks deal 5 damage.</p>
+        <p>Built in C with Flecs ECS, it simulates archers (red) fighting knights (blue) on a 16:9 grid. Combat is turn-based -- all units move one tile per turn. Knights have range 1 and 25 HP. Archers have range 3 and 10 HP. All attacks deal 5 damage.</p>
         <p>The initial knight AI "move toward the closest archer" was terrible. Knights myopically blocked each other, creating traffic jams while archers kited freely. The fix was a tiered tiebreaker system for choosing between equally scored moves:</p>
         <ol>
             <li><strong>Spread:</strong> prefer moving away from an adjacent ally, so the knight behind you can advance into your space. This naturally forms surrounding formations.</li>
@@ -285,8 +282,9 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     let engine = null;
     let playing = false;
     let playInterval = null;
-    let mapW = 150, mapH = 48;
-    let CELL_W = 6, CELL_H = 6;
+    let mapW = 288, mapH = 162;
+    let CELL_W = 1, CELL_H = 1;
+    const GAME_ASPECT = 16 / 9;
     const frameTimes = [];
     let lastFrameTime = 0;
     let heldKey = null;
@@ -302,21 +300,23 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const HIT_COLOR = '#ffffff';
     const BORDER_COLOR = '#333355';
 
-    function resizeCanvas() {
-        var pad = 16;
-        var controlsH = 120;
-        var availW = window.innerWidth - pad;
-        var availH = window.innerHeight - controlsH;
-        /* Square cells — use the smaller dimension to fit */
-        var cell = Math.max(1, Math.min(Math.floor(availW / mapW), Math.floor(availH / mapH)));
-        CELL_W = cell;
-        CELL_H = cell;
+    function layout() {
+        var totalH = window.innerHeight, totalW = window.innerWidth;
+        var uiH = 160;  /* controls + legend + padding */
+        var gameH = totalH - uiH;
+        var cw = gameH * GAME_ASPECT, ch = gameH;
+        if (cw > totalW) { cw = totalW; ch = cw / GAME_ASPECT; }
+        canvas.style.width = Math.floor(cw) + 'px';
+        canvas.style.height = Math.floor(ch) + 'px';
+        /* Internal resolution: 1 pixel per cell */
+        CELL_W = Math.max(1, Math.floor(cw / mapW));
+        CELL_H = CELL_W;
         canvas.width = mapW * CELL_W;
         canvas.height = mapH * CELL_H;
     }
 
     window.addEventListener('resize', function() {
-        resizeCanvas();
+        layout();
         if (engine) render();
     });
 
@@ -646,10 +646,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             engine.turn();
 
             /* Read map size (Map entity exists after first turn) */
-            mapW = engine.getMapX() || 150;
-            mapH = engine.getMapY() || 48;
+            mapW = engine.getMapX() || 288;
+            mapH = engine.getMapY() || 162;
 
-            resizeCanvas();
+            layout();
             render();
 
             markDone(stepInit);
