@@ -75,13 +75,13 @@ description: "Red archers vs blue knights on a bounded grid map"
 
 configs:
   wasm:
-    archers: 923
-    knights: 2436
+    archers: 680
+    knights: 2681
     map_size: { x: 288, y: 162 }
     max_turns: 1000
   console:
-    archers: 108
-    knights: 424
+    archers: 105
+    knights: 428
     map_size: { x: 151, y: 49 }
     max_turns: 1000
   wasm-rt:
@@ -90,8 +90,8 @@ configs:
     map_size: { x: 48, y: 27 }
     max_turns: 200
 
-archers: 676
-knights: 2683
+archers: 680
+knights: 2681
 map_size:
   x: 288
   y: 162
