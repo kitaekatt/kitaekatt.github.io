@@ -173,8 +173,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         </div>
 
         <h3>How It Works</h3>
-        <p><b>Each turn:</b> all units move, then all units attack.</p>
-        <p><b>Knights</b> charge toward the nearest archer. When two moves are equally good, they prefer to stay backed by an ally, then prefer moves away from walls, then prefer closing the longer axis to their target.</p>
+        <p><b>Each turn:</b> all units move, then all units attack. Movement and attacking is grid based (up, down, left, right).</p>
+        <p><b>Knights</b> charge toward the nearest archer. When two options are equally good, they try to make room for allies, and corner their enemies against the walls.</p>
         <p><b>Archers</b> try to stay at exactly their attack range. Too close and they retreat; too far and they advance. Same tiebreakers as knights.</p>
         <p><b>Attack:</b> each unit hits the lowest-HP enemy within range. Knights must be adjacent; archers can shoot up to 3 tiles away.</p>
         <p><b>Win condition:</b> the game ends when one side has no units left.</p>
@@ -204,7 +204,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <option value="wasm_38x" class="debug-only" hidden>608×342</option>
     </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
-    <div id="version">v0.1.0 (74d4496)</div>
+    <div id="version">v0.1.0 (908804b)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
