@@ -110,18 +110,18 @@ configs:
     map_size: { x: 272, y: 153 }
     max_turns: 1000
   wasm_23x:
-    archers: 1199
-    knights: 4287
+    archers: 1102
+    knights: 4384
     map_size: { x: 368, y: 207 }
     max_turns: 1000
   wasm_30x:
-    archers: 1908
-    knights: 7423
+    archers: 1842
+    knights: 7489
     map_size: { x: 480, y: 270 }
     max_turns: 1000
   wasm_38x:
-    archers: 2432
-    knights: 12539
+    archers: 3274
+    knights: 11697
     map_size: { x: 608, y: 342 }
     max_turns: 1000
   console:
@@ -4178,8 +4178,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         </div>
 
         <h3>How It Works</h3>
-        <p><b>Each turn:</b> all units move, then all units attack.</p>
-        <p><b>Knights</b> charge toward the nearest archer. When two moves are equally good, they prefer to stay backed by an ally, then prefer moves away from walls, then prefer closing the longer axis to their target.</p>
+        <p><b>Each turn:</b> all units move, then all units attack. Movement and attacking is grid based (up, down, left, right).</p>
+        <p><b>Knights</b> charge toward the nearest archer. When two options are equally good, they try to make room for allies, and corner their enemies against the walls.</p>
         <p><b>Archers</b> try to stay at exactly their attack range. Too close and they retreat; too far and they advance. Same tiebreakers as knights.</p>
         <p><b>Attack:</b> each unit hits the lowest-HP enemy within range. Knights must be adjacent; archers can shoot up to 3 tiles away.</p>
         <p><b>Win condition:</b> the game ends when one side has no units left.</p>
@@ -5159,8 +5159,8 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         </div>
 
         <h3>How It Works</h3>
-        <p><b>Each turn:</b> all units move, then all units attack.</p>
-        <p><b>Knights</b> charge toward the nearest archer. When two moves are equally good, they prefer to stay backed by an ally, then prefer moves away from walls, then prefer closing the longer axis to their target.</p>
+        <p><b>Each turn:</b> all units move, then all units attack. Movement and attacking is grid based (up, down, left, right).</p>
+        <p><b>Knights</b> charge toward the nearest archer. When two options are equally good, they try to make room for allies, and corner their enemies against the walls.</p>
         <p><b>Archers</b> try to stay at exactly their attack range. Too close and they retreat; too far and they advance. Same tiebreakers as knights.</p>
         <p><b>Attack:</b> each unit hits the lowest-HP enemy within range. Knights must be adjacent; archers can shoot up to 3 tiles away.</p>
         <p><b>Win condition:</b> the game ends when one side has no units left.</p>
