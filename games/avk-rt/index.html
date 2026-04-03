@@ -126,6 +126,14 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="green">&#9679; Archer</span>
         <span class="blue">&#9679; Knight</span>
     </div>
+    <select id="algo-select" title="Movement algorithm">
+        <option value="">Original</option>
+        <option value="intent">Intent Graph</option>
+        <option value="snapshot">Snapshot</option>
+        <option value="wavefront">Wavefront</option>
+        <option value="hybrid">Hybrid</option>
+        <option value="sequential">Sequential</option>
+    </select>
     <select id="map-select">
         <option value="wasm_1x">16×9</option>
         <option value="wasm_2x">32×18</option>
@@ -139,7 +147,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <option value="wasm_38x" class="debug-only" hidden>608×342</option>
     </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
-    <div id="version">v0.1.0 (9851ca2)</div>
+    <div id="version">v0.1.0 (30d02ad)</div>
 </div>
 
 <script src="flecs-ecs.js"></script>
@@ -569,6 +577,18 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         /* canvas stays visible — about overlays it */
     });
 
+    /* Algorithm selector — starts new game */
+    document.getElementById('algo-select').addEventListener('change', function(e) {
+        if (!engine) return;
+        engine.setMovementModel(e.target.value || '');
+        animating = false;
+        gameOverEl.textContent = '';
+        engine.initWithConfig(currentConfig);
+        engine.turn();
+        initViewFromModel();
+        controls.reset();
+    });
+
     /* Map size selector */
     document.getElementById('map-select').addEventListener('change', function(e) {
         if (!engine || !e.target.value) return;
@@ -616,6 +636,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 getCollectTime: M.cwrap('wasm_get_collect_time', 'number', []),
                 getTotalTime: M.cwrap('wasm_get_total_time', 'number', []),
                 getSystemName: M.cwrap('wasm_get_system_name', 'string', ['number']),
+                setMovementModel: M.cwrap('wasm_set_movement_model', null, ['string']),
             };
             engine.initWithConfig(currentConfig);
             engine.turn();  /* run app_start to spawn units */
