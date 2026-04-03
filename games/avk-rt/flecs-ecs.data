@@ -2,6 +2,8 @@
 
 Grid-based auto-battler. Red archers (ranged) vs blue knights (melee) fight on a bounded map until one faction is eliminated.
 
+Our key precept is the perception units are intelligent. In a turn based game this means as the turn unwinds you see them anticipating and outplaying, versus foolishly executing an action and foolishly ignoring the emergent consequences.
+
 ## Native Systems
 
 All systems implemented in C at `systems/native/systems.c`. Execution order defined in `app.yaml`:
@@ -64,6 +66,19 @@ Systems check for the `SimulationPaused` marker component and early-return if pr
 
 **Unaffected**: `app_start` (already disabled after turn 1), `history_capture` (skips when paused), `rewind` (runs regardless — it creates the pause)
 
+## Performance Reporting
+
+Performance tables use `system:subsystem` notation. Only break down a system into subsystems when it's expensive and deeper analysis is needed. If it's a top-level system, show it as `system`. If it's an internal phase, show it as `system:subsystem`.
+
+Each movement model registers with a distinct system name derived from its C function name (minus the `avk_` prefix): `movement` (original), `movement_intent`, `movement_snapshot`, `movement_sequential`, `movement_wavefront`, `movement_hybrid`. Subsystems use `system:subsystem` notation: `movement_intent:collect`, `movement:df_rebuild`, etc.
+
+Convention: C functions are `avk_<name>`, system names are `<name>` (strip `avk_` prefix). Every system has a unique name — no two systems share a name even if they fill the same role.
+
+Benchmark output should be structured YAML for machine readability. The table presentation is derived from the YAML. A performance report includes:
+- ms/turn (total)
+- Top N costs as `system` or `system:subsystem` with ms and % of total
+- Config (map size, unit count, turns measured, core count)
+
 ## Balancing
 
 Tuning levers:
@@ -75,28 +90,28 @@ description: "Red archers vs blue knights on a bounded grid map"
 
 configs:
   wasm_1x:
-    archers: 2
-    knights: 8
+    archers: 4
+    knights: 10
     map_size: { x: 16, y: 9 }
     max_turns: 1000
   wasm_2x:
-    archers: 9
-    knights: 33
+    archers: 8
+    knights: 34
     map_size: { x: 32, y: 18 }
     max_turns: 1000
   wasm_3x:
-    archers: 20
-    knights: 78
+    archers: 26
+    knights: 79
     map_size: { x: 48, y: 27 }
     max_turns: 1000
   wasm_5x:
-    archers: 54
-    knights: 212
+    archers: 56
+    knights: 211
     map_size: { x: 80, y: 45 }
     max_turns: 1000
   wasm_8x:
-    archers: 136
-    knights: 536
+    archers: 139
+    knights: 535
     map_size: { x: 128, y: 72 }
     max_turns: 1000
   wasm_12x:
@@ -105,28 +120,43 @@ configs:
     map_size: { x: 192, y: 108 }
     max_turns: 1000
   wasm_17x:
-    archers: 605
-    knights: 2391
+    archers: 615
+    knights: 2381
     map_size: { x: 272, y: 153 }
     max_turns: 1000
   wasm_23x:
-    archers: 1102
-    knights: 4384
+    archers: 1106
+    knights: 4382
     map_size: { x: 368, y: 207 }
     max_turns: 1000
   wasm_30x:
-    archers: 1842
-    knights: 7489
+    archers: 1841
+    knights: 7490
     map_size: { x: 480, y: 270 }
     max_turns: 1000
   wasm_38x:
-    archers: 3274
-    knights: 11697
+    archers: 3042
+    knights: 11930
     map_size: { x: 608, y: 342 }
     max_turns: 1000
+  wasm_48x:
+    archers: 4497
+    knights: 18406
+    map_size: { x: 752, y: 423 }
+    max_turns: 1000
+  wasm_60x:
+    archers: 6497
+    knights: 27190
+    map_size: { x: 912, y: 513 }
+    max_turns: 1000
+  wasm_75x:
+    archers: 9583
+    knights: 38360
+    map_size: { x: 1088, y: 612 }
+    max_turns: 1000
   console:
-    archers: 105
-    knights: 428
+    archers: 106
+    knights: 427
     map_size: { x: 151, y: 49 }
     max_turns: 1000
 
@@ -136,6 +166,7 @@ map_size:
   x: 608
   y: 342
 max_turns: 1000
+max_threads: 1
 templates:
   components: [Health, MovementSpeed, MovementType, Weapon, AttackDamage, RedFaction, BlueFaction, Location, MapSize, SpawnRequest, TookDamage]
   entities: [Archer, Knight]
@@ -760,6 +791,9 @@ typedef struct {
     char image_dir[256];  /* --image DIR, empty = no frame dump */
     char overrides_dir[256]; /* --overrides DIR, empty = none */
     char config_name[64];   /* --config NAME, empty = "console" */
+    int threads;            /* --threads N, 0 = auto-detect, -1 = legacy (no pipeline) */
+    char movement[32];      /* --movement MODEL: original, intent, sequential, etc */
+    int max_turns_override; /* --max-turns N, 0 = use config default */
 } ClientFlags;
 
 static bool load_config(const char *path, ClientConfig *cfg) {
@@ -889,9 +923,24 @@ static bool setup_rest(ClientConfig *cfg) {
 /* ── Direct mode ────────────────────────────────────────────────────── */
 
 static Engine *setup_direct(ClientConfig *cfg, const char *overrides_dir,
-                            const char *config_name) {
+                            const char *config_name, int threads,
+                            const char *movement_model) {
     Engine *engine = engine_init(NULL);
     if (!engine) { fprintf(stderr, "Failed to init engine\n"); return NULL; }
+
+    /* Configure threading before app start (which initializes the pipeline).
+     * threads >= 1: use pipeline with N threads
+     * threads == 0: use pipeline with auto-detected core count
+     * threads == -1: legacy mode, no pipeline */
+    if (threads >= 0) {
+        engine_set_max_threads(engine, threads);
+    }
+
+    /* Set movement model before app_start (CLI takes precedence over app.yaml) */
+    if (movement_model && movement_model[0]) {
+        snprintf(engine->movement_model, sizeof(engine->movement_model),
+                 "%s", movement_model);
+    }
 
     if (overrides_dir && overrides_dir[0])
         engine_set_overrides(engine, overrides_dir);
@@ -1011,7 +1060,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    ClientFlags flags = { .direct = true };
+    ClientFlags flags = { .direct = true, .threads = 1 };
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "--rest") == 0) flags.direct = false;
         else if (strcmp(argv[i], "--benchmark") == 0 && i + 1 < argc) {
@@ -1033,7 +1082,20 @@ int main(int argc, char *argv[]) {
         else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
             snprintf(flags.config_name, sizeof(flags.config_name), "%s", argv[++i]);
         }
+        else if (strcmp(argv[i], "--threads") == 0 && i + 1 < argc) {
+            flags.threads = atoi(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--movement") == 0 && i + 1 < argc) {
+            snprintf(flags.movement, sizeof(flags.movement), "%s", argv[++i]);
+        }
+        else if (strcmp(argv[i], "--max-turns") == 0 && i + 1 < argc) {
+            flags.max_turns_override = atoi(argv[++i]);
+        }
     }
+
+    /* Apply max_turns override if specified */
+    if (flags.max_turns_override > 0)
+        cfg.max_turns = flags.max_turns_override;
 
     if (flags.benchmark) {
         /* Benchmark mode: run N games, report timing + win stats */
@@ -1045,14 +1107,25 @@ int main(int argc, char *argv[]) {
         const char *mode = flags.direct ? "native" : "REST";
         printf("Benchmarking %d games (%s mode)...\n", flags.benchmark_runs, mode);
 
+        /* Per-system profiling accumulators */
+        double sys_totals[32] = {0};
+        char sys_names[32][64];
+        int sys_count_final = 0;
+
+        /* PerformanceStats accumulators */
+        int total_df_full = 0, total_df_incr = 0, total_move_iter = 0;
+        double total_us_collect = 0, total_us_df = 0, total_us_decide = 0;
+        double total_us_apply = 0, total_us_resolve = 0;
+
         Engine *engine = NULL;
 
         for (int run = 0; run < flags.benchmark_runs; run++) {
             double game_start = now_ms();
 
             if (flags.direct) {
-                engine = setup_direct(&cfg, flags.overrides_dir, flags.config_name);
+                engine = setup_direct(&cfg, flags.overrides_dir, flags.config_name, flags.threads, flags.movement);
                 if (!engine) return 1;
+                engine->profiling = true;
             } else {
                 if (!setup_rest(&cfg)) return 1;
             }
@@ -1074,21 +1147,121 @@ int main(int argc, char *argv[]) {
             total_wall_ms += game_ms;
 
             if (flags.direct) {
+                /* Accumulate per-system profiling */
+                sys_count_final = engine->system_count < 32 ? engine->system_count : 32;
+                for (int s = 0; s < sys_count_final; s++) {
+                    sys_totals[s] += engine->system_time_ms[s];
+                    if (run == 0 && engine->systems[s].name)
+                        snprintf(sys_names[s], 64, "%s", engine->systems[s].name);
+                }
+                /* Read PerformanceStats singleton */
+                ecs_entity_t ps_comp = ecs_lookup(engine->world, "PerformanceStats");
+                if (ps_comp) {
+                    const void *ps = ecs_get_id(engine->world, ps_comp, ps_comp);
+                    if (ps) {
+                        const int32_t *vals = (const int32_t *)ps;
+                        /* Fields: df_full_rebuilds, df_incremental, df_full_total,
+                         *         df_incremental_total, movement_iterations, movement_iter_total */
+                        total_df_full += vals[2];  /* df_full_total */
+                        total_df_incr += vals[3];  /* df_incremental_total */
+                        total_move_iter += vals[5]; /* movement_iter_total */
+                        total_us_collect += vals[6];  /* us_collect */
+                        total_us_df += vals[7];       /* us_df_rebuild */
+                        total_us_decide += vals[8];   /* us_decide */
+                        total_us_apply += vals[9];    /* us_apply */
+                        total_us_resolve += vals[10]; /* us_resolve */
+                    }
+                }
                 engine_fini(engine);
                 engine = NULL;
             }
         }
 
+        /* YAML structured output */
         int total_decided = wins_k + wins_a;
-        printf("\nResults (%s):\n", mode);
-        printf("  Games:          %d\n", flags.benchmark_runs);
-        printf("  Knights:        %d (%d%%)\n", wins_k, total_decided ? wins_k * 100 / total_decided : 0);
-        printf("  Archers:        %d (%d%%)\n", wins_a, total_decided ? wins_a * 100 / total_decided : 0);
-        if (draws) printf("  Draws:          %d\n", draws);
-        printf("  Avg turns/game: %.1f\n", (double)total_turns / flags.benchmark_runs);
-        printf("  Avg turn time:  %.3f ms\n", total_turn_ms / total_turns);
-        printf("  Avg game time:  %.1f ms\n", total_wall_ms / flags.benchmark_runs);
-        printf("  Total wall:     %.1f ms\n", total_wall_ms);
+        double avg_turn = total_turn_ms / total_turns;
+
+        printf("\n---\n");
+        printf("config:\n");
+        const char *cfgname = (flags.config_name[0]) ? flags.config_name : "default";
+        printf("  name: %s\n", cfgname);
+        printf("  turns_measured: %d\n", total_turns);
+        printf("  games: %d\n", flags.benchmark_runs);
+        printf("  cores: %d\n", flags.threads <= 0 ? 1 : flags.threads);
+        if (flags.movement[0])
+            printf("  movement_model: %s\n", flags.movement);
+        printf("results:\n");
+        printf("  ms_per_turn: %.3f\n", avg_turn);
+        printf("  avg_turns_per_game: %.1f\n", (double)total_turns / flags.benchmark_runs);
+        printf("  wins_knights: %d\n", wins_k);
+        printf("  wins_archers: %d\n", wins_a);
+        printf("  draws: %d\n", draws);
+        if (total_decided > 0)
+            printf("  archer_pct: %d\n", wins_a * 100 / total_decided);
+        printf("  total_wall_ms: %.1f\n", total_wall_ms);
+
+        /* Build unified cost list: systems + movement subsystems */
+        if (flags.direct) {
+            typedef struct { char name[40]; double ms; } CostEntry;
+            CostEntry costs[64];
+            int ncosts = 0;
+
+            /* Top-level systems */
+            for (int s = 0; s < sys_count_final && ncosts < 60; s++) {
+                if (sys_totals[s] <= 0) continue;
+                costs[ncosts].ms = sys_totals[s] / total_turns;
+                snprintf(costs[ncosts].name, 40, "%s", sys_names[s]);
+                ncosts++;
+            }
+
+            /* Find the movement system name for subsystem prefix */
+            const char *mv_prefix = "movement";
+            for (int s = 0; s < sys_count_final; s++) {
+                if (strstr(sys_names[s], "movement")) { mv_prefix = sys_names[s]; break; }
+            }
+            char sub_names[5][48];
+            snprintf(sub_names[0], 48, "%s:collect", mv_prefix);
+            snprintf(sub_names[1], 48, "%s:df_rebuild", mv_prefix);
+            snprintf(sub_names[2], 48, "%s:decide", mv_prefix);
+            snprintf(sub_names[3], 48, "%s:apply", mv_prefix);
+            snprintf(sub_names[4], 48, "%s:resolve", mv_prefix);
+            struct { const char *name; double us; } subs[] = {
+                {sub_names[0], total_us_collect},
+                {sub_names[1], total_us_df},
+                {sub_names[2], total_us_decide},
+                {sub_names[3], total_us_apply},
+                {sub_names[4], total_us_resolve},
+            };
+            for (int s = 0; s < 5 && ncosts < 64; s++) {
+                if (subs[s].us <= 0) continue;
+                costs[ncosts].ms = subs[s].us / 1e3 / total_turns;
+                snprintf(costs[ncosts].name, 40, "%s", subs[s].name);
+                ncosts++;
+            }
+
+            /* Sort descending by ms */
+            for (int a = 0; a < ncosts - 1; a++)
+                for (int b = a + 1; b < ncosts; b++)
+                    if (costs[b].ms > costs[a].ms) {
+                        CostEntry t = costs[a]; costs[a] = costs[b]; costs[b] = t;
+                    }
+
+            printf("costs:\n");
+            for (int s = 0; s < ncosts; s++) {
+                double pct = avg_turn > 0 ? costs[s].ms / avg_turn * 100 : 0;
+                printf("  - name: %s\n", costs[s].name);
+                printf("    ms: %.3f\n", costs[s].ms);
+                printf("    pct: %.1f\n", pct);
+            }
+
+            /* DF rebuild stats */
+            if (total_df_full > 0 || total_df_incr > 0) {
+                printf("df_stats:\n");
+                printf("  full_bfs_per_turn: %.1f\n", (double)total_df_full / total_turns);
+                printf("  incremental_per_turn: %.1f\n", (double)total_df_incr / total_turns);
+                printf("  move_iterations_per_turn: %.1f\n", (double)total_move_iter / total_turns);
+            }
+        }
 
         if (!flags.direct) api_fini();
         return 0;
@@ -1097,7 +1270,7 @@ int main(int argc, char *argv[]) {
     /* Setup engine/REST */
     Engine *engine = NULL;
     if (flags.direct) {
-        engine = setup_direct(&cfg, flags.overrides_dir, flags.config_name);
+        engine = setup_direct(&cfg, flags.overrides_dir, flags.config_name, flags.threads, flags.movement);
         if (!engine) return 1;
     } else {
         if (!setup_rest(&cfg)) return 1;
@@ -2070,14 +2243,15 @@ Each sheet has a `sheet.yaml` manifest. Weapons rotate to face attack target via
 
 | Function | Purpose |
 |----------|---------|
-| `wasm_init_with_config(name)` | Start game with named config (e.g. "wasm_3x") |
-| `wasm_turn()` | Advance one ModelWorld turn |
+| `wasm_init_with_config(name)` | Start game with named config (e.g. "wasm_3x"). Map entity and units don't exist until first `wasm_turn()` runs `app_start`. |
+| `wasm_turn()` | Advance one ModelWorld turn. Also calls `read_map_size()` and `collect_wasm_units()`, so `getMapX/Y` and unit accessors are valid after this returns. |
 | `wasm_get_unit_entity_id(i)` | Stable entity ID for view unit tracking |
 | `wasm_get_unit_x/y(i)` | Position after turn |
 | `wasm_get_unit_health(i)` | Health (<=0 = dying) |
 | `wasm_get_unit_faction(i)` | 0=archer, 1=knight |
 | `wasm_get_unit_took_damage(i)` | Hit this turn |
 | `wasm_get_unit_attacked_id(i)` | Entity ID of attack target |
+| `wasm_get_map_x/y()` | Map dimensions. Only valid after first `wasm_turn()`. |
 | `wasm_rewind(turn)` | Rewind to specific turn |
 
 ## Layout
@@ -5177,6 +5351,24 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <span class="red">&#9632; Archer</span>
         <span class="blue">&#9632; Knight</span>
     </div>
+    <select id="algo-select" title="Movement algorithm">
+        <option value="">Original</option>
+        <option value="intent">Intent Graph</option>
+        <option value="snapshot">Snapshot</option>
+        <option value="wavefront">Wavefront</option>
+        <option value="hybrid">Hybrid</option>
+        <option value="sequential">Sequential</option>
+    </select>
+    <select id="fps-select" title="Frame rate limit">
+        <option value="0" selected>Unlimited</option>
+        <option value="240">240 fps</option>
+        <option value="120">120 fps</option>
+        <option value="60">60 fps</option>
+        <option value="30">30 fps</option>
+        <option value="15">15 fps</option>
+        <option value="10">10 fps</option>
+        <option value="5">5 fps</option>
+    </select>
     <select id="map-select">
         <option value="wasm_1x">16×9</option>
         <option value="wasm_2x">32×18</option>
@@ -5325,11 +5517,12 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 
     function startAutoPlay() {
         if (playInterval) clearInterval(playInterval);
+        var delay = fpsLimit > 0 ? Math.floor(1000 / fpsLimit) : 0;
         playInterval = setInterval(function() {
             if (!controls.isPlaying() || !engine) return;
             tick();
             if (engine.isGameOver()) { controls.togglePlay(); clearInterval(playInterval); playInterval = null; }
-        }, 0);
+        }, delay);
     }
 
     var controls = GameControls.init({
@@ -5379,6 +5572,29 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         aboutShowing = !aboutShowing;
         document.getElementById('about-panel').style.display = aboutShowing ? 'block' : 'none';
         /* canvas stays visible — about overlays it */
+    });
+
+    /* Algorithm selector — starts new game */
+    document.getElementById('algo-select').addEventListener('change', function(e) {
+        if (!engine) return;
+        engine.setMovementModel(e.target.value || '');
+        if (playInterval) { clearInterval(playInterval); playInterval = null; }
+        engine.initWithConfig(currentConfig);
+        engine.turn();
+        mapW = engine.getMapX() || 288;
+        mapH = engine.getMapY() || 162;
+        gameLayout.resize();
+        render();
+        gameOverEl.textContent = '';
+        controls.reset();
+    });
+
+    /* FPS limit — only affects play, not step/rewind */
+    var fpsLimit = 0;
+    document.getElementById('fps-select').addEventListener('change', function(e) {
+        fpsLimit = parseInt(e.target.value) || 0;
+        /* Restart play interval with new delay if currently playing */
+        if (controls.isPlaying()) startAutoPlay();
     });
 
     /* Map size selector */
@@ -5439,6 +5655,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 getSystemTime: M.cwrap('wasm_get_system_time', 'number', ['number']),
                 getCollectTime: M.cwrap('wasm_get_collect_time', 'number', []),
                 getTotalTime: M.cwrap('wasm_get_total_time', 'number', []),
+                setMovementModel: M.cwrap('wasm_set_movement_model', null, ['string']),
             };
 
             if (!engine.init()) {
@@ -5538,7 +5755,7 @@ typedef struct {
     int32_t attacked_id; /* entity_id of attack target, 0 = none */
 } WasmUnit;
 
-#define MAX_UNITS 16384
+#define MAX_UNITS 65536
 static WasmUnit g_units[MAX_UNITS];
 static int g_unit_count = 0;
 static int32_t g_map_size[2] = {0, 0};
@@ -5673,12 +5890,32 @@ int wasm_init(void) {
     return 1;
 }
 
+static char g_movement_model[32] = {0};
+
+EMSCRIPTEN_KEEPALIVE
+void wasm_set_movement_model(const char *model) {
+    if (model)
+        snprintf(g_movement_model, sizeof(g_movement_model), "%s", model);
+    else
+        g_movement_model[0] = '\0';
+}
+
 EMSCRIPTEN_KEEPALIVE
 int wasm_init_with_config(const char *config_name) {
     if (g_engine) engine_fini(g_engine);
 
     g_engine = engine_init(NULL);
     if (!g_engine) return 0;
+
+    /* Apply movement model before app_start */
+    if (g_movement_model[0]) {
+        snprintf(g_engine->movement_model, sizeof(g_engine->movement_model),
+                 "%s", g_movement_model);
+    }
+    /* Use pipeline mode for non-original models */
+    if (g_movement_model[0] && strcmp(g_movement_model, "original") != 0) {
+        engine_set_max_threads(g_engine, 1);
+    }
 
     if (!engine_sandbox_select(g_engine, "avk")) {
         engine_fini(g_engine);
@@ -6175,6 +6412,10 @@ components:
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <stddef.h>
+#ifndef _WIN32
+#include <pthread.h>
+#endif
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
@@ -6193,19 +6434,43 @@ static int manhattan(int x1, int y1, int x2, int y2) {
     return abs(x1 - x2) + abs(y1 - y2);
 }
 
+/* Cached component entity IDs — resolved once, reused across calls */
+static ecs_entity_t c_loc=0, c_hp=0, c_spd=0, c_wpn=0, c_dmg=0, c_red=0, c_blue=0, c_mt=0;
+static bool c_resolved = false;
+
+static void resolve_component_ids(Engine *engine) {
+    if (c_resolved) return;
+    c_loc  = ecs_lookup(engine->world, "Location");
+    c_hp   = ecs_lookup(engine->world, "Health");
+    c_spd  = ecs_lookup(engine->world, "MovementSpeed");
+    c_wpn  = ecs_lookup(engine->world, "Weapon");
+    c_dmg  = ecs_lookup(engine->world, "AttackDamage");
+    c_red  = ecs_lookup(engine->world, "RedFaction");
+    c_blue = ecs_lookup(engine->world, "BlueFaction");
+    c_mt   = ecs_lookup(engine->world, "MovementType");
+    c_resolved = true;
+}
+
+static int unit_cmp_entity_id(const void *a, const void *b) {
+    return ((const UnitData *)a)->entity_id - ((const UnitData *)b)->entity_id;
+}
+
 /* Collect living units from query into array, return count */
 static int collect_units(Engine *engine, UnitData *units, int max_units) {
-    ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
-    ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
-    ecs_entity_t spd_comp = ecs_lookup(engine->world, "MovementSpeed");
-    ecs_entity_t rng_comp = ecs_lookup(engine->world, "Weapon");
-    ecs_entity_t dmg_comp = ecs_lookup(engine->world, "AttackDamage");
-    ecs_entity_t red_comp = ecs_lookup(engine->world, "RedFaction");
-    ecs_entity_t blue_comp = ecs_lookup(engine->world, "BlueFaction");
-    ecs_entity_t mt_comp = ecs_lookup(engine->world, "MovementType");
+    resolve_component_ids(engine);
+    ecs_entity_t loc_comp = c_loc;
+    ecs_entity_t hp_comp = c_hp;
+    ecs_entity_t spd_comp = c_spd;
+    ecs_entity_t rng_comp = c_wpn;
+    ecs_entity_t dmg_comp = c_dmg;
+    ecs_entity_t red_comp = c_red;
+    ecs_entity_t blue_comp = c_blue;
+    ecs_entity_t mt_comp = c_mt;
 
     if (!loc_comp || !hp_comp) return 0;
 
+    /* Query for entities with Location + Health + UserEntity.
+     * Use ecs_field() for bulk access instead of per-entity ecs_get_id. */
     ecs_query_t *q = ecs_query(engine->world, {
         .terms = {
             { .id = loc_comp },
@@ -6218,56 +6483,43 @@ static int collect_units(Engine *engine, UnitData *units, int max_units) {
     int count = 0;
     ecs_iter_t it = ecs_query_iter(engine->world, q);
     while (ecs_query_next(&it)) {
+        /* Bulk field access — contiguous arrays for matched components */
+        const int32_t *locs = (const int32_t *)ecs_field_w_size(&it, sizeof(int32_t) * 2, 0);  /* Location: {x, y} */
+        const int32_t *hps = (const int32_t *)ecs_field_w_size(&it, sizeof(int32_t), 1);       /* Health: {base} */
+
         for (int i = 0; i < it.count && count < max_units; i++) {
+            int32_t hp_val = hps[i];
+            if (hp_val <= 0) continue;
+
             ecs_entity_t eid = it.entities[i];
-
-            /* Read Health */
-            const int32_t *hp = (const int32_t *)ecs_get_id(engine->world, eid, hp_comp);
-            if (!hp || *hp <= 0) continue;
-
             UnitData *u = &units[count];
             u->eid = eid;
-            u->health = *hp;
+            u->health = hp_val;
+            u->x = locs[i * 2];
+            u->y = locs[i * 2 + 1];
 
             /* EntityId */
             const int32_t *eid_val = (const int32_t *)ecs_get_id(engine->world, eid, engine->entity_id_comp);
             u->entity_id = eid_val ? *eid_val : 0;
 
-            /* Location */
-            const void *loc_data = ecs_get_id(engine->world, eid, loc_comp);
-            if (loc_data) {
-                u->x = *(const int32_t *)loc_data;
-                u->y = *((const int32_t *)loc_data + 1);
+            /* Per-entity reads for optional components */
+            if (spd_comp) {
+                const int32_t *spd = (const int32_t *)ecs_get_id(engine->world, eid, spd_comp);
+                if (spd) { u->speed = *spd; u->energy = *spd; }
             }
-            /* MovementSpeed */
-            if (spd_comp && ecs_has_id(engine->world, eid, spd_comp)) {
-                const void *spd_data = ecs_get_id(engine->world, eid, spd_comp);
-                if (spd_data) {
-                    u->speed = *(const int32_t *)spd_data;
-                    u->energy = u->speed;
-                }
-            }
-
-            /* Weapon (range is first field) */
-            if (rng_comp && ecs_has_id(engine->world, eid, rng_comp)) {
+            if (rng_comp) {
                 const int32_t *r = (const int32_t *)ecs_get_id(engine->world, eid, rng_comp);
                 if (r) u->range = *r;
             }
-
-            /* AttackDamage */
-            if (dmg_comp && ecs_has_id(engine->world, eid, dmg_comp)) {
+            if (dmg_comp) {
                 const int32_t *d = (const int32_t *)ecs_get_id(engine->world, eid, dmg_comp);
                 if (d) u->damage = *d;
             }
-
-            /* Faction (marker components) */
             if (red_comp && ecs_has_id(engine->world, eid, red_comp))
-                u->faction = 0; /* red */
+                u->faction = 0;
             else if (blue_comp && ecs_has_id(engine->world, eid, blue_comp))
-                u->faction = 1; /* blue */
-
-            /* MovementType (enum) */
-            if (mt_comp && ecs_has_id(engine->world, eid, mt_comp)) {
+                u->faction = 1;
+            if (mt_comp) {
                 const int32_t *m = (const int32_t *)ecs_get_id(engine->world, eid, mt_comp);
                 if (m) u->move_type = *m;
             }
@@ -6277,12 +6529,10 @@ static int collect_units(Engine *engine, UnitData *units, int max_units) {
     }
     ecs_query_fini(q);
 
-    /* Sort by entity_id */
-    for (int i = 0; i < count - 1; i++)
-        for (int j = i + 1; j < count; j++)
-            if (units[j].entity_id < units[i].entity_id) {
-                UnitData tmp = units[i]; units[i] = units[j]; units[j] = tmp;
-            }
+    /* Sort by entity_id — O(n log n) via qsort */
+    if (count > 1) {
+        qsort(units, (size_t)count, sizeof(UnitData), unit_cmp_entity_id);
+    }
 
     return count;
 }
@@ -6305,11 +6555,111 @@ static ecs_entity_t ensure_took_damage_comp(Engine *engine) {
     return td;
 }
 
+/* ── PerformanceStats singleton ─────────────────────────────────────── */
+
+typedef struct {
+    int32_t df_full_rebuilds;     /* full BFS distance field rebuilds this turn */
+    int32_t df_incremental;       /* incremental distance field updates this turn */
+    int32_t df_full_total;        /* cumulative across all turns */
+    int32_t df_incremental_total; /* cumulative across all turns */
+    int32_t movement_iterations;  /* while(any_moved) iterations this turn */
+    int32_t movement_iter_total;  /* cumulative */
+    /* Sub-system timing within movement (microseconds, cumulative) */
+    int32_t us_collect;           /* collect_units query time */
+    int32_t us_df_rebuild;        /* distance field builds inside movement */
+    int32_t us_decide;            /* per-unit move decision logic */
+    int32_t us_apply;             /* move application + ECS writes */
+    int32_t us_resolve;           /* collision/intent resolution */
+} PerformanceStats;
+
+static ecs_entity_t g_perf_comp = 0;
+
+static PerformanceStats *perf_get(Engine *engine) {
+    if (!g_perf_comp) {
+        g_perf_comp = ecs_lookup(engine->world, "PerformanceStats");
+        if (!g_perf_comp) {
+            g_perf_comp = ecs_entity(engine->world, { .name = "PerformanceStats" });
+            ecs_set(engine->world, g_perf_comp, EcsComponent, {
+                .size = sizeof(PerformanceStats),
+                .alignment = ECS_ALIGNOF(PerformanceStats)
+            });
+            ecs_struct(engine->world, {
+                .entity = g_perf_comp,
+                .members = {
+                    { .name = "df_full_rebuilds",     .type = ecs_id(ecs_i32_t) },
+                    { .name = "df_incremental",       .type = ecs_id(ecs_i32_t) },
+                    { .name = "df_full_total",        .type = ecs_id(ecs_i32_t) },
+                    { .name = "df_incremental_total",  .type = ecs_id(ecs_i32_t) },
+                    { .name = "movement_iterations",  .type = ecs_id(ecs_i32_t) },
+                    { .name = "movement_iter_total",  .type = ecs_id(ecs_i32_t) },
+                    { .name = "us_collect",           .type = ecs_id(ecs_i32_t) },
+                    { .name = "us_df_rebuild",        .type = ecs_id(ecs_i32_t) },
+                    { .name = "us_decide",            .type = ecs_id(ecs_i32_t) },
+                    { .name = "us_apply",             .type = ecs_id(ecs_i32_t) },
+                    { .name = "us_resolve",           .type = ecs_id(ecs_i32_t) },
+                }
+            });
+            /* Set as singleton (component on itself) */
+            PerformanceStats empty = {0};
+            ecs_set_id(engine->world, g_perf_comp, g_perf_comp, sizeof(PerformanceStats), &empty);
+        }
+    }
+    return (PerformanceStats *)ecs_get_mut_id(engine->world, g_perf_comp, g_perf_comp);
+}
+
+static double perf_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1e6 + ts.tv_nsec / 1e3;
+}
+
+static void perf_add_us(Engine *engine, int field_offset, double elapsed_us) {
+    PerformanceStats *ps = perf_get(engine);
+    if (!ps) return;
+    int32_t *field = (int32_t *)((char *)ps + field_offset);
+    *field += (int32_t)elapsed_us;
+}
+
+#define PERF_OFFSET(f) ((int)(offsetof(PerformanceStats, f)))
+
+/* Call at start of each turn's movement to reset per-turn counters */
+static void perf_begin_turn(Engine *engine) {
+    PerformanceStats *ps = perf_get(engine);
+    if (!ps) return;
+    ps->df_full_rebuilds = 0;
+    ps->df_incremental = 0;
+    ps->movement_iterations = 0;
+}
+
+static void perf_record_df_full(Engine *engine) {
+    PerformanceStats *ps = perf_get(engine);
+    if (!ps) return;
+    ps->df_full_rebuilds++;
+    ps->df_full_total++;
+    ecs_modified_id(engine->world, g_perf_comp, g_perf_comp);
+}
+
+static void perf_record_df_incremental(Engine *engine) {
+    PerformanceStats *ps = perf_get(engine);
+    if (!ps) return;
+    ps->df_incremental++;
+    ps->df_incremental_total++;
+    ecs_modified_id(engine->world, g_perf_comp, g_perf_comp);
+}
+
+static void perf_record_iteration(Engine *engine) {
+    PerformanceStats *ps = perf_get(engine);
+    if (!ps) return;
+    ps->movement_iterations++;
+    ps->movement_iter_total++;
+    ecs_modified_id(engine->world, g_perf_comp, g_perf_comp);
+}
+
 /* ── Spatial grid for O(1) occupancy lookups ───────────────────────── */
 
-#define GRID_MAX_X 768
-#define GRID_MAX_Y 512
-static int16_t g_occ_grid[GRID_MAX_X * GRID_MAX_Y]; /* unit index+1, 0=empty */
+#define GRID_MAX_X 1152
+#define GRID_MAX_Y 768
+static int32_t g_occ_grid[GRID_MAX_X * GRID_MAX_Y]; /* unit index+1, 0=empty */
 
 static void grid_clear(int mx, int my) {
     (void)mx; (void)my;
@@ -6318,7 +6668,7 @@ static void grid_clear(int mx, int my) {
 
 static void grid_set(int x, int y, int unit_idx) {
     if (x >= 1 && x < GRID_MAX_X && y >= 1 && y < GRID_MAX_Y)
-        g_occ_grid[y * GRID_MAX_X + x] = (int16_t)(unit_idx + 1);
+        g_occ_grid[y * GRID_MAX_X + x] = unit_idx + 1;
 }
 
 static bool grid_occupied(int x, int y) {
@@ -6340,7 +6690,7 @@ static void avk_start_of_turn(Engine *engine) {
 
     /* Clear TookDamage markers */
     if (td) {
-        ecs_entity_t to_clear[16384];
+        ecs_entity_t to_clear[65536];
         int clear_count = 0;
 
         ecs_query_t *q = ecs_query(engine->world, {
@@ -6349,7 +6699,7 @@ static void avk_start_of_turn(Engine *engine) {
         });
         ecs_iter_t it = ecs_query_iter(engine->world, q);
         while (ecs_query_next(&it)) {
-            for (int i = 0; i < it.count && clear_count < 16384; i++) {
+            for (int i = 0; i < it.count && clear_count < 65536; i++) {
                 to_clear[clear_count++] = it.entities[i];
             }
         }
@@ -6475,10 +6825,11 @@ static void avk_app_start(Engine *engine) {
 
 static int16_t g_dist_to_red[GRID_MAX_Y * GRID_MAX_X];
 static int16_t g_dist_to_blue[GRID_MAX_Y * GRID_MAX_X];
-static int16_t g_owner_red[GRID_MAX_Y * GRID_MAX_X];
-static int16_t g_owner_blue[GRID_MAX_Y * GRID_MAX_X];
+static int32_t g_owner_red[GRID_MAX_Y * GRID_MAX_X];
+static int32_t g_owner_blue[GRID_MAX_Y * GRID_MAX_X];
 
-/* BFS queue — max cells = GRID_MAX_X * GRID_MAX_Y */
+/* BFS queues — max cells = GRID_MAX_X * GRID_MAX_Y.
+ * Two queues so red and blue BFS can run on separate threads. */
 #define BFS_MAX (GRID_MAX_X * GRID_MAX_Y)
 static int32_t g_bfs_queue[BFS_MAX];
 
@@ -6496,30 +6847,27 @@ typedef struct { int unit_idx; int old_x, old_y, new_x, new_y; } MovedSite;
 /* Scratch buffer to collect raised cell indices during phase 1 */
 static int32_t g_raised_cells[BFS_MAX];
 
-static void build_distance_field(int16_t *dist, int16_t *owner, UnitData *units,
-                                 int count, int faction, int mx, int my) {
-    /* Coordinates are 1-based: valid range is 1..mx, 1..my */
-    /* Init all to -1 (unvisited) — 0xFF bytes produce -1 in int16 two's complement */
+static void build_distance_field_q(int16_t *dist, int32_t *owner, UnitData *units,
+                                   int count, int faction, int mx, int my,
+                                   int32_t *queue) {
     memset(dist, 0xFF, (size_t)(my + 1) * GRID_MAX_X * sizeof(int16_t));
-    memset(owner, 0xFF, (size_t)(my + 1) * GRID_MAX_X * sizeof(int16_t));
+    memset(owner, 0xFF, (size_t)(my + 1) * GRID_MAX_X * sizeof(int32_t));
 
-    /* Seed BFS with all units of the target faction */
     int head = 0, tail = 0;
     for (int i = 0; i < count; i++) {
         if (units[i].faction != faction) continue;
         int x = units[i].x, y = units[i].y;
         if (x >= 1 && x <= mx && y >= 1 && y <= my && dist[y * GRID_MAX_X + x] < 0) {
             dist[y * GRID_MAX_X + x] = 0;
-            owner[y * GRID_MAX_X + x] = (int16_t)i;
-            g_bfs_queue[tail++] = y * (mx + 1) + x;
+            owner[y * GRID_MAX_X + x] = i;
+            queue[tail++] = y * (mx + 1) + x;
         }
     }
 
-    /* BFS flood fill — propagate owner along with distance */
     static const int dx[] = {0, 0, -1, 1};
     static const int dy[] = {-1, 1, 0, 0};
     while (head < tail) {
-        int pos = g_bfs_queue[head++];
+        int pos = queue[head++];
         int cy = pos / (mx + 1), cx = pos % (mx + 1);
         int16_t d = dist[cy * GRID_MAX_X + cx];
         int16_t o = owner[cy * GRID_MAX_X + cx];
@@ -6530,9 +6878,15 @@ static void build_distance_field(int16_t *dist, int16_t *owner, UnitData *units,
             if (dist[ni] >= 0) continue;
             dist[ni] = d + 1;
             owner[ni] = o;
-            g_bfs_queue[tail++] = ny * (mx + 1) + nx;
+            queue[tail++] = ny * (mx + 1) + nx;
         }
     }
+}
+
+/* Convenience wrapper using the default queue */
+static void build_distance_field(int16_t *dist, int32_t *owner, UnitData *units,
+                                 int count, int faction, int mx, int my) {
+    build_distance_field_q(dist, owner, units, count, faction, mx, my, g_bfs_queue);
 }
 
 /* ── Incremental distance field update ────────────────────────────── */
@@ -6548,7 +6902,7 @@ static void build_distance_field(int16_t *dist, int16_t *owner, UnitData *units,
  *   (b) non-raised neighbors of raised cells. This corrects any cells
  *   that should now be owned by a different (closer) site.
  */
-static void incremental_update(int16_t *dist, int16_t *own,
+static void incremental_update(int16_t *dist, int32_t *own,
                                MovedSite *moved, int nmoved,
                                UnitData *units, int mx, int my) {
     (void)units;
@@ -6576,13 +6930,13 @@ static void incremental_update(int16_t *dist, int16_t *own,
         int ox = moved[m].old_x, oy = moved[m].old_y;
         int nx = moved[m].new_x, ny = moved[m].new_y;
 
-        int16_t visited_mark = (int16_t)(-2 - sid);
+        int32_t visited_mark = -2 - sid;
 
         /* Pass A: BFS to collect Voronoi cells */
         int head = 0, tail = 0;
         int oi = oy * W + ox;
 
-        if (own[oi] == (int16_t)sid) {
+        if (own[oi] == (int32_t)sid) {
             own[oi] = visited_mark;
             g_bfs_queue[tail++] = oi;
         }
@@ -6596,7 +6950,7 @@ static void incremental_update(int16_t *dist, int16_t *own,
                 int ex = cx + dx[dir], ey = cy + dy[dir];
                 if (ex < 1 || ex > mx || ey < 1 || ey > my) continue;
                 int ei = ey * W + ex;
-                if (own[ei] == (int16_t)sid) {
+                if (own[ei] == (int32_t)sid) {
                     own[ei] = visited_mark;
                     g_bfs_queue[tail++] = ei;
                 }
@@ -6615,7 +6969,7 @@ static void incremental_update(int16_t *dist, int16_t *own,
                 g_raised_cells[n_raised++] = ci;
             }
             dist[ci] = (int16_t)new_d;
-            own[ci] = (int16_t)sid; /* restore owner */
+            own[ci] = sid; /* restore owner */
         }
     }
 
@@ -6626,7 +6980,7 @@ static void incremental_update(int16_t *dist, int16_t *own,
     for (int m = 0; m < nmoved; m++) {
         int ni = moved[m].new_y * W + moved[m].new_x;
         dist[ni] = 0;
-        own[ni] = (int16_t)moved[m].unit_idx;
+        own[ni] = moved[m].unit_idx;
         if (!bit_test(g_in_queue, ni)) {
             g_bfs_queue[tail++] = ni;
             bit_set(g_in_queue, ni);
@@ -6705,10 +7059,230 @@ static int score_cell(int nx, int ny, int move_type, int range,
     }
 }
 
+/* Second BFS queue for parallel distance field builds */
+static int32_t g_bfs_queue2[BFS_MAX];
+
+#ifndef _WIN32
+/* Run fn2(arg2) on a thread while fn1(arg1) runs on main, join. */
+typedef struct { void (*fn)(void *); void *arg; } ParPair;
+static void *par_pair_worker(void *a) { ParPair *p = a; p->fn(p->arg); return NULL; }
+
+typedef struct {
+    int16_t *dist; int32_t *owner; UnitData *units;
+    int count, faction, mx, my; int32_t *queue;
+} BfsArgs;
+static void bfs_wrapper(void *a) {
+    BfsArgs *b = a;
+    build_distance_field_q(b->dist, b->owner, b->units, b->count, b->faction, b->mx, b->my, b->queue);
+}
+#endif
+
+/* Build both red and blue distance fields — parallel when threads > 1 */
+static void build_distance_fields_pair(Engine *engine, UnitData *units,
+                                        int count, int mx, int my) {
+#ifndef _WIN32
+    if (engine->max_threads > 1) {
+        BfsArgs ra = { g_dist_to_red, g_owner_red, units, count, 0, mx, my, g_bfs_queue };
+        BfsArgs ba = { g_dist_to_blue, g_owner_blue, units, count, 1, mx, my, g_bfs_queue2 };
+        ParPair p = { bfs_wrapper, &ba };
+        pthread_t t;
+        pthread_create(&t, NULL, par_pair_worker, &p);
+        bfs_wrapper(&ra);
+        pthread_join(t, NULL);
+    } else
+#endif
+    {
+        (void)engine;
+        build_distance_field(g_dist_to_red, g_owner_red, units, count, 0, mx, my);
+        build_distance_field(g_dist_to_blue, g_owner_blue, units, count, 1, mx, my);
+    }
+}
+
+/* ── build_distance_fields (Reset phase) ─────────────────────────────── */
+
+/* Pre-build distance fields during Reset phase so they're ready for Move.
+ * Runs in parallel with despawn and start_of_turn. Ignores dead units. */
+static int g_df_mx = 0, g_df_my = 0;
+
+static void avk_build_distance_fields(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+
+    ecs_entity_t map = ecs_lookup(engine->world, "Map");
+    ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
+    g_df_mx = 10; g_df_my = 10;
+    if (map && ms_comp) {
+        const void *ms = ecs_get_id(engine->world, map, ms_comp);
+        if (ms) { g_df_mx = *(const int32_t *)ms; g_df_my = *((const int32_t *)ms + 1); }
+    }
+
+    static UnitData df_units[65536];
+    int count = collect_units(engine, df_units, 65536);
+    if (count == 0) return;
+
+    perf_begin_turn(engine);
+    build_distance_fields_pair(engine, df_units, count, g_df_mx, g_df_my);
+    perf_record_df_full(engine); /* red */
+    perf_record_df_full(engine); /* blue */
+}
+
+/* ── Shared unit snapshot for Move → Act phase data passing ────────── */
+static UnitData g_act_units[65536];
+static int g_act_count = 0;
+static bool g_act_prefilled = false;
+
+/* ── movement: per-unit move decision (thread-safe) ─────────────────── */
+
+/* Forward-declared: written by decide_moves_range, consumed by Phase 2 */
+typedef struct { int bx, by; bool found; } MoveDecision;
+static MoveDecision g_move_decisions[65536];
+
+/* Decide moves for units in [start, end). Thread-safe: reads shared immutable
+ * data (units, distance fields, occupancy grid), writes only to
+ * g_move_decisions[i] for i in [start, end). */
+static void decide_moves_range(UnitData *units, int count, int mx, int my,
+                                const int dirs[][2], int start, int end) {
+    for (int i = start; i < end; i++) {
+        g_move_decisions[i].found = false;
+        g_move_decisions[i].bx = units[i].x;
+        g_move_decisions[i].by = units[i].y;
+
+        UnitData *ent = &units[i];
+        if (ent->energy <= 0) continue;
+
+        int16_t *enemy_dist = (ent->faction == 0) ? g_dist_to_blue : g_dist_to_red;
+
+        int cand_x[5], cand_y[5], cand_score[5], ncand = 0;
+        int best_score = -999999;
+
+        for (int d = 0; d < 5; d++) {
+            int nx = ent->x + dirs[d][0];
+            int ny = ent->y + dirs[d][1];
+            if (nx < 1 || nx > mx || ny < 1 || ny > my) continue;
+            if (d != 4 && grid_occupied(nx, ny)) continue;
+
+            int score = score_cell(nx, ny, ent->move_type, ent->range,
+                                   enemy_dist, ent->faction, units);
+            cand_x[ncand] = nx;
+            cand_y[ncand] = ny;
+            cand_score[ncand] = score;
+            ncand++;
+            if (score > best_score) best_score = score;
+        }
+
+        /* Tiebreaker 1 (knights): prefer backed by ally */
+        int best_backed = 0;
+        if (ent->move_type == 1) {
+            for (int c = 0; c < ncand; c++) {
+                if (cand_score[c] != best_score) continue;
+                int bk_x = 2 * ent->x - cand_x[c];
+                int bk_y = 2 * ent->y - cand_y[c];
+                int ally = grid_unit_at(bk_x, bk_y);
+                if (ally >= 0 && ally != i && units[ally].faction == ent->faction) {
+                    best_backed = 1; break;
+                }
+            }
+        }
+
+        /* Tiebreaker 2: farthest from nearest wall */
+        int best_wdist = -1;
+        for (int c = 0; c < ncand; c++) {
+            if (cand_score[c] != best_score) continue;
+            if (ent->move_type == 1 && best_backed) {
+                int bk_x = 2 * ent->x - cand_x[c];
+                int bk_y = 2 * ent->y - cand_y[c];
+                int ally = grid_unit_at(bk_x, bk_y);
+                if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
+                    continue;
+            }
+            int wx = cand_x[c] - 1 < mx - cand_x[c] ? cand_x[c] - 1 : mx - cand_x[c];
+            int wy = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
+            int wd = wx < wy ? wx : wy;
+            if (wd > best_wdist) best_wdist = wd;
+        }
+
+        /* Tiebreaker 3: prefer reducing the larger axis to target enemy */
+        int32_t *enemy_own = (ent->faction == 0) ? g_owner_blue : g_owner_red;
+        int tgt_idx = enemy_own[ent->y * GRID_MAX_X + ent->x];
+        int best_axis = 0;
+        if (tgt_idx >= 0 && tgt_idx < count) {
+            int tx = units[tgt_idx].x, ty = units[tgt_idx].y;
+            int adx = abs(ent->x - tx), ady = abs(ent->y - ty);
+            if (adx != ady) {
+                for (int c = 0; c < ncand; c++) {
+                    if (cand_score[c] != best_score) continue;
+                    if (ent->move_type == 1 && best_backed) {
+                        int bk_x = 2 * ent->x - cand_x[c];
+                        int bk_y = 2 * ent->y - cand_y[c];
+                        int ally = grid_unit_at(bk_x, bk_y);
+                        if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
+                            continue;
+                    }
+                    int wx = cand_x[c] - 1 < mx - cand_x[c] ? cand_x[c] - 1 : mx - cand_x[c];
+                    int wy = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
+                    int wd = wx < wy ? wx : wy;
+                    if (wd != best_wdist) continue;
+                    int pref = (adx >= ady)
+                        ? (abs(cand_x[c] - tx) < adx)
+                        : (abs(cand_y[c] - ty) < ady);
+                    if (pref > best_axis) best_axis = pref;
+                }
+            }
+        }
+
+        /* Pick first matching candidate */
+        int bx = ent->x, by = ent->y;
+        bool found = false;
+        for (int c = 0; c < ncand; c++) {
+            if (cand_score[c] != best_score) continue;
+            if (ent->move_type == 1 && best_backed) {
+                int bk_x = 2 * ent->x - cand_x[c];
+                int bk_y = 2 * ent->y - cand_y[c];
+                int ally = grid_unit_at(bk_x, bk_y);
+                if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
+                    continue;
+            }
+            int wx = cand_x[c] - 1 < mx - cand_x[c] ? cand_x[c] - 1 : mx - cand_x[c];
+            int wy = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
+            int wd = wx < wy ? wx : wy;
+            if (wd != best_wdist) continue;
+            if (best_axis && tgt_idx >= 0 && tgt_idx < count) {
+                int tx = units[tgt_idx].x, ty = units[tgt_idx].y;
+                int adx = abs(ent->x - tx), ady = abs(ent->y - ty);
+                int pref = (adx >= ady)
+                    ? (abs(cand_x[c] - tx) < adx)
+                    : (abs(cand_y[c] - ty) < ady);
+                if (!pref) continue;
+            }
+            bx = cand_x[c]; by = cand_y[c];
+            found = true;
+            break;
+        }
+
+        g_move_decisions[i].bx = bx;
+        g_move_decisions[i].by = by;
+        g_move_decisions[i].found = found;
+    }
+}
+
+#ifndef _WIN32
+typedef struct {
+    UnitData *units; int count, mx, my; const int (*dirs)[2]; int start, end;
+} MoveWorkerArgs;
+static void *decide_moves_worker(void *a) {
+    MoveWorkerArgs *m = a;
+    decide_moves_range(m->units, m->count, m->mx, m->my, m->dirs, m->start, m->end);
+    return NULL;
+}
+#endif
+
 /* ── movement ────────────────────────────────────────────────────────── */
 
+/* Original movement algorithm — verbatim from commit 08d6454.
+ * Iterative convergence: BFS → decide → apply → rebuild distance fields → repeat.
+ * The only addition is the combat snapshot sharing at the end for pipeline mode. */
 static void avk_movement(Engine *engine) {
     if (is_simulation_paused(engine)) return;
+    double _t0, _t1;
     ecs_entity_t map = ecs_lookup(engine->world, "Map");
     ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
     int mx = 10, my = 10;
@@ -6717,9 +7291,11 @@ static void avk_movement(Engine *engine) {
         if (ms) { mx = *(const int32_t *)ms; my = *((const int32_t *)ms + 1); }
     }
 
-    static UnitData units[16384];
-    int count = collect_units(engine, units, 16384);
+    _t0 = perf_us();
+    static UnitData units[65536];
+    int count = collect_units(engine, units, 65536);
     if (count == 0) return;
+    _t1 = perf_us(); perf_add_us(engine, PERF_OFFSET(us_collect), _t1 - _t0);
 
     ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
 
@@ -6748,26 +7324,25 @@ static void avk_movement(Engine *engine) {
     dbg_turn++;
 
     /* Pending moves buffer — applied in batch after each pass */
-    static int pend_idx[16384], pend_x[16384], pend_y[16384];
+    static int pend_idx[65536], pend_x[65536], pend_y[65536];
 
     /* MovedSite buffers for incremental update */
-    static MovedSite moved_red[16384], moved_blue[16384];
+    static MovedSite moved_red[65536], moved_blue[65536];
 
-    /* Adaptive threshold: use incremental only when few units moved.
-     * Incremental cost = O(voronoi_region_sum) + O(repair_bfs).
-     * Full rebuild cost = O(cells).
-     * When many units move, the voronoi walk alone approaches O(cells)
-     * and the repair adds more, making full rebuild cheaper. */
     int incr_threshold = count / 8;
     if (incr_threshold < 32) incr_threshold = 32;
 
     /* Build initial distance fields with owner tracking (full BFS) */
+    _t0 = perf_us();
     build_distance_field(g_dist_to_red, g_owner_red, units, count, 0, mx, my);
     build_distance_field(g_dist_to_blue, g_owner_blue, units, count, 1, mx, my);
+    _t1 = perf_us(); perf_add_us(engine, PERF_OFFSET(us_df_rebuild), _t1 - _t0);
 
     bool any_moved = true;
     while (any_moved) {
         any_moved = false;
+        perf_record_iteration(engine);
+        _t0 = perf_us();
 
         /* Phase 1: decide moves for all units */
         int npend = 0;
@@ -6775,23 +7350,18 @@ static void avk_movement(Engine *engine) {
             UnitData *ent = &units[i];
             if (ent->energy <= 0) continue;
 
-            /* Enemy distance field for this unit */
             int16_t *enemy_dist = (ent->faction == 0) ? g_dist_to_blue : g_dist_to_red;
 
-            /* Collect candidates with scores — O(1) per direction via distance field */
             int cand_x[5], cand_y[5], cand_score[5], ncand = 0;
             int best_score = -999999;
 
             for (int d = 0; d < 5; d++) {
                 int nx = ent->x + dirs[d][0];
                 int ny = ent->y + dirs[d][1];
-
                 if (nx < 1 || nx > mx || ny < 1 || ny > my) continue;
                 if (d != 4 && grid_occupied(nx, ny)) continue;
-
                 int score = score_cell(nx, ny, ent->move_type, ent->range,
                                        enemy_dist, ent->faction, units);
-
                 cand_x[ncand] = nx;
                 cand_y[ncand] = ny;
                 cand_score[ncand] = score;
@@ -6799,7 +7369,7 @@ static void avk_movement(Engine *engine) {
                 if (score > best_score) best_score = score;
             }
 
-            /* Tiebreaker 1 (knights): prefer backed by ally — O(1) grid check */
+            /* Tiebreaker 1 (knights): prefer backed by ally */
             int best_backed = 0;
             if (ent->move_type == 1) {
                 for (int c = 0; c < ncand; c++) {
@@ -6831,7 +7401,7 @@ static void avk_movement(Engine *engine) {
             }
 
             /* Tiebreaker 3: prefer reducing the larger axis to target enemy */
-            int16_t *enemy_own = (ent->faction == 0) ? g_owner_blue : g_owner_red;
+            int32_t *enemy_own = (ent->faction == 0) ? g_owner_blue : g_owner_red;
             int tgt_idx = enemy_own[ent->y * GRID_MAX_X + ent->x];
             int best_axis = 0;
             if (tgt_idx >= 0 && tgt_idx < count) {
@@ -6888,7 +7458,6 @@ static void avk_movement(Engine *engine) {
                 break;
             }
 
-            /* Debug: log decision */
             if (dbg) {
                 const char *type = ent->faction == 0 ? "Archer" : "Knight";
                 fprintf(dbg, "turn:%d %s at(%d,%d) best_score:%d candidates:",
@@ -6915,10 +7484,11 @@ static void avk_movement(Engine *engine) {
             }
         }
 
-        /* Phase 2: apply moves, skip if target now occupied.
-         * Track which faction's units actually moved for incremental update. */
-        int n_moved_red = 0, n_moved_blue = 0;
+        _t1 = perf_us(); perf_add_us(engine, PERF_OFFSET(us_decide), _t1 - _t0);
+        _t0 = _t1;
 
+        /* Phase 2: apply moves */
+        int n_moved_red = 0, n_moved_blue = 0;
         for (int p = 0; p < npend; p++) {
             int i = pend_idx[p];
             UnitData *ent = &units[i];
@@ -6934,7 +7504,6 @@ static void avk_movement(Engine *engine) {
             if (loc) { loc[0] = ent->x; loc[1] = ent->y; ecs_modified_id(engine->world, ent->eid, loc_comp); }
             any_moved = true;
 
-            /* Record movement by faction for distance field update */
             if (ent->faction == 0) {
                 moved_red[n_moved_red].unit_idx = i;
                 moved_red[n_moved_red].old_x = old_x;
@@ -6952,40 +7521,622 @@ static void avk_movement(Engine *engine) {
             }
         }
 
+        _t1 = perf_us(); perf_add_us(engine, PERF_OFFSET(us_apply), _t1 - _t0);
+        _t0 = _t1;
+
         /* Phase 3: Update distance fields — incremental if few moved, else full rebuild */
         if (any_moved) {
             if (n_moved_red > 0) {
                 if (n_moved_red > incr_threshold) {
                     build_distance_field(g_dist_to_red, g_owner_red, units, count, 0, mx, my);
+                    perf_record_df_full(engine);
                 } else {
                     incremental_update(g_dist_to_red, g_owner_red, moved_red, n_moved_red, units, mx, my);
+                    perf_record_df_incremental(engine);
                 }
             }
             if (n_moved_blue > 0) {
                 if (n_moved_blue > incr_threshold) {
                     build_distance_field(g_dist_to_blue, g_owner_blue, units, count, 1, mx, my);
+                    perf_record_df_full(engine);
                 } else {
                     incremental_update(g_dist_to_blue, g_owner_blue, moved_blue, n_moved_blue, units, mx, my);
+                    perf_record_df_incremental(engine);
+                }
+            }
+        }
+        _t1 = perf_us(); perf_add_us(engine, PERF_OFFSET(us_df_rebuild), _t1 - _t0);
+    }
+
+    /* Pipeline integration: share unit snapshot with combat phase */
+    if (engine->pipeline_active) {
+        memcpy(g_act_units, units, sizeof(UnitData) * count);
+        g_act_count = count;
+        g_act_prefilled = true;
+    }
+}
+
+/* ── movement_intent: Intent Graph with Vacancy Propagation ────────── */
+/*
+ * Algorithm: Build BFS once → declare intents → build functional graph →
+ * resolve vacancy chains → blocked units reconsider → resolve cycles → apply.
+ *
+ * Each unit has exactly one outgoing edge (target cell). The graph is
+ * functional: every connected component has at most one cycle.
+ *
+ * Resolution order:
+ * 1. Stationary units lock their cells
+ * 2. Free movers (targeting empty cells) process by priority
+ * 3. Vacancy propagates: when A moves out, anyone waiting on A's cell becomes free
+ * 4. Blocked units (lost tiebreak) get one reconsideration
+ * 5. Remaining WAITING units are in cycles — rotate same-faction, block cross-faction len-2
+ * 6. Apply all committed moves to ECS
+ */
+
+/* Unit status during intent resolution */
+enum IntentStatus {
+    INTENT_UNDECIDED = 0,
+    INTENT_STATIONARY,  /* chose to stay */
+    INTENT_FREE,        /* targeting empty cell */
+    INTENT_WAITING,     /* targeting occupied cell, depends on occupant */
+    INTENT_COMMITTED,   /* move confirmed */
+    INTENT_BLOCKED      /* lost tiebreak, staying put */
+};
+
+static void avk_movement_intent(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+    double _t0, _t1;
+    ecs_entity_t map = ecs_lookup(engine->world, "Map");
+    ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
+    int mx = 10, my = 10;
+    if (map && ms_comp) {
+        const void *ms = ecs_get_id(engine->world, map, ms_comp);
+        if (ms) { mx = *(const int32_t *)ms; my = *((const int32_t *)ms + 1); }
+    }
+
+    _t0 = perf_us();
+    static UnitData units[65536];
+    int count = collect_units(engine, units, 65536);
+    if (count == 0) return;
+    _t1 = perf_us(); perf_add_us(engine, PERF_OFFSET(us_collect), _t1 - _t0);
+
+    ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
+
+    /* Build spatial grid */
+    grid_clear(mx, my);
+    for (int i = 0; i < count; i++)
+        grid_set(units[i].x, units[i].y, i);
+
+    /* Phase 1: Build distance fields ONCE */
+    _t0 = perf_us();
+    if (!engine->pipeline_active || g_df_mx == 0) {
+        build_distance_fields_pair(engine, units, count, mx, my);
+    }
+    _t1 = perf_us(); perf_add_us(engine, PERF_OFFSET(us_df_rebuild), _t1 - _t0);
+
+    static const int dirs[][2] = {{0,-1},{0,1},{-1,0},{1,0},{0,0}};
+
+    /* Phase 2: Declare intent — each unit picks best cell from snapshot */
+    _t0 = perf_us();
+    decide_moves_range(units, count, mx, my, dirs, 0, count);
+    _t1 = perf_us(); perf_add_us(engine, PERF_OFFSET(us_decide), _t1 - _t0);
+
+    /* Per-unit intent: target cell coordinates and status */
+    static int intent_x[65536], intent_y[65536];
+    static enum IntentStatus status[65536];
+    /* Priority for tiebreaking: archers > knights, closer-to-enemy > farther */
+    static int priority[65536];
+
+    /* Reverse map: for each grid cell, first claimant unit index (-1 = none) */
+    /* Use a grid-sized array for O(1) lookup */
+    static int32_t cell_claimant[GRID_MAX_Y * GRID_MAX_X]; /* unit index, -1 = none */
+    memset(cell_claimant, -1, (size_t)(my + 1) * GRID_MAX_X * sizeof(int32_t));
+
+    /* Worklist for vacancy propagation */
+    static int worklist[65536];
+    int wl_head = 0, wl_tail = 0;
+
+    /* Reverse map: for each cell, linked list of WAITING units targeting it.
+     * cell_waiters[cell_index] = first waiter unit index, -1 = none.
+     * waiter_next[unit_index] = next waiter for same cell, -1 = end. */
+    static int32_t cell_waiters[GRID_MAX_Y * GRID_MAX_X];
+    static int32_t waiter_next[65536];
+    memset(cell_waiters, -1, (size_t)(my + 1) * GRID_MAX_X * sizeof(int32_t));
+
+    /* Phase 2b: Classify each unit and build reverse map */
+    for (int i = 0; i < count; i++) {
+        int tx, ty;
+        if (g_move_decisions[i].found) {
+            tx = g_move_decisions[i].bx;
+            ty = g_move_decisions[i].by;
+        } else {
+            tx = units[i].x;
+            ty = units[i].y;
+        }
+        intent_x[i] = tx;
+        intent_y[i] = ty;
+
+        /* Compute priority: archers (faction 0) get a large boost.
+         * Within faction, urgency = how much the unit needs to move.
+         * Knights: closer to enemy = higher priority (front line first).
+         * Archers: further from optimal range = higher priority (must reposition). */
+        int16_t *enemy_dist = (units[i].faction == 0) ? g_dist_to_blue : g_dist_to_red;
+        int d = dist_field_get(enemy_dist, units[i].x, units[i].y);
+        int urgency;
+        if (units[i].move_type == 1) { /* knight: charge */
+            urgency = 10000 - d; /* closer = higher urgency */
+        } else { /* archer: kite */
+            urgency = abs(d - units[i].range) + 10000; /* archers always above knights */
+        }
+        priority[i] = urgency * 100000 + units[i].entity_id;
+
+        if (tx == units[i].x && ty == units[i].y) {
+            /* Staying put */
+            status[i] = INTENT_STATIONARY;
+            /* Lock this cell — nobody can claim it */
+            cell_claimant[ty * GRID_MAX_X + tx] =i;
+        } else if (!grid_occupied(tx, ty)) {
+            /* Target cell is empty in the snapshot */
+            status[i] = INTENT_FREE;
+        } else {
+            /* Target cell is occupied — we depend on the occupant leaving */
+            status[i] = INTENT_WAITING;
+            /* Add to waiter list for target cell */
+            int wci = ty * GRID_MAX_X + tx;
+            waiter_next[i] = cell_waiters[wci];
+            cell_waiters[wci] =i;
+        }
+    }
+
+    _t0 = perf_us();
+    /* Phase 3a: Resolve collisions for FREE units and seed the worklist.
+     * Process FREE units: check if anyone else wants the same cell.
+     * Higher priority wins. */
+    for (int i = 0; i < count; i++) {
+        if (status[i] != INTENT_FREE) continue;
+        int ci = intent_y[i] * GRID_MAX_X + intent_x[i];
+        int existing = cell_claimant[ci];
+        if (existing < 0) {
+            /* Nobody else wants this cell — claim it */
+            cell_claimant[ci] =i;
+            worklist[wl_tail++] = i;
+        } else if (priority[i] > priority[existing]) {
+            /* We outprioritize the existing claimant */
+            /* Evict them */
+            status[existing] = INTENT_BLOCKED;
+            intent_x[existing] = units[existing].x;
+            intent_y[existing] = units[existing].y;
+            /* Lock evicted unit's cell */
+            int eci = units[existing].y * GRID_MAX_X + units[existing].x;
+            cell_claimant[eci] =existing;
+            /* We take the cell */
+            cell_claimant[ci] =i;
+            worklist[wl_tail++] = i;
+        } else {
+            /* We lose — stay put */
+            status[i] = INTENT_BLOCKED;
+            intent_x[i] = units[i].x;
+            intent_y[i] = units[i].y;
+            int oci = units[i].y * GRID_MAX_X + units[i].x;
+            cell_claimant[oci] =i;
+        }
+    }
+
+    /* Phase 3b: Process worklist — vacancy propagation.
+     * When a unit commits to move, its old cell becomes vacant.
+     * WAITING units targeting that cell become FREE (via reverse map). */
+    while (wl_head < wl_tail) {
+        int i = worklist[wl_head++];
+        status[i] = INTENT_COMMITTED;
+
+        /* The cell this unit is LEAVING — check waiter list */
+        int old_ci = units[i].y * GRID_MAX_X + units[i].x;
+        int best_waiter = -1, best_waiter_pri = -1;
+
+        /* Find highest-priority waiter for this cell */
+        for (int j = cell_waiters[old_ci]; j >= 0; j = waiter_next[j]) {
+            if (status[j] != INTENT_WAITING) continue;
+            if (priority[j] > best_waiter_pri) {
+                best_waiter = j;
+                best_waiter_pri = priority[j];
+            }
+        }
+
+        if (best_waiter >= 0) {
+            int j = best_waiter;
+            int target_ci = intent_y[j] * GRID_MAX_X + intent_x[j];
+            cell_claimant[target_ci] =j;
+            status[j] = INTENT_FREE;
+            worklist[wl_tail++] = j;
+
+            /* Block other waiters for this cell */
+            for (int k = cell_waiters[old_ci]; k >= 0; k = waiter_next[k]) {
+                if (k == j || status[k] != INTENT_WAITING) continue;
+                status[k] = INTENT_BLOCKED;
+                intent_x[k] = units[k].x;
+                intent_y[k] = units[k].y;
+                cell_claimant[units[k].y * GRID_MAX_X + units[k].x] =k;
+            }
+        }
+    }
+
+    /* Phase 3c: Reconsideration — blocked units try their second-best cell */
+    for (int i = 0; i < count; i++) {
+        if (status[i] != INTENT_BLOCKED) continue;
+
+        /* Find second-best neighbor that is unoccupied and unclaimed */
+        int16_t *enemy_dist = (units[i].faction == 0) ? g_dist_to_blue : g_dist_to_red;
+        int best_score = -999999;
+        int best_x = units[i].x, best_y = units[i].y;
+        bool found = false;
+
+        for (int d = 0; d < 4; d++) {
+            int nx = units[i].x + dirs[d][0];
+            int ny = units[i].y + dirs[d][1];
+            if (nx < 1 || nx > mx || ny < 1 || ny > my) continue;
+            int ci = ny * GRID_MAX_X + nx;
+            /* Check both snapshot occupancy and claims */
+            if (cell_claimant[ci] >= 0) continue;
+            if (grid_occupied(nx, ny)) {
+                /* Check if occupant is committed to leave */
+                int occ = grid_unit_at(nx, ny);
+                if (occ < 0 || status[occ] != INTENT_COMMITTED) continue;
+                if (intent_x[occ] == nx && intent_y[occ] == ny) continue; /* staying */
+            }
+
+            int score = score_cell(nx, ny, units[i].move_type, units[i].range,
+                                   enemy_dist, units[i].faction, units);
+            if (score > best_score) {
+                best_score = score;
+                best_x = nx;
+                best_y = ny;
+                found = true;
+            }
+        }
+
+        if (found && (best_x != units[i].x || best_y != units[i].y)) {
+            intent_x[i] = best_x;
+            intent_y[i] = best_y;
+            int ci = best_y * GRID_MAX_X + best_x;
+            cell_claimant[ci] =i;
+            status[i] = INTENT_COMMITTED;
+        }
+    }
+
+    /* Phase 3d: Resolve cycles — remaining WAITING units.
+     * In a functional graph, each component has exactly one cycle.
+     * Same-faction cycles: rotate (everyone advances).
+     * Cross-faction length-2: mutual block.
+     * Others: rotate. */
+    static bool visited[65536];
+    memset(visited, 0, sizeof(bool) * count);
+
+    for (int i = 0; i < count; i++) {
+        if (status[i] != INTENT_WAITING || visited[i]) continue;
+
+        /* Trace the chain to find the cycle */
+        static int path[65536];
+        int path_len = 0;
+        int cur = i;
+
+        while (cur >= 0 && !visited[cur] && status[cur] == INTENT_WAITING) {
+            visited[cur] = true;
+            path[path_len++] = cur;
+            /* Follow the dependency: who occupies our target cell? */
+            int occ = grid_unit_at(intent_x[cur], intent_y[cur]);
+            if (occ < 0 || occ == cur) break;
+            cur = occ;
+        }
+
+        /* Check if we hit a cycle (cur is in the path) */
+        if (cur >= 0 && status[cur] == INTENT_WAITING) {
+            int cycle_start = -1;
+            for (int p = 0; p < path_len; p++) {
+                if (path[p] == cur) { cycle_start = p; break; }
+            }
+
+            if (cycle_start >= 0) {
+                int cycle_len = path_len - cycle_start;
+
+                /* Check for cross-faction length-2 (mutual swap) */
+                bool is_cross2 = false;
+                if (cycle_len == 2) {
+                    int a = path[cycle_start], b = path[cycle_start + 1];
+                    if (units[a].faction != units[b].faction)
+                        is_cross2 = true;
+                }
+
+                if (is_cross2) {
+                    /* Mutual block — neither moves */
+                    for (int p = cycle_start; p < path_len; p++) {
+                        status[path[p]] = INTENT_BLOCKED;
+                        intent_x[path[p]] = units[path[p]].x;
+                        intent_y[path[p]] = units[path[p]].y;
+                    }
+                } else {
+                    /* Rotate the cycle — everyone advances to their target */
+                    for (int p = cycle_start; p < path_len; p++)
+                        status[path[p]] = INTENT_COMMITTED;
+                }
+
+                /* Tail before cycle: resolve backward */
+                for (int p = cycle_start - 1; p >= 0; p--)
+                    status[path[p]] = INTENT_COMMITTED;
+            }
+        }
+    }
+
+    _t1 = perf_us(); perf_add_us(engine, PERF_OFFSET(us_resolve), _t1 - _t0);
+    _t0 = _t1;
+
+    /* Phase 4: Apply all committed moves to ECS */
+    for (int i = 0; i < count; i++) {
+        if (status[i] != INTENT_COMMITTED) continue;
+        if (intent_x[i] == units[i].x && intent_y[i] == units[i].y) continue;
+
+        /* Update grid */
+        g_occ_grid[units[i].y * GRID_MAX_X + units[i].x] = 0;
+        units[i].x = intent_x[i];
+        units[i].y = intent_y[i];
+        grid_set(units[i].x, units[i].y, i);
+
+        /* Write to ECS */
+        int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, units[i].eid, loc_comp);
+        if (loc) {
+            loc[0] = units[i].x;
+            loc[1] = units[i].y;
+            ecs_modified_id(engine->world, units[i].eid, loc_comp);
+        }
+    }
+    _t1 = perf_us(); perf_add_us(engine, PERF_OFFSET(us_apply), _t1 - _t0);
+
+    /* Share unit snapshot with combat phase */
+    if (engine->pipeline_active) {
+        memcpy(g_act_units, units, sizeof(UnitData) * count);
+        g_act_count = count;
+        g_act_prefilled = true;
+    }
+}
+
+/* ── movement_sequential: Sequential Priority Movement ──────────────── */
+/*
+ * Build BFS distance fields ONCE. Sort all units by priority. Process
+ * units one at a time -- each unit sees the real current state (including
+ * all previous units' moves) and picks its best adjacent cell. Apply
+ * immediately. No while(any_moved) loop.
+ */
+
+static int seq_priority_cmp(const void *a, const void *b) {
+    const UnitData *ua = (const UnitData *)a;
+    const UnitData *ub = (const UnitData *)b;
+    int16_t *enemy_dist_a = (ua->faction == 0) ? g_dist_to_blue : g_dist_to_red;
+    int16_t *enemy_dist_b = (ub->faction == 0) ? g_dist_to_blue : g_dist_to_red;
+    int da = dist_field_get(enemy_dist_a, ua->x, ua->y);
+    int db = dist_field_get(enemy_dist_b, ub->x, ub->y);
+
+    /* Knights (move_type 1): urgency = closeness to enemy (lower dist = more urgent)
+     * Archers (move_type 0): urgency = deviation from optimal range */
+    int urgency_a = (ua->move_type == 1) ? -da : abs(da - ua->range);
+    int urgency_b = (ub->move_type == 1) ? -db : abs(db - ub->range);
+
+    /* Higher urgency first */
+    if (urgency_a != urgency_b) return urgency_b - urgency_a;
+    /* Archers before knights at equal urgency */
+    if (ua->faction != ub->faction) return ua->faction - ub->faction;
+    /* Entity ID tiebreak for determinism */
+    return ua->entity_id - ub->entity_id;
+}
+
+static void avk_movement_sequential(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+
+    /* Read MapSize */
+    ecs_entity_t map = ecs_lookup(engine->world, "Map");
+    ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
+    int mx = 10, my = 10;
+    if (map && ms_comp) {
+        const void *ms = ecs_get_id(engine->world, map, ms_comp);
+        if (ms) { mx = *(const int32_t *)ms; my = *((const int32_t *)ms + 1); }
+    }
+
+    /* Collect living units */
+    static UnitData units[65536];
+    int count = collect_units(engine, units, 65536);
+    if (count == 0) return;
+
+    ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
+
+    /* Set energy */
+    for (int i = 0; i < count; i++) units[i].energy = units[i].speed;
+
+    /* Step 1: Build distance fields ONCE.
+     * In pipeline mode, avk_build_distance_fields already ran during Reset. */
+    if (!engine->pipeline_active || g_df_mx == 0) {
+        build_distance_fields_pair(engine, units, count, mx, my);
+    }
+
+    /* Step 2: Build occupancy grid */
+    grid_clear(mx, my);
+    for (int i = 0; i < count; i++)
+        grid_set(units[i].x, units[i].y, i);
+
+    /* Step 3: Sort units by priority.
+     * qsort uses distance fields at initial positions for priority ranking. */
+    qsort(units, (size_t)count, sizeof(UnitData), seq_priority_cmp);
+
+    /* Rebuild occupancy grid after sort since unit indices changed */
+    grid_clear(mx, my);
+    for (int i = 0; i < count; i++)
+        grid_set(units[i].x, units[i].y, i);
+
+    /* Step 4: Process each unit in priority order */
+    static const int dirs[][2] = {{0,-1},{0,1},{-1,0},{1,0},{0,0}};
+
+    for (int i = 0; i < count; i++) {
+        UnitData *ent = &units[i];
+        if (ent->energy <= 0) continue;
+
+        int16_t *enemy_dist = (ent->faction == 0) ? g_dist_to_blue : g_dist_to_red;
+
+        /* Evaluate 5 candidate cells (4 directions + stay) */
+        int cand_x[5], cand_y[5], cand_score[5], ncand = 0;
+        int best_score = -999999;
+
+        for (int d = 0; d < 5; d++) {
+            int nx = ent->x + dirs[d][0];
+            int ny = ent->y + dirs[d][1];
+            if (nx < 1 || nx > mx || ny < 1 || ny > my) continue;
+            /* d==4 is "stay": always valid. Others must be unoccupied. */
+            if (d != 4 && grid_occupied(nx, ny)) continue;
+
+            int score = score_cell(nx, ny, ent->move_type, ent->range,
+                                   enemy_dist, ent->faction, units);
+            cand_x[ncand] = nx;
+            cand_y[ncand] = ny;
+            cand_score[ncand] = score;
+            ncand++;
+            if (score > best_score) best_score = score;
+        }
+
+        /* Tiebreaker 1 (knights): prefer cell backed by ally */
+        int best_backed = 0;
+        if (ent->move_type == 1) {
+            for (int c = 0; c < ncand; c++) {
+                if (cand_score[c] != best_score) continue;
+                int bk_x = 2 * ent->x - cand_x[c];
+                int bk_y = 2 * ent->y - cand_y[c];
+                int ally = grid_unit_at(bk_x, bk_y);
+                if (ally >= 0 && ally != i && units[ally].faction == ent->faction) {
+                    best_backed = 1; break;
                 }
             }
         }
 
+        /* Tiebreaker 2: farthest from nearest wall */
+        int best_wdist = -1;
+        for (int c = 0; c < ncand; c++) {
+            if (cand_score[c] != best_score) continue;
+            if (ent->move_type == 1 && best_backed) {
+                int bk_x = 2 * ent->x - cand_x[c];
+                int bk_y = 2 * ent->y - cand_y[c];
+                int ally = grid_unit_at(bk_x, bk_y);
+                if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
+                    continue;
+            }
+            int wx = cand_x[c] - 1 < mx - cand_x[c] ? cand_x[c] - 1 : mx - cand_x[c];
+            int wy = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
+            int wd = wx < wy ? wx : wy;
+            if (wd > best_wdist) best_wdist = wd;
+        }
+
+        /* Tiebreaker 3: prefer reducing the larger axis to target enemy */
+        int32_t *enemy_own = (ent->faction == 0) ? g_owner_blue : g_owner_red;
+        int tgt_idx = enemy_own[ent->y * GRID_MAX_X + ent->x];
+        int best_axis = 0;
+        if (tgt_idx >= 0 && tgt_idx < count) {
+            int tx = units[tgt_idx].x, ty = units[tgt_idx].y;
+            int adx = abs(ent->x - tx), ady = abs(ent->y - ty);
+            if (adx != ady) {
+                for (int c = 0; c < ncand; c++) {
+                    if (cand_score[c] != best_score) continue;
+                    if (ent->move_type == 1 && best_backed) {
+                        int bk_x = 2 * ent->x - cand_x[c];
+                        int bk_y = 2 * ent->y - cand_y[c];
+                        int ally = grid_unit_at(bk_x, bk_y);
+                        if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
+                            continue;
+                    }
+                    int wx = cand_x[c] - 1 < mx - cand_x[c] ? cand_x[c] - 1 : mx - cand_x[c];
+                    int wy = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
+                    int wd = wx < wy ? wx : wy;
+                    if (wd != best_wdist) continue;
+                    int pref = (adx >= ady)
+                        ? (abs(cand_x[c] - tx) < adx)
+                        : (abs(cand_y[c] - ty) < ady);
+                    if (pref > best_axis) best_axis = pref;
+                }
+            }
+        }
+
+        /* Pick first matching candidate */
+        int bx = ent->x, by = ent->y;
+        bool found = false;
+        for (int c = 0; c < ncand; c++) {
+            if (cand_score[c] != best_score) continue;
+            if (ent->move_type == 1 && best_backed) {
+                int bk_x = 2 * ent->x - cand_x[c];
+                int bk_y = 2 * ent->y - cand_y[c];
+                int ally = grid_unit_at(bk_x, bk_y);
+                if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
+                    continue;
+            }
+            int wx = cand_x[c] - 1 < mx - cand_x[c] ? cand_x[c] - 1 : mx - cand_x[c];
+            int wy = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
+            int wd = wx < wy ? wx : wy;
+            if (wd != best_wdist) continue;
+            if (best_axis && tgt_idx >= 0 && tgt_idx < count) {
+                int tx = units[tgt_idx].x, ty = units[tgt_idx].y;
+                int adx = abs(ent->x - tx), ady = abs(ent->y - ty);
+                int pref = (adx >= ady)
+                    ? (abs(cand_x[c] - tx) < adx)
+                    : (abs(cand_y[c] - ty) < ady);
+                if (!pref) continue;
+            }
+            bx = cand_x[c]; by = cand_y[c];
+            found = true;
+            break;
+        }
+
+        /* Apply move immediately if the unit actually moves */
+        if (found && (bx != ent->x || by != ent->y)) {
+            g_occ_grid[ent->y * GRID_MAX_X + ent->x] = 0;
+            ent->x = bx;
+            ent->y = by;
+            grid_set(ent->x, ent->y, i);
+            ent->energy--;
+
+            /* Write to ECS */
+            int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, ent->eid, loc_comp);
+            if (loc) {
+                loc[0] = ent->x;
+                loc[1] = ent->y;
+                ecs_modified_id(engine->world, ent->eid, loc_comp);
+            }
+        }
+    }
+
+    /* Share unit snapshot with combat phase to avoid redundant collect_units. */
+    if (engine->pipeline_active) {
+        memcpy(g_act_units, units, sizeof(UnitData) * count);
+        g_act_count = count;
+        g_act_prefilled = true;
     }
 }
 
-/* ── attack ──────────────────────────────────────────────────────────── */
+/* ── attack (split into select_targets + apply_damage) ────────────── */
 
-static void avk_attack(Engine *engine) {
+/* Per-unit attack intent: written by select_targets, consumed by apply_damage.
+ * Stored in a static array indexed by unit position in the units array. */
+typedef struct {
+    int target_idx;  /* index into units array, -1 = no target */
+    int damage;
+} AttackIntent;
+
+static AttackIntent g_attack_intents[65536];
+
+/* Map center for attack tiebreaking — set by combat_setup */
+static int g_act_cx = 0, g_act_cy = 0;
+
+/* Single-threaded setup: collect units + build occupancy grid for combat.
+ * Must run before select_targets. */
+static void avk_combat_setup(Engine *engine) {
     if (is_simulation_paused(engine)) return;
-    static UnitData units[16384];
-    int count = collect_units(engine, units, 16384);
 
-    ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
-    ecs_entity_t wpn_comp = ecs_lookup(engine->world, "Weapon");
-    ecs_entity_t td_comp = ensure_took_damage_comp(engine);
-    if (!hp_comp) return;
+    /* In pipeline mode, movement already populated g_act_units/g_act_count. */
+    if (!g_act_prefilled)
+        g_act_count = collect_units(engine, g_act_units, 65536);
+    g_act_prefilled = false; /* consumed — next turn starts fresh */
 
-    /* Get map bounds for center tiebreaking */
     ecs_entity_t map_ent = ecs_lookup(engine->world, "Map");
     ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
     int mx = 320, my = 144;
@@ -6993,18 +8144,29 @@ static void avk_attack(Engine *engine) {
         const void *ms = ecs_get_id(engine->world, map_ent, ms_comp);
         if (ms) { mx = *(const int32_t *)ms; my = *((const int32_t *)ms + 1); }
     }
-    int cx = mx / 2, cy = my / 2;
+    g_act_cx = mx / 2;
+    g_act_cy = my / 2;
 
-    /* Build occupancy grid if not already built by movement */
     grid_clear(mx, my);
-    for (int i = 0; i < count; i++)
-        grid_set(units[i].x, units[i].y, i);
+    for (int i = 0; i < g_act_count; i++)
+        grid_set(g_act_units[i].x, g_act_units[i].y, i);
+}
 
-    for (int i = 0; i < count; i++) {
+/* Select target for units in range [start, end). Thread-safe: reads shared
+ * immutable data (units, grid), writes only to g_attack_intents[i] for i
+ * in [start, end). */
+static void select_targets_range(int start, int end) {
+    UnitData *units = g_act_units;
+    int cx = g_act_cx, cy = g_act_cy;
+
+    for (int i = start; i < end; i++) {
+        g_attack_intents[i].target_idx = -1;
+        g_attack_intents[i].damage = 0;
         if (units[i].health <= 0) continue;
         int range = units[i].range;
 
         UnitData *target = NULL;
+        int target_idx = -1;
         int target_dist = 999999;
         int target_cdist = 999999;
 
@@ -7025,6 +8187,7 @@ static void avk_attack(Engine *engine) {
                     (units[ui].health == target->health && dist == target_dist && cdist < target_cdist) ||
                     (units[ui].health == target->health && dist == target_dist && cdist == target_cdist && units[ui].entity_id < target->entity_id)) {
                     target = &units[ui];
+                    target_idx = ui;
                     target_dist = dist;
                     target_cdist = cdist;
                 }
@@ -7032,25 +8195,81 @@ static void avk_attack(Engine *engine) {
         }
 
         if (target) {
-            target->health -= units[i].damage;
-            int32_t *hp = (int32_t *)ecs_get_mut_id(engine->world, target->eid, hp_comp);
-            if (hp) { *hp = target->health; ecs_modified_id(engine->world, target->eid, hp_comp); }
+            g_attack_intents[i].target_idx = target_idx;
+            g_attack_intents[i].damage = units[i].damage;
+        }
+    }
+}
 
-            if (td_comp) {
-                ecs_add_id(engine->world, target->eid, td_comp);
-            }
+#ifndef _WIN32
+typedef struct { int start, end; } WorkerRange;
+static void *select_targets_worker(void *a) { WorkerRange *r = a; select_targets_range(r->start, r->end); return NULL; }
+#endif
 
-            /* Record who this unit attacked (Weapon.attacked is second field, offset sizeof(int32_t)) */
-            if (wpn_comp && ecs_has_id(engine->world, units[i].eid, wpn_comp)) {
-                void *wpn = ecs_get_mut_id(engine->world, units[i].eid, wpn_comp);
-                if (wpn) {
-                    ecs_entity_t *attacked = (ecs_entity_t *)((char *)wpn + sizeof(int32_t));
-                    *attacked = target->eid;
-                    ecs_modified_id(engine->world, units[i].eid, wpn_comp);
-                }
+static void avk_select_targets(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+    int count = g_act_count;
+#ifndef _WIN32
+    int nt = engine->max_threads;
+    if (nt > 1 && count > 256) {
+        if (nt > 16) nt = 16;
+        pthread_t threads[16];
+        WorkerRange ranges[16];
+        int chunk = count / nt;
+        for (int t = 0; t < nt; t++) {
+            ranges[t].start = t * chunk;
+            ranges[t].end = (t == nt - 1) ? count : (t + 1) * chunk;
+            pthread_create(&threads[t], NULL, select_targets_worker, &ranges[t]);
+        }
+        for (int t = 0; t < nt; t++)
+            pthread_join(threads[t], NULL);
+    } else
+#endif
+    {
+        select_targets_range(0, count);
+    }
+}
+
+static void avk_apply_damage(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+    int count = g_act_count;
+    UnitData *units = g_act_units;
+
+    ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
+    ecs_entity_t wpn_comp = ecs_lookup(engine->world, "Weapon");
+    ecs_entity_t td_comp = ensure_took_damage_comp(engine);
+    if (!hp_comp) return;
+
+    /* Apply all attack intents. Single-threaded: safe to modify any entity. */
+    for (int i = 0; i < count; i++) {
+        int ti = g_attack_intents[i].target_idx;
+        if (ti < 0) continue;
+
+        units[ti].health -= g_attack_intents[i].damage;
+        int32_t *hp = (int32_t *)ecs_get_mut_id(engine->world, units[ti].eid, hp_comp);
+        if (hp) { *hp = units[ti].health; ecs_modified_id(engine->world, units[ti].eid, hp_comp); }
+
+        if (td_comp) {
+            ecs_add_id(engine->world, units[ti].eid, td_comp);
+        }
+
+        /* Record who this unit attacked */
+        if (wpn_comp && ecs_has_id(engine->world, units[i].eid, wpn_comp)) {
+            void *wpn = ecs_get_mut_id(engine->world, units[i].eid, wpn_comp);
+            if (wpn) {
+                ecs_entity_t *attacked = (ecs_entity_t *)((char *)wpn + sizeof(int32_t));
+                *attacked = units[ti].eid;
+                ecs_modified_id(engine->world, units[i].eid, wpn_comp);
             }
         }
     }
+}
+
+/* Legacy wrapper: runs all three phases sequentially (for non-pipeline mode) */
+static void avk_attack(Engine *engine) {
+    avk_combat_setup(engine);
+    avk_select_targets(engine);
+    avk_apply_damage(engine);
 }
 
 /* ── despawn ─────────────────────────────────────────────────────────── */
@@ -7061,7 +8280,7 @@ static void avk_despawn(Engine *engine) {
     if (!hp_comp) return;
 
     /* Collect entities to delete (can't delete during iteration) */
-    static ecs_entity_t to_delete[16384];
+    static ecs_entity_t to_delete[65536];
     int del_count = 0;
 
     ecs_query_t *q = ecs_query(engine->world, {
@@ -7072,7 +8291,7 @@ static void avk_despawn(Engine *engine) {
     while (ecs_query_next(&it)) {
         for (int i = 0; i < it.count; i++) {
             const int32_t *hp = (const int32_t *)ecs_get_id(engine->world, it.entities[i], hp_comp);
-            if (hp && *hp <= 0 && del_count < 16384)
+            if (hp && *hp <= 0 && del_count < 65536)
                 to_delete[del_count++] = it.entities[i];
         }
     }
@@ -7092,7 +8311,7 @@ static void avk_spawn(Engine *engine) {
 
     /* Collect spawn requests */
     typedef struct { ecs_entity_t eid; char template[64]; int x, y; } SpawnReq;
-    static SpawnReq reqs[16384];
+    static SpawnReq reqs[65536];
     int req_count = 0;
 
     ecs_query_t *q = ecs_query(engine->world, {
@@ -7101,7 +8320,7 @@ static void avk_spawn(Engine *engine) {
     });
     ecs_iter_t it = ecs_query_iter(engine->world, q);
     while (ecs_query_next(&it)) {
-        for (int i = 0; i < it.count && req_count < 16384; i++) {
+        for (int i = 0; i < it.count && req_count < 65536; i++) {
             ecs_entity_t eid = it.entities[i];
             const void *sr = ecs_get_id(engine->world, eid, sr_comp);
             const void *loc = ecs_get_id(engine->world, eid, loc_comp);
@@ -7177,19 +8396,515 @@ static void avk_app_stop(Engine *engine) {
     }
 }
 
+/* ── movement_snapshot: Pure Snapshot (SDRA) Movement ────────────────── */
+/*
+ * Simplest single-pass movement. No iteration, no intent graph, no priority sort.
+ * Snapshot → decide → resolve collisions sequentially by entity_id → apply.
+ */
+
+static void avk_movement_snapshot(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+
+    /* Read MapSize */
+    ecs_entity_t map = ecs_lookup(engine->world, "Map");
+    ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
+    int mx = 10, my = 10;
+    if (map && ms_comp) {
+        const void *ms = ecs_get_id(engine->world, map, ms_comp);
+        if (ms) { mx = *(const int32_t *)ms; my = *((const int32_t *)ms + 1); }
+    }
+
+    /* Collect living units (already sorted by entity_id) */
+    static UnitData units[65536];
+    int count = collect_units(engine, units, 65536);
+    if (count == 0) return;
+
+    ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
+
+    /* Step 1: Build distance fields ONCE */
+    if (!engine->pipeline_active || g_df_mx == 0) {
+        build_distance_fields_pair(engine, units, count, mx, my);
+    }
+
+    /* Step 2: Build occupancy grid */
+    grid_clear(mx, my);
+    for (int i = 0; i < count; i++)
+        grid_set(units[i].x, units[i].y, i);
+
+    /* Step 3: Each unit picks its best neighbor from the frozen snapshot */
+    static const int dirs[][2] = {{0,-1},{0,1},{-1,0},{1,0},{0,0}};
+    decide_moves_range(units, count, mx, my, dirs, 0, count);
+
+    /* Step 4: Collision resolution — iterate in entity_id order (already sorted).
+     * Use a claimed grid: first to claim wins, others stay. */
+    static bool claimed[GRID_MAX_Y * GRID_MAX_X];
+    memset(claimed, 0, (size_t)(my + 1) * GRID_MAX_X * sizeof(bool));
+
+    /* Mark all current positions as claimed (stationary default) */
+    for (int i = 0; i < count; i++)
+        claimed[units[i].y * GRID_MAX_X + units[i].x] = true;
+
+    for (int i = 0; i < count; i++) {
+        if (!g_move_decisions[i].found) continue;
+        int bx = g_move_decisions[i].bx;
+        int by = g_move_decisions[i].by;
+        if (bx == units[i].x && by == units[i].y) continue;
+
+        int target_ci = by * GRID_MAX_X + bx;
+        if (claimed[target_ci]) continue; /* someone already there or claimed */
+
+        /* Release old cell, claim new one */
+        claimed[units[i].y * GRID_MAX_X + units[i].x] = false;
+        claimed[target_ci] = true;
+
+        /* Update grid */
+        g_occ_grid[units[i].y * GRID_MAX_X + units[i].x] = 0;
+        units[i].x = bx;
+        units[i].y = by;
+        grid_set(units[i].x, units[i].y, i);
+
+        /* Write to ECS */
+        int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, units[i].eid, loc_comp);
+        if (loc) {
+            loc[0] = units[i].x;
+            loc[1] = units[i].y;
+            ecs_modified_id(engine->world, units[i].eid, loc_comp);
+        }
+    }
+
+    /* Share unit snapshot with combat phase */
+    if (engine->pipeline_active) {
+        memcpy(g_act_units, units, sizeof(UnitData) * count);
+        g_act_count = count;
+        g_act_prefilled = true;
+    }
+}
+
 /* ── Registration ────────────────────────────────────────────────────── */
+
+/* ── movement_wavefront: Layer-by-Layer from Engagement Frontier ───── */
+/*
+ * Layer-by-layer movement from the engagement frontier outward.
+ *
+ * 1. Build BFS distance fields once.
+ * 2. Assign each unit a "layer" = its distance to the engagement frontier.
+ *    Knights: layer = dist_to_nearest_enemy.
+ *    Archers: layer = |dist_to_nearest_enemy - weapon_range|.
+ *    Layer 0 units are at the frontier; layer 1 is one step back, etc.
+ * 3. Process layers 0, 1, 2, ... in order:
+ *    - Within each layer, process units in entity_id order (determinism).
+ *    - Each unit evaluates 5 cells against the CURRENT occupancy grid
+ *      (which reflects moves by all previous layers), picks best via
+ *      score_cell + tiebreakers, applies immediately if cell is free.
+ * 4. Write ECS locations as moves happen.
+ *
+ * Key insight: front-line units (layer 0) move first and claim positions.
+ * Units one step back see where front-line units went and fill gaps.
+ */
+static void avk_movement_wavefront(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+
+    /* Read MapSize */
+    ecs_entity_t map = ecs_lookup(engine->world, "Map");
+    ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
+    int mx = 10, my = 10;
+    if (map && ms_comp) {
+        const void *ms = ecs_get_id(engine->world, map, ms_comp);
+        if (ms) { mx = *(const int32_t *)ms; my = *((const int32_t *)ms + 1); }
+    }
+
+    /* Collect living units (sorted by entity_id) */
+    static UnitData units[65536];
+    int count = collect_units(engine, units, 65536);
+    if (count == 0) return;
+
+    ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
+
+    /* Set energy */
+    for (int i = 0; i < count; i++) units[i].energy = units[i].speed;
+
+    /* Build distance fields once.
+     * In pipeline mode, avk_build_distance_fields already ran during Reset. */
+    if (!engine->pipeline_active || g_df_mx == 0) {
+        build_distance_fields_pair(engine, units, count, mx, my);
+    }
+
+    /* Build occupancy grid */
+    grid_clear(mx, my);
+    for (int i = 0; i < count; i++)
+        grid_set(units[i].x, units[i].y, i);
+
+    /* Assign layers. Max possible layer ~ grid diagonal. */
+    int max_layer = mx + my;  /* upper bound */
+    static int unit_layer[65536];
+    for (int i = 0; i < count; i++) {
+        int16_t *enemy_dist = (units[i].faction == 0) ? g_dist_to_blue : g_dist_to_red;
+        int d = dist_field_get(enemy_dist, units[i].x, units[i].y);
+        if (units[i].move_type == 1) {
+            /* Knight: layer = distance to nearest enemy */
+            unit_layer[i] = d;
+        } else {
+            /* Archer: layer = deviation from optimal range */
+            unit_layer[i] = abs(d - units[i].range);
+        }
+    }
+
+    /* Bucket sort: scan units per layer (units already in entity_id order) */
+    static const int dirs[][2] = {{0,-1},{0,1},{-1,0},{1,0},{0,0}};
+
+    for (int layer = 0; layer <= max_layer; layer++) {
+        for (int i = 0; i < count; i++) {
+            if (unit_layer[i] != layer) continue;
+
+            UnitData *ent = &units[i];
+            if (ent->energy <= 0) continue;
+
+            int16_t *enemy_dist = (ent->faction == 0) ? g_dist_to_blue : g_dist_to_red;
+
+            /* Evaluate 5 candidate cells (4 directions + stay) */
+            int cand_x[5], cand_y[5], cand_score[5], ncand = 0;
+            int best_score = -999999;
+
+            for (int d = 0; d < 5; d++) {
+                int nx = ent->x + dirs[d][0];
+                int ny = ent->y + dirs[d][1];
+                if (nx < 1 || nx > mx || ny < 1 || ny > my) continue;
+                if (d != 4 && grid_occupied(nx, ny)) continue;
+
+                int score = score_cell(nx, ny, ent->move_type, ent->range,
+                                       enemy_dist, ent->faction, units);
+                cand_x[ncand] = nx;
+                cand_y[ncand] = ny;
+                cand_score[ncand] = score;
+                ncand++;
+                if (score > best_score) best_score = score;
+            }
+
+            /* Tiebreaker 1 (knights): prefer cell backed by ally */
+            int best_backed = 0;
+            if (ent->move_type == 1) {
+                for (int c = 0; c < ncand; c++) {
+                    if (cand_score[c] != best_score) continue;
+                    int bk_x = 2 * ent->x - cand_x[c];
+                    int bk_y = 2 * ent->y - cand_y[c];
+                    int ally = grid_unit_at(bk_x, bk_y);
+                    if (ally >= 0 && ally != i && units[ally].faction == ent->faction) {
+                        best_backed = 1; break;
+                    }
+                }
+            }
+
+            /* Tiebreaker 2: farthest from nearest wall */
+            int best_wdist = -1;
+            for (int c = 0; c < ncand; c++) {
+                if (cand_score[c] != best_score) continue;
+                if (ent->move_type == 1 && best_backed) {
+                    int bk_x = 2 * ent->x - cand_x[c];
+                    int bk_y = 2 * ent->y - cand_y[c];
+                    int ally = grid_unit_at(bk_x, bk_y);
+                    if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
+                        continue;
+                }
+                int wx = cand_x[c] - 1 < mx - cand_x[c] ? cand_x[c] - 1 : mx - cand_x[c];
+                int wy = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
+                int wd = wx < wy ? wx : wy;
+                if (wd > best_wdist) best_wdist = wd;
+            }
+
+            /* Tiebreaker 3: prefer reducing the larger axis to target enemy */
+            int32_t *enemy_own = (ent->faction == 0) ? g_owner_blue : g_owner_red;
+            int tgt_idx = enemy_own[ent->y * GRID_MAX_X + ent->x];
+            int best_axis = 0;
+            if (tgt_idx >= 0 && tgt_idx < count) {
+                int tx = units[tgt_idx].x, ty = units[tgt_idx].y;
+                int adx = abs(ent->x - tx), ady = abs(ent->y - ty);
+                if (adx != ady) {
+                    for (int c = 0; c < ncand; c++) {
+                        if (cand_score[c] != best_score) continue;
+                        if (ent->move_type == 1 && best_backed) {
+                            int bk_x = 2 * ent->x - cand_x[c];
+                            int bk_y = 2 * ent->y - cand_y[c];
+                            int ally = grid_unit_at(bk_x, bk_y);
+                            if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
+                                continue;
+                        }
+                        int wx = cand_x[c] - 1 < mx - cand_x[c] ? cand_x[c] - 1 : mx - cand_x[c];
+                        int wy = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
+                        int wd = wx < wy ? wx : wy;
+                        if (wd != best_wdist) continue;
+                        int pref = (adx >= ady)
+                            ? (abs(cand_x[c] - tx) < adx)
+                            : (abs(cand_y[c] - ty) < ady);
+                        if (pref > best_axis) best_axis = pref;
+                    }
+                }
+            }
+
+            /* Pick first matching candidate */
+            int bx = ent->x, by = ent->y;
+            bool found = false;
+            for (int c = 0; c < ncand; c++) {
+                if (cand_score[c] != best_score) continue;
+                if (ent->move_type == 1 && best_backed) {
+                    int bk_x = 2 * ent->x - cand_x[c];
+                    int bk_y = 2 * ent->y - cand_y[c];
+                    int ally = grid_unit_at(bk_x, bk_y);
+                    if (!(ally >= 0 && ally != i && units[ally].faction == ent->faction))
+                        continue;
+                }
+                int wx = cand_x[c] - 1 < mx - cand_x[c] ? cand_x[c] - 1 : mx - cand_x[c];
+                int wy = cand_y[c] - 1 < my - cand_y[c] ? cand_y[c] - 1 : my - cand_y[c];
+                int wd = wx < wy ? wx : wy;
+                if (wd != best_wdist) continue;
+                if (best_axis && tgt_idx >= 0 && tgt_idx < count) {
+                    int tx = units[tgt_idx].x, ty = units[tgt_idx].y;
+                    int adx = abs(ent->x - tx), ady = abs(ent->y - ty);
+                    int pref = (adx >= ady)
+                        ? (abs(cand_x[c] - tx) < adx)
+                        : (abs(cand_y[c] - ty) < ady);
+                    if (!pref) continue;
+                }
+                bx = cand_x[c]; by = cand_y[c];
+                found = true;
+                break;
+            }
+
+            /* Apply move immediately */
+            if (found && (bx != ent->x || by != ent->y)) {
+                g_occ_grid[ent->y * GRID_MAX_X + ent->x] = 0;
+                ent->x = bx;
+                ent->y = by;
+                grid_set(ent->x, ent->y, i);
+                ent->energy--;
+
+                /* Write to ECS */
+                int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, ent->eid, loc_comp);
+                if (loc) {
+                    loc[0] = ent->x;
+                    loc[1] = ent->y;
+                    ecs_modified_id(engine->world, ent->eid, loc_comp);
+                }
+            }
+        }
+    }
+
+    /* Share unit snapshot with combat phase */
+    if (engine->pipeline_active) {
+        memcpy(g_act_units, units, sizeof(UnitData) * count);
+        g_act_count = count;
+        g_act_prefilled = true;
+    }
+}
+
+/* ── movement_hybrid: Intent Graph + Second BFS Re-evaluation ────────── */
+static void avk_movement_hybrid(Engine *engine) {
+    if (is_simulation_paused(engine)) return;
+    ecs_entity_t map = ecs_lookup(engine->world, "Map");
+    ecs_entity_t ms_comp = ecs_lookup(engine->world, "MapSize");
+    int mx = 10, my = 10;
+    if (map && ms_comp) {
+        const void *ms = ecs_get_id(engine->world, map, ms_comp);
+        if (ms) { mx = *(const int32_t *)ms; my = *((const int32_t *)ms + 1); }
+    }
+    static UnitData units[65536];
+    int count = collect_units(engine, units, 65536);
+    if (count == 0) return;
+    ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
+    grid_clear(mx, my);
+    for (int i = 0; i < count; i++) grid_set(units[i].x, units[i].y, i);
+    static const int dirs[][2] = {{0,-1},{0,1},{-1,0},{1,0},{0,0}};
+
+    /* Pass 1: Intent graph */
+    build_distance_field(g_dist_to_red, g_owner_red, units, count, 0, mx, my);
+    build_distance_field(g_dist_to_blue, g_owner_blue, units, count, 1, mx, my);
+    decide_moves_range(units, count, mx, my, dirs, 0, count);
+
+    static int hi_x[65536], hi_y[65536];
+    static enum IntentStatus hs[65536];
+    static int hp[65536];
+    static int32_t hcc[GRID_MAX_Y * GRID_MAX_X];
+    static int32_t hcw[GRID_MAX_Y * GRID_MAX_X];
+    static int32_t hwn[65536];
+    static int hwl[65536];
+    int wh = 0, wt = 0;
+    memset(hcc, -1, (size_t)(my+1) * GRID_MAX_X * sizeof(int32_t));
+    memset(hcw, -1, (size_t)(my+1) * GRID_MAX_X * sizeof(int32_t));
+
+    for (int i = 0; i < count; i++) {
+        int tx = g_move_decisions[i].found ? g_move_decisions[i].bx : units[i].x;
+        int ty = g_move_decisions[i].found ? g_move_decisions[i].by : units[i].y;
+        hi_x[i] = tx; hi_y[i] = ty;
+        int16_t *ed = (units[i].faction==0) ? g_dist_to_blue : g_dist_to_red;
+        int d = dist_field_get(ed, units[i].x, units[i].y);
+        int u = (units[i].move_type==1) ? (10000-d) : (abs(d-units[i].range)+10000);
+        hp[i] = u * 100000 + units[i].entity_id;
+        if (tx==units[i].x && ty==units[i].y) {
+            hs[i] = INTENT_STATIONARY; hcc[ty*GRID_MAX_X+tx] =i;
+        } else if (!grid_occupied(tx, ty)) {
+            hs[i] = INTENT_FREE;
+        } else {
+            hs[i] = INTENT_WAITING;
+            int wci = ty*GRID_MAX_X+tx; hwn[i] = hcw[wci]; hcw[wci] =i;
+        }
+    }
+    for (int i = 0; i < count; i++) {
+        if (hs[i] != INTENT_FREE) continue;
+        int ci = hi_y[i]*GRID_MAX_X+hi_x[i]; int ex = hcc[ci];
+        if (ex < 0) { hcc[ci]=i; hwl[wt++]=i; }
+        else if (hp[i]>hp[ex]) {
+            hs[ex]=INTENT_BLOCKED; hi_x[ex]=units[ex].x; hi_y[ex]=units[ex].y;
+            hcc[units[ex].y*GRID_MAX_X+units[ex].x]=ex;
+            hcc[ci]=i; hwl[wt++]=i;
+        } else {
+            hs[i]=INTENT_BLOCKED; hi_x[i]=units[i].x; hi_y[i]=units[i].y;
+            hcc[units[i].y*GRID_MAX_X+units[i].x]=i;
+        }
+    }
+    while (wh < wt) {
+        int i = hwl[wh++]; hs[i] = INTENT_COMMITTED;
+        int oci = units[i].y*GRID_MAX_X+units[i].x;
+        int bw=-1, bp=-1;
+        for (int j=hcw[oci]; j>=0; j=hwn[j]) { if (hs[j]!=INTENT_WAITING) continue; if (hp[j]>bp) { bw=j; bp=hp[j]; } }
+        if (bw>=0) {
+            hcc[hi_y[bw]*GRID_MAX_X+hi_x[bw]]=bw; hs[bw]=INTENT_FREE; hwl[wt++]=bw;
+            for (int k=hcw[oci]; k>=0; k=hwn[k]) {
+                if (k==bw||hs[k]!=INTENT_WAITING) continue;
+                hs[k]=INTENT_BLOCKED; hi_x[k]=units[k].x; hi_y[k]=units[k].y;
+                hcc[units[k].y*GRID_MAX_X+units[k].x]=k;
+            }
+        }
+    }
+    /* Apply pass 1 */
+    int p1m = 0;
+    for (int i = 0; i < count; i++) {
+        if (hs[i]==INTENT_COMMITTED && (hi_x[i]!=units[i].x||hi_y[i]!=units[i].y)) {
+            g_occ_grid[units[i].y*GRID_MAX_X+units[i].x]=0;
+            units[i].x=hi_x[i]; units[i].y=hi_y[i];
+            grid_set(units[i].x, units[i].y, i); p1m++;
+        }
+    }
+    /* Pass 2: Rebuild BFS, re-evaluate stuck units */
+    if (p1m > 0) {
+        build_distance_field(g_dist_to_red, g_owner_red, units, count, 0, mx, my);
+        perf_record_df_full(engine);
+        build_distance_field(g_dist_to_blue, g_owner_blue, units, count, 1, mx, my);
+        perf_record_df_full(engine);
+        for (int i = 0; i < count; i++) {
+            if (hs[i]!=INTENT_BLOCKED && hs[i]!=INTENT_WAITING) continue;
+            int16_t *ed = (units[i].faction==0) ? g_dist_to_blue : g_dist_to_red;
+            int bs=-999999, bx=units[i].x, by=units[i].y; bool f=false;
+            for (int d=0; d<4; d++) {
+                int nx=units[i].x+dirs[d][0], ny=units[i].y+dirs[d][1];
+                if (nx<1||nx>mx||ny<1||ny>my) continue;
+                if (grid_occupied(nx,ny)) continue;
+                int s=score_cell(nx,ny,units[i].move_type,units[i].range,ed,units[i].faction,units);
+                if (s>bs) { bs=s; bx=nx; by=ny; f=true; }
+            }
+            if (f && (bx!=units[i].x||by!=units[i].y) && !grid_occupied(bx,by)) {
+                g_occ_grid[units[i].y*GRID_MAX_X+units[i].x]=0;
+                units[i].x=bx; units[i].y=by;
+                grid_set(units[i].x, units[i].y, i); hs[i]=INTENT_COMMITTED;
+            }
+        }
+    }
+    for (int i = 0; i < count; i++) {
+        if (hs[i]!=INTENT_COMMITTED) continue;
+        int32_t *loc=(int32_t*)ecs_get_mut_id(engine->world,units[i].eid,loc_comp);
+        if (loc) { loc[0]=units[i].x; loc[1]=units[i].y; ecs_modified_id(engine->world,units[i].eid,loc_comp); }
+    }
+    if (engine->pipeline_active) {
+        memcpy(g_act_units, units, sizeof(UnitData)*count);
+        g_act_count=count; g_act_prefilled=true;
+    }
+}
+
+/* Select movement function based on engine->movement_model.
+ * Returns function pointer and sets *out_name to the C function name. */
+static NativeSystemFn select_movement_fn(Engine *engine, const char **out_name) {
+    const char *model = engine->movement_model;
+    struct { const char *model; NativeSystemFn fn; const char *name; } table[] = {
+        { "original",   avk_movement,            "movement" },
+        { "intent",     avk_movement_intent,     "movement_intent" },
+        { "sequential", avk_movement_sequential,  "movement_sequential" },
+        { "snapshot",   avk_movement_snapshot,    "movement_snapshot" },
+        { "wavefront",  avk_movement_wavefront,   "movement_wavefront" },
+        { "hybrid",     avk_movement_hybrid,      "movement_hybrid" },
+    };
+    for (int i = 0; i < 6; i++) {
+        if (strcmp(model, table[i].model) == 0) {
+            *out_name = table[i].name;
+            return table[i].fn;
+        }
+    }
+    if (model[0] == '\0') {
+        *out_name = "movement";
+        return avk_movement;
+    }
+    fprintf(stderr, "Unknown movement model '%s', using original\n", model);
+    *out_name = "movement";
+    return avk_movement;
+}
 
 void avk_register_native_systems(Engine *engine) {
     /* Ensure TookDamage component exists */
     ensure_took_damage_comp(engine);
 
-    engine_system_register_native(engine, "start_of_turn", avk_start_of_turn);
-    engine_system_register_native(engine, "app_start", avk_app_start);
-    engine_system_register_native(engine, "movement", avk_movement);
-    engine_system_register_native(engine, "attack", avk_attack);
-    engine_system_register_native(engine, "despawn", avk_despawn);
-    engine_system_register_native(engine, "spawn", avk_spawn);
-    engine_system_register_native(engine, "app_stop", avk_app_stop);
+    const char *movement_name = NULL;
+    NativeSystemFn movement_fn = select_movement_fn(engine, &movement_name);
+
+    if (engine->pipeline_active) {
+        /* Pipeline mode: register as Flecs system entities with phases */
+
+        /* Phase: Init — app_start (rewind registered separately in app.c) */
+        engine_system_register_pipeline(
+            engine, "app_start", avk_app_start,
+            engine->phase_init, false, 0);
+
+        /* Phase: Reset — despawn, start_of_turn, build_distance_fields
+         * No ordering between them — they operate on independent data. */
+        engine_system_register_pipeline(
+            engine, "despawn", avk_despawn,
+            engine->phase_reset, false, 0);
+        engine_system_register_pipeline(
+            engine, "start_of_turn", avk_start_of_turn,
+            engine->phase_reset, false, 0);
+        engine_system_register_pipeline(
+            engine, "build_distance_fields", avk_build_distance_fields,
+            engine->phase_reset, false, 0);
+
+        /* Phase: Move — selected movement model */
+        engine_system_register_pipeline(
+            engine, movement_name, movement_fn,
+            engine->phase_move, false, 0);
+
+        /* Phase: Act — combat_setup → select_targets → apply_damage */
+        ecs_entity_t sys_setup = engine_system_register_pipeline(
+            engine, "combat_setup", avk_combat_setup,
+            engine->phase_act, false, 0);
+        ecs_entity_t sys_select = engine_system_register_pipeline(
+            engine, "select_targets", avk_select_targets,
+            engine->phase_act, false, sys_setup);
+        engine_system_register_pipeline(
+            engine, "apply_damage", avk_apply_damage,
+            engine->phase_act, false, sys_select);
+
+        /* Phase: Finalize — spawn, then app_stop */
+        ecs_entity_t sys_spawn = engine_system_register_pipeline(
+            engine, "spawn", avk_spawn,
+            engine->phase_finalize, false, 0);
+        engine_system_register_pipeline(
+            engine, "app_stop", avk_app_stop,
+            engine->phase_finalize, false, sys_spawn);
+    } else {
+        /* Legacy mode: flat registration, execution order from app.yaml */
+        engine_system_register_native(engine, "start_of_turn", avk_start_of_turn);
+        engine_system_register_native(engine, "app_start", avk_app_start);
+        engine_system_register_native(engine, movement_name, movement_fn);
+        engine_system_register_native(engine, "attack", avk_attack);
+        engine_system_register_native(engine, "despawn", avk_despawn);
+        engine_system_register_native(engine, "spawn", avk_spawn);
+        engine_system_register_native(engine, "app_stop", avk_app_stop);
+    }
 }
 #ifndef AVK_SYSTEMS_H
 #define AVK_SYSTEMS_H
