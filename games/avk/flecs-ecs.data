@@ -5940,6 +5940,8 @@ static void unpause(void) {
         ecs_remove_id(g_engine->world, gs, sp);
 }
 
+static char g_system_names[MAX_SYSTEMS][64];
+
 EMSCRIPTEN_KEEPALIVE
 int wasm_turn(void) {
     if (!g_engine) return -1;
@@ -5947,23 +5949,21 @@ int wasm_turn(void) {
     unpause();
 
     double frame_start = emscripten_get_now();
-
-    /* Time each system individually */
     g_system_count = 0;
+    memset(g_system_times, 0, sizeof(g_system_times));
+
     if (g_engine->game_over) return g_engine->turn_counter;
 
-    int order_count = g_engine->system_order_count;
-    for (int i = 0; i < order_count && i < MAX_SYSTEMS; i++) {
-        if (g_engine->game_over) break;
-        const char *name = g_engine->system_order[i];
-
-        double t0 = emscripten_get_now();
-        engine_system_run_one(g_engine, name);
-        g_system_times[g_system_count++] = emscripten_get_now() - t0;
+    TurnResult tr;
+    if (engine_sim_turn(g_engine, &tr)) {
+        for (int i = 0; i < tr.systems_run_count && i < MAX_SYSTEMS; i++) {
+            strncpy(g_system_names[i], tr.systems_run[i], 63);
+            g_system_names[i][63] = '\0';
+        }
+        g_system_count = tr.systems_run_count < MAX_SYSTEMS
+            ? tr.systems_run_count : MAX_SYSTEMS;
+        engine_turn_result_free(&tr);
     }
-
-    if (!is_simulation_paused(g_engine))
-        g_engine->turn_counter++;
 
     /* Time unit collection */
     double t0 = emscripten_get_now();
@@ -5992,9 +5992,8 @@ double wasm_get_total_time(void) { return g_total_time; }
 
 EMSCRIPTEN_KEEPALIVE
 const char *wasm_get_system_name(int i) {
-    if (!g_engine || i < 0 || i >= g_system_count) return "";
-    if (i >= g_engine->system_order_count) return "";
-    return g_engine->system_order[i];
+    if (i < 0 || i >= g_system_count) return "";
+    return g_system_names[i];
 }
 
 EMSCRIPTEN_KEEPALIVE
