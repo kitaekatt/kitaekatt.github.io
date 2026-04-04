@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Non-Abelian Tag</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; color: #e0e0e0; font-family: monospace; overflow: hidden; }
+#ui { position: fixed; top: 8px; left: 8px; z-index: 10; font-size: 13px; }
+#ui button { margin: 0 4px; padding: 4px 12px; background: #333; color: #e0e0e0;
+    border: 1px solid #555; cursor: pointer; font-family: monospace; }
+#ui button:hover { background: #444; }
+#ui button.active { background: #2a6; color: #fff; }
+#info { position: fixed; top: 8px; right: 8px; z-index: 10; font-size: 12px;
+    text-align: right; opacity: 0.7; }
+canvas { display: block; }
+#loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="loading">Loading WASM...</div>
+<div id="ui" style="display:none">
+    <button id="btnStep">Step</button>
+    <button id="btnPlay">Play</button>
+    <button id="btnFast">Fast</button>
+    <span id="turnLabel">Turn: 0</span>
+</div>
+<div id="info" style="display:none">
+    <div id="unitCount"></div>
+    <div id="transformCount"></div>
+</div>
+<canvas id="c"></canvas>
+
+<script>
+// ── Config ──────────────────────────────────────────────────────────
+const TARGET_TURN_MS = 500;
+const FAST_TURN_MS = 50;
+const CELL_MIN = 4;
+
+// Overlapping phase timeline (fraction of turn duration)
+const TIMELINE = {
+    movement:  { start: 0.0, end: 1.0 },
+    tag:       { start: 0.0, end: 0.4 },
+    transform: { start: 0.4, end: 0.85 },
+    stun:      { start: 0.7, end: 1.0 },
+};
+
+// Capability bit positions
+const CAP = {
+    Move: 0, Evade: 1, Rotate: 2, TagRight: 3, TagLeft: 4,
+    TagAtRange: 5, Reflect: 6, Stun: 7, Block: 8
+};
+
+const CAP_NAMES = ['move','evade','rotate','tag_right','tag_left',
+                   'tag_at_range','reflect','stun','block'];
+
+// Facing: 0=N, 1=E, 2=S, 3=W → rotation in degrees
+const FACING_DEG = [0, 90, 180, 270];
+
+// Colors
+const COL_BG      = '#1a1a2e';
+const COL_GRID    = '#252540';
+const COL_BODY    = '#8888aa';
+const COL_CAP     = '#ccccdd';
+const COL_TAG_FWD = '#9999bb';
+const COL_RED     = '#dd4444';
+const COL_GREEN   = '#44cc66';
+const COL_ORANGE  = '#ee8833';
+const COL_GRAY    = '#555566';
+const COL_STUN_BG = '#aa7733';
+
+// ── State ───────────────────────────────────────────────────────────
+let engine = null;
+let mapW = 0, mapH = 0;
+let CELL = 32;
+let viewUnits = {};  // keyed by entity_id
+let playing = false;
+let fastMode = false;
+let animating = false;
+let animStartTime = 0;
+let animDurationMs = TARGET_TURN_MS;
+let turnTransformCount = 0;
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// ── Sprites (static bitmaps) ────────────────────────────────────────
+const sprites = {};
+let spritesLoaded = 0;
+let spritesTotal = 0;
+
+const STATIC_BITMAPS = [
+    'body_default','body_tagged','body_disabled',
+    'tag_capability_default','tag_capability_active',
+    'move_capability_default','move_capability_disabled',
+    'evade_capability_default','evade_capability_disabled',
+    'rotate_capability_default','rotate_capability_disabled',
+    'tag_at_range_capability_default','tag_at_range_capability_disabled',
+    'reflect_capability_default','reflect_capability_disabled',
+    'stun_capability_default','stun_capability_disabled',
+    'block_capability_default','block_capability_disabled'
+];
+
+const ANIM_DIRS = [];
+for (const name of CAP_NAMES) {
+    ANIM_DIRS.push(name + '_add');
+    ANIM_DIRS.push(name + '_remove');
+}
+ANIM_DIRS.push('body_transform');
+const ANIM_FRAMES = 8;
+
+function loadSprites(basePath, cb) {
+    // Static bitmaps
+    spritesTotal = STATIC_BITMAPS.length + ANIM_DIRS.length * ANIM_FRAMES;
+    spritesLoaded = 0;
+
+    function onLoad() {
+        spritesLoaded++;
+        if (spritesLoaded >= spritesTotal) cb();
+    }
+
+    for (const name of STATIC_BITMAPS) {
+        const img = new Image();
+        img.onload = img.onerror = onLoad;
+        img.src = basePath + '/bitmaps/' + name + '.png';
+        sprites[name] = img;
+    }
+
+    // Animation frame sequences
+    for (const dir of ANIM_DIRS) {
+        sprites[dir] = [];
+        for (let f = 0; f < ANIM_FRAMES; f++) {
+            const img = new Image();
+            img.onload = img.onerror = onLoad;
+            img.src = basePath + '/sprites/' + dir + '/frame_' + String(f).padStart(2,'0') + '.png';
+            sprites[dir].push(img);
+        }
+    }
+}
+
+// ── View Units ──────────────────────────────────────────────────────
+function updateViewUnits() {
+    if (!engine) return;
+    const count = engine.get_unit_count();
+    const seen = new Set();
+    turnTransformCount = 0;
+
+    for (let i = 0; i < count; i++) {
+        const eid = engine.get_unit_entity_id(i);
+        seen.add(eid);
+
+        let vu = viewUnits[eid];
+        if (!vu) {
+            vu = { eid, x: 0, y: 0, prevX: 0, prevY: 0,
+                   facing: 0, prevFacing: 0,
+                   caps: 0, prevCaps: 0,
+                   gained: 0, lost: 0,
+                   transformed: false, stunned: false,
+                   reflectCd: false, blockCd: false };
+            viewUnits[eid] = vu;
+        }
+
+        // Save previous state
+        vu.prevX = vu.x;
+        vu.prevY = vu.y;
+        vu.prevFacing = vu.facing;
+        vu.prevCaps = vu.caps;
+
+        // Update current state
+        vu.x = engine.get_unit_x(i);
+        vu.y = engine.get_unit_y(i);
+        vu.facing = engine.get_unit_facing(i);
+        vu.caps = engine.get_unit_caps(i);
+        vu.transformed = engine.get_unit_transformed(i) === 1;
+        vu.stunned = engine.get_unit_stunned(i) === 1;
+        vu.reflectCd = engine.get_unit_reflect_cd(i) === 1;
+        vu.blockCd = engine.get_unit_block_cd(i) === 1;
+
+        // Compute capability deltas
+        vu.gained = vu.caps & ~vu.prevCaps;
+        vu.lost = vu.prevCaps & ~vu.caps;
+
+        if (vu.transformed) turnTransformCount++;
+
+        // Handle toroidal wrap (if distance > half map, it wrapped)
+        if (Math.abs(vu.x - vu.prevX) > mapW / 2) vu.prevX = vu.x;
+        if (Math.abs(vu.y - vu.prevY) > mapH / 2) vu.prevY = vu.y;
+    }
+
+    // Remove dead units (shouldn't happen in matrix, but safety)
+    for (const eid of Object.keys(viewUnits)) {
+        if (!seen.has(Number(eid))) delete viewUnits[eid];
+    }
+}
+
+// ── Rendering ───────────────────────────────────────────────────────
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    if (mapW > 0 && mapH > 0) {
+        CELL = Math.max(CELL_MIN, Math.min(
+            Math.floor((canvas.width - 20) / mapW),
+            Math.floor((canvas.height - 50) / mapH)
+        ));
+    }
+}
+
+function phaseT(p, phase) {
+    const { start, end } = phase;
+    if (p < start) return 0;
+    if (p >= end) return 1;
+    return (p - start) / (end - start);
+}
+
+function drawGrid() {
+    ctx.fillStyle = COL_BG;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const offX = Math.floor((canvas.width - mapW * CELL) / 2);
+    const offY = Math.floor((canvas.height - mapH * CELL) / 2) + 20;
+
+    ctx.strokeStyle = COL_GRID;
+    ctx.lineWidth = 0.5;
+    for (let x = 0; x <= mapW; x++) {
+        ctx.beginPath();
+        ctx.moveTo(offX + x * CELL, offY);
+        ctx.lineTo(offX + x * CELL, offY + mapH * CELL);
+        ctx.stroke();
+    }
+    for (let y = 0; y <= mapH; y++) {
+        ctx.beginPath();
+        ctx.moveTo(offX, offY + y * CELL);
+        ctx.lineTo(offX + mapW * CELL, offY + y * CELL);
+        ctx.stroke();
+    }
+
+    return { offX, offY };
+}
+
+function drawUnit(u, origin, tMove, tTransform, tStun) {
+    // Interpolate position
+    const ix = u.prevX + (u.x - u.prevX) * tMove;
+    const iy = u.prevY + (u.y - u.prevY) * tMove;
+    const px = origin.offX + (ix - 1) * CELL;
+    const py = origin.offY + (iy - 1) * CELL;
+
+    const size = CELL - 1;
+    if (size < 2) return;
+
+    ctx.save();
+    ctx.translate(px + size / 2, py + size / 2);
+    ctx.rotate(FACING_DEG[u.facing] * Math.PI / 180);
+
+    const half = size / 2;
+
+    // Body rectangle
+    if (u.transformed && tTransform > 0 && tTransform < 1) {
+        // Flash red during transform
+        const intensity = 1 - Math.abs(2 * tTransform - 1);
+        ctx.fillStyle = `rgba(220, 50, 50, ${0.6 * intensity})`;
+        ctx.fillRect(-half, -half, size, size);
+        ctx.strokeStyle = COL_BODY;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(-half, -half, size, size);
+    } else if (u.stunned && tStun > 0) {
+        ctx.fillStyle = COL_STUN_BG;
+        ctx.globalAlpha = 0.5 + 0.3 * tStun;
+        ctx.fillRect(-half, -half, size, size);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = COL_GRAY;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(-half, -half, size, size);
+    } else {
+        ctx.strokeStyle = COL_BODY;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(-half, -half, size, size);
+    }
+
+    // Scale factor for capability shapes
+    const capR = Math.max(2, size * 0.12);
+    const bodyR = Math.max(3, size * 0.17);
+
+    // Tag-forward circle (innate, always present) — at top
+    ctx.beginPath();
+    ctx.arc(0, -half + capR + 1, capR, 0, Math.PI * 2);
+    ctx.strokeStyle = COL_TAG_FWD;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Draw capabilities
+    const isStunned = u.stunned;
+
+    function drawCap(bit, drawFn) {
+        const has = (u.caps >> bit) & 1;
+        const gained = (u.gained >> bit) & 1;
+        const lost = (u.lost >> bit) & 1;
+
+        if (gained && tTransform > 0 && tTransform < 1) {
+            // Add animation: scale up with green tint
+            const s = 0.1 + 0.9 * tTransform;
+            const alpha = tTransform;
+            const greenMix = 1 - tTransform;
+            ctx.save();
+            ctx.scale(s, s);
+            ctx.globalAlpha = alpha;
+            drawFn(isStunned ? COL_GRAY : lerpColor(COL_GREEN, COL_CAP, tTransform));
+            ctx.globalAlpha = 1;
+            ctx.restore();
+        } else if (lost && tTransform > 0 && tTransform < 1) {
+            // Remove animation: shrink with red tint
+            const s = 1 - 0.9 * tTransform;
+            const alpha = 1 - tTransform;
+            ctx.save();
+            ctx.scale(s, s);
+            ctx.globalAlpha = alpha;
+            drawFn(lerpColor(COL_CAP, COL_RED, tTransform));
+            ctx.globalAlpha = 1;
+            ctx.restore();
+        } else if (has) {
+            drawFn(isStunned ? COL_GRAY : COL_CAP);
+        }
+    }
+
+    // Move (triangles at bottom)
+    drawCap(CAP.Move, (col) => {
+        const ty = half - capR - 1;
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.moveTo(-capR * 1.5, ty - capR);
+        ctx.lineTo(-capR * 0.5, ty - capR);
+        ctx.lineTo(-capR, ty + capR * 0.5);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(capR * 0.5, ty - capR);
+        ctx.lineTo(capR * 1.5, ty - capR);
+        ctx.lineTo(capR, ty + capR * 0.5);
+        ctx.fill();
+    });
+
+    // Evade (downward arrow at bottom)
+    drawCap(CAP.Evade, (col) => {
+        const ty = half - capR * 2;
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, ty);
+        ctx.lineTo(0, ty + capR * 2);
+        ctx.stroke();
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.moveTo(0, ty + capR * 2.5);
+        ctx.lineTo(-capR, ty + capR * 1.5);
+        ctx.lineTo(capR, ty + capR * 1.5);
+        ctx.fill();
+    });
+
+    // Rotate (curved arrow in center)
+    drawCap(CAP.Rotate, (col) => {
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(0, 0, bodyR, Math.PI * 0.8, Math.PI * 2.1);
+        ctx.stroke();
+        // Arrowhead
+        const ax = bodyR * Math.cos(Math.PI * 2.1);
+        const ay = bodyR * Math.sin(Math.PI * 2.1);
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.moveTo(ax + capR * 0.5, ay);
+        ctx.lineTo(ax - capR * 0.3, ay - capR * 0.6);
+        ctx.lineTo(ax - capR * 0.3, ay + capR * 0.4);
+        ctx.fill();
+    });
+
+    // TagRight (circle on right side)
+    drawCap(CAP.TagRight, (col) => {
+        ctx.beginPath();
+        ctx.arc(half - capR - 1, 0, capR, 0, Math.PI * 2);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    });
+
+    // TagLeft (circle on left side)
+    drawCap(CAP.TagLeft, (col) => {
+        ctx.beginPath();
+        ctx.arc(-half + capR + 1, 0, capR, 0, Math.PI * 2);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    });
+
+    // TagAtRange (triangle on forward tag circle)
+    drawCap(CAP.TagAtRange, (col) => {
+        const ty = -half + 1;
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, ty - capR);
+        ctx.lineTo(-capR * 0.8, ty + capR * 0.3);
+        ctx.lineTo(capR * 0.8, ty + capR * 0.3);
+        ctx.closePath();
+        ctx.stroke();
+    });
+
+    // Reflect (inner circle in center)
+    drawCap(CAP.Reflect, (col) => {
+        const cd = u.reflectCd;
+        ctx.beginPath();
+        ctx.arc(0, 0, bodyR * 0.8, 0, Math.PI * 2);
+        ctx.strokeStyle = cd ? COL_GRAY : col;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    });
+
+    // Stun (double circle on tag)
+    drawCap(CAP.Stun, (col) => {
+        const ty = -half + capR + 1;
+        ctx.beginPath();
+        ctx.arc(0, ty, capR * 1.3, 0, Math.PI * 2);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    });
+
+    // Block (inner square in center)
+    drawCap(CAP.Block, (col) => {
+        const cd = u.blockCd;
+        const bs = bodyR * 0.7;
+        ctx.strokeStyle = cd ? COL_GRAY : col;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(-bs, -bs, bs * 2, bs * 2);
+    });
+
+    ctx.restore();
+}
+
+function lerpColor(a, b, t) {
+    // Parse hex colors and lerp
+    const pa = hexToRgb(a), pb = hexToRgb(b);
+    const r = Math.round(pa.r + (pb.r - pa.r) * t);
+    const g = Math.round(pa.g + (pb.g - pa.g) * t);
+    const bl = Math.round(pa.b + (pb.b - pa.b) * t);
+    return `rgb(${r},${g},${bl})`;
+}
+
+function hexToRgb(hex) {
+    const v = parseInt(hex.slice(1), 16);
+    return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
+}
+
+// ── Animation loop ──────────────────────────────────────────────────
+function render(timestamp) {
+    if (!animating) return;
+
+    const elapsed = timestamp - animStartTime;
+    const p = Math.min(1, elapsed / animDurationMs);
+
+    const tMove = phaseT(p, TIMELINE.movement);
+    const tTag = phaseT(p, TIMELINE.tag);
+    const tTransform = phaseT(p, TIMELINE.transform);
+    const tStun = phaseT(p, TIMELINE.stun);
+
+    resizeCanvas();
+    const origin = drawGrid();
+
+    // Draw all units
+    for (const eid of Object.keys(viewUnits)) {
+        drawUnit(viewUnits[eid], origin, tMove, tTransform, tStun);
+    }
+
+    // HUD
+    const turn = engine.get_turn();
+    document.getElementById('turnLabel').textContent = `Turn: ${turn}`;
+    document.getElementById('unitCount').textContent = `Units: ${engine.get_unit_count()}`;
+    document.getElementById('transformCount').textContent = `Transformed: ${turnTransformCount}`;
+
+    if (p < 1) {
+        requestAnimationFrame(render);
+    } else {
+        animating = false;
+        if (playing) startTurn();
+    }
+}
+
+function startTurn() {
+    if (!engine) return;
+    if (engine.is_game_over()) {
+        playing = false;
+        updateButtons();
+        return;
+    }
+
+    engine.turn();
+    updateViewUnits();
+
+    animDurationMs = fastMode ? FAST_TURN_MS : TARGET_TURN_MS;
+    animStartTime = performance.now();
+    animating = true;
+    requestAnimationFrame(render);
+}
+
+// ── Controls ────────────────────────────────────────────────────────
+function updateButtons() {
+    document.getElementById('btnPlay').classList.toggle('active', playing && !fastMode);
+    document.getElementById('btnFast').classList.toggle('active', fastMode && playing);
+}
+
+document.getElementById('btnStep').onclick = () => {
+    playing = false;
+    fastMode = false;
+    updateButtons();
+    if (!animating) startTurn();
+};
+
+document.getElementById('btnPlay').onclick = () => {
+    if (playing && !fastMode) { playing = false; }
+    else { playing = true; fastMode = false; }
+    updateButtons();
+    if (playing && !animating) startTurn();
+};
+
+document.getElementById('btnFast').onclick = () => {
+    if (playing && fastMode) { playing = false; }
+    else { playing = true; fastMode = true; }
+    updateButtons();
+    if (playing && !animating) startTurn();
+};
+
+window.addEventListener('resize', () => {
+    resizeCanvas();
+    if (!animating) {
+        const origin = drawGrid();
+        for (const eid of Object.keys(viewUnits))
+            drawUnit(viewUnits[eid], origin, 1, 0, 0);
+    }
+});
+
+// ── Init ────────────────────────────────────────────────────────────
+async function init() {
+    const Module = await FlecsECS();
+
+    engine = {
+        init: Module.cwrap('wasm_init', 'number', []),
+        init_with_config: Module.cwrap('wasm_init_with_config', 'number', ['string']),
+        turn: Module.cwrap('wasm_turn', 'number', []),
+        get_turn: Module.cwrap('wasm_get_turn', 'number', []),
+        get_unit_count: Module.cwrap('wasm_get_unit_count', 'number', []),
+        get_unit_x: Module.cwrap('wasm_get_unit_x', 'number', ['number']),
+        get_unit_y: Module.cwrap('wasm_get_unit_y', 'number', ['number']),
+        get_unit_facing: Module.cwrap('wasm_get_unit_facing', 'number', ['number']),
+        get_unit_caps: Module.cwrap('wasm_get_unit_caps', 'number', ['number']),
+        get_unit_transformed: Module.cwrap('wasm_get_unit_transformed', 'number', ['number']),
+        get_unit_stunned: Module.cwrap('wasm_get_unit_stunned', 'number', ['number']),
+        get_unit_entity_id: Module.cwrap('wasm_get_unit_entity_id', 'number', ['number']),
+        get_unit_reflect_cd: Module.cwrap('wasm_get_unit_reflect_cd', 'number', ['number']),
+        get_unit_block_cd: Module.cwrap('wasm_get_unit_block_cd', 'number', ['number']),
+        get_map_x: Module.cwrap('wasm_get_map_x', 'number', []),
+        get_map_y: Module.cwrap('wasm_get_map_y', 'number', []),
+        is_game_over: Module.cwrap('wasm_is_game_over', 'number', []),
+    };
+
+    // Get config from URL params
+    const params = new URLSearchParams(window.location.search);
+    const config = params.get('config') || 'default';
+
+    document.getElementById('loading').textContent = 'Initializing engine...';
+    const ok = engine.init_with_config(config);
+    if (!ok) {
+        document.getElementById('loading').textContent = 'Failed to initialize engine';
+        return;
+    }
+
+    mapW = engine.get_map_x();
+    mapH = engine.get_map_y();
+
+    document.getElementById('loading').textContent = 'Loading sprites...';
+    loadSprites('./assets', () => {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('ui').style.display = '';
+        document.getElementById('info').style.display = '';
+
+        resizeCanvas();
+
+        // Run first turn to spawn units
+        engine.turn();
+        updateViewUnits();
+
+        // Draw initial state
+        const origin = drawGrid();
+        for (const eid of Object.keys(viewUnits))
+            drawUnit(viewUnits[eid], origin, 1, 0, 0);
+
+        document.getElementById('turnLabel').textContent = `Turn: ${engine.get_turn()}`;
+        document.getElementById('unitCount').textContent = `Units: ${engine.get_unit_count()}`;
+    });
+}
+
+// Load WASM module
+const script = document.createElement('script');
+script.src = './flecs-ecs.js';
+script.onload = init;
+document.head.appendChild(script);
+</script>
+</body>
+</html>
