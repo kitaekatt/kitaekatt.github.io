@@ -34,7 +34,7 @@ canvas { display: block; }
     <div id="transformCount"></div>
 </div>
 <canvas id="c"></canvas>
-<div id="version">v (0a7d500)</div>
+<div id="version">v (1de9dbb)</div>
 
 <script>
 // ── Config ──────────────────────────────────────────────────────────
@@ -497,19 +497,22 @@ function drawPendingSpawns(origin) {
 function render(timestamp) {
     if (!engine) { requestAnimationFrame(render); return; }
 
-    // Compute animation phase progress
+    // Compute animation phase progress. Loop so that when one turn's
+    // animation finishes and the next is started in the same frame,
+    // we recompute against the new animStartTime instead of leaving
+    // tMove at 1 (which would draw units one cell ahead for one frame).
     let tMove = 1, tTransform = 0, tStun = 0;
-    if (animating) {
+    while (animating) {
         const elapsed = timestamp - animStartTime;
         const p = Math.min(1, elapsed / animDurationMs);
         tMove = phaseT(p, TIMELINE.movement);
         tTransform = phaseT(p, TIMELINE.transform);
         tStun = phaseT(p, TIMELINE.stun);
 
-        if (p >= 1) {
-            animating = false;
-            if (playing) startTurn();
-        }
+        if (p < 1) break;
+        animating = false;
+        if (!playing) break;
+        startTurn();
     }
 
     resizeCanvas();
