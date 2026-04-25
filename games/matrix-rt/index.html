@@ -16,14 +16,17 @@ body { background: #1a1a2e; color: #e0e0e0; font-family: monospace; overflow: hi
 canvas { display: block; }
 #loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
     font-size: 18px; }
+#version { position: fixed; bottom: 4px; right: 8px; font-size: 11px; opacity: 0.4; }
 </style>
 </head>
 <body>
 <div id="loading">Loading WASM...</div>
 <div id="ui" style="display:none">
+    <button id="btnSpawn">+ Unit</button>
     <button id="btnStep">Step</button>
     <button id="btnPlay">Play</button>
     <button id="btnFast">Fast</button>
+    <button id="btnReset">Reset</button>
     <span id="turnLabel">Turn: 0</span>
 </div>
 <div id="info" style="display:none">
@@ -31,6 +34,7 @@ canvas { display: block; }
     <div id="transformCount"></div>
 </div>
 <canvas id="c"></canvas>
+<div id="version">v (0a7d500)</div>
 
 <script>
 // ── Config ──────────────────────────────────────────────────────────
@@ -49,11 +53,11 @@ const TIMELINE = {
 // Capability bit positions
 const CAP = {
     Move: 0, Evade: 1, Rotate: 2, TagRight: 3, TagLeft: 4,
-    TagAtRange: 5, Reflect: 6, Stun: 7, Block: 8
+    TagFwdAtRange: 5, BlockForward: 6, BlockRight: 7, BlockLeft: 8
 };
 
 const CAP_NAMES = ['move','evade','rotate','tag_right','tag_left',
-                   'tag_at_range','reflect','stun','block'];
+                   'tag_fwd_at_range','block_forward','block_right','block_left'];
 
 // Facing: 0=N, 1=E, 2=S, 3=W → rotation in degrees
 const FACING_DEG = [0, 90, 180, 270];
@@ -152,12 +156,15 @@ function updateViewUnits() {
 
         let vu = viewUnits[eid];
         if (!vu) {
-            vu = { eid, x: 0, y: 0, prevX: 0, prevY: 0,
+            // New unit — initialize prev to current so it doesn't interpolate from (0,0)
+            const nx = engine.get_unit_x(i);
+            const ny = engine.get_unit_y(i);
+            vu = { eid, x: nx, y: ny, prevX: nx, prevY: ny,
                    facing: 0, prevFacing: 0,
                    caps: 0, prevCaps: 0,
                    gained: 0, lost: 0,
                    transformed: false, stunned: false,
-                   reflectCd: false, blockCd: false };
+                   blockFwdCd: false, blockRightCd: false, blockLeftCd: false };
             viewUnits[eid] = vu;
         }
 
@@ -174,8 +181,9 @@ function updateViewUnits() {
         vu.caps = engine.get_unit_caps(i);
         vu.transformed = engine.get_unit_transformed(i) === 1;
         vu.stunned = engine.get_unit_stunned(i) === 1;
-        vu.reflectCd = engine.get_unit_reflect_cd(i) === 1;
-        vu.blockCd = engine.get_unit_block_cd(i) === 1;
+        vu.blockFwdCd = engine.get_unit_block_fwd_cd(i) === 1;
+        vu.blockRightCd = engine.get_unit_block_right_cd(i) === 1;
+        vu.blockLeftCd = engine.get_unit_block_left_cd(i) === 1;
 
         // Compute capability deltas
         vu.gained = vu.caps & ~vu.prevCaps;
@@ -391,8 +399,8 @@ function drawUnit(u, origin, tMove, tTransform, tStun) {
         ctx.stroke();
     });
 
-    // TagAtRange (triangle on forward tag circle)
-    drawCap(CAP.TagAtRange, (col) => {
+    // TagForwardAtRange (triangle on forward tag circle)
+    drawCap(CAP.TagFwdAtRange, (col) => {
         const ty = -half + 1;
         ctx.strokeStyle = col;
         ctx.lineWidth = 1;
@@ -404,33 +412,34 @@ function drawUnit(u, origin, tMove, tTransform, tStun) {
         ctx.stroke();
     });
 
-    // Reflect (inner circle in center)
-    drawCap(CAP.Reflect, (col) => {
-        const cd = u.reflectCd;
+    // BlockForward (line on top edge)
+    drawCap(CAP.BlockForward, (col) => {
+        ctx.strokeStyle = u.blockFwdCd ? COL_GRAY : col;
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(0, 0, bodyR * 0.8, 0, Math.PI * 2);
-        ctx.strokeStyle = cd ? COL_GRAY : col;
-        ctx.lineWidth = 1;
+        ctx.moveTo(-half * 0.8, -half);
+        ctx.lineTo(half * 0.8, -half);
         ctx.stroke();
     });
 
-    // Stun (double circle on tag)
-    drawCap(CAP.Stun, (col) => {
-        const ty = -half + capR + 1;
+    // BlockRight (line on right edge)
+    drawCap(CAP.BlockRight, (col) => {
+        ctx.strokeStyle = u.blockRightCd ? COL_GRAY : col;
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(0, ty, capR * 1.3, 0, Math.PI * 2);
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 1;
+        ctx.moveTo(half, -half * 0.8);
+        ctx.lineTo(half, half * 0.8);
         ctx.stroke();
     });
 
-    // Block (inner square in center)
-    drawCap(CAP.Block, (col) => {
-        const cd = u.blockCd;
-        const bs = bodyR * 0.7;
-        ctx.strokeStyle = cd ? COL_GRAY : col;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(-bs, -bs, bs * 2, bs * 2);
+    // BlockLeft (line on left edge)
+    drawCap(CAP.BlockLeft, (col) => {
+        ctx.strokeStyle = u.blockLeftCd ? COL_GRAY : col;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-half, -half * 0.8);
+        ctx.lineTo(-half, half * 0.8);
+        ctx.stroke();
     });
 
     ctx.restore();
@@ -450,38 +459,75 @@ function hexToRgb(hex) {
     return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
 }
 
-// ── Animation loop ──────────────────────────────────────────────────
+// ── Pending spawns ──────────────────────────────────────────────────
+function drawPendingSpawns(origin) {
+    if (!engine || playing) return;
+    const count = engine.get_pending_count();
+    if (count === 0) return;
+
+    const size = Math.max(4, CELL * 0.5);
+    const offset = (CELL - size) / 2;
+
+    for (let i = 0; i < count; i++) {
+        const gx = engine.get_pending_x(i);
+        const gy = engine.get_pending_y(i);
+        if (gx <= 0 || gy <= 0) continue;
+
+        const px = origin.offX + (gx - 1) * CELL + offset;
+        const py = origin.offY + (gy - 1) * CELL + offset;
+
+        ctx.save();
+        ctx.globalAlpha = 0.8;
+        // Filled translucent green square
+        ctx.fillStyle = COL_GREEN;
+        ctx.globalAlpha = 0.3;
+        ctx.fillRect(px, py, size, size);
+        // Bright border
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = COL_GREEN;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([3, 3]);
+        ctx.strokeRect(px, py, size, size);
+        ctx.setLineDash([]);
+        ctx.restore();
+    }
+}
+
+// ── Render loop (runs every frame) ──────────────────────────────────
 function render(timestamp) {
-    if (!animating) return;
+    if (!engine) { requestAnimationFrame(render); return; }
 
-    const elapsed = timestamp - animStartTime;
-    const p = Math.min(1, elapsed / animDurationMs);
+    // Compute animation phase progress
+    let tMove = 1, tTransform = 0, tStun = 0;
+    if (animating) {
+        const elapsed = timestamp - animStartTime;
+        const p = Math.min(1, elapsed / animDurationMs);
+        tMove = phaseT(p, TIMELINE.movement);
+        tTransform = phaseT(p, TIMELINE.transform);
+        tStun = phaseT(p, TIMELINE.stun);
 
-    const tMove = phaseT(p, TIMELINE.movement);
-    const tTag = phaseT(p, TIMELINE.tag);
-    const tTransform = phaseT(p, TIMELINE.transform);
-    const tStun = phaseT(p, TIMELINE.stun);
+        if (p >= 1) {
+            animating = false;
+            if (playing) startTurn();
+        }
+    }
 
     resizeCanvas();
     const origin = drawGrid();
 
     // Draw all units
-    for (const eid of Object.keys(viewUnits)) {
+    for (const eid of Object.keys(viewUnits))
         drawUnit(viewUnits[eid], origin, tMove, tTransform, tStun);
-    }
+
+    // Draw pending spawns (only when not playing)
+    drawPendingSpawns(origin);
 
     // HUD
-    const turn = engine.get_turn();
-    document.getElementById('turnLabel').textContent = `Turn: ${turn}`;
+    document.getElementById('turnLabel').textContent = `Turn: ${engine.get_turn()}`;
     document.getElementById('unitCount').textContent = `Units: ${engine.get_unit_count()}`;
     document.getElementById('transformCount').textContent = `Transformed: ${turnTransformCount}`;
 
-    if (p < 1) {
-        requestAnimationFrame(render);
-    } else {
-        animating = false;
-        if (playing) startTurn();
-    }
+    requestAnimationFrame(render);
 }
 
 function startTurn() {
@@ -493,12 +539,12 @@ function startTurn() {
     }
 
     engine.turn();
+    document.getElementById('btnSpawn').textContent = '+ Unit';
     updateViewUnits();
 
     animDurationMs = fastMode ? FAST_TURN_MS : TARGET_TURN_MS;
     animStartTime = performance.now();
     animating = true;
-    requestAnimationFrame(render);
 }
 
 // ── Controls ────────────────────────────────────────────────────────
@@ -506,6 +552,30 @@ function updateButtons() {
     document.getElementById('btnPlay').classList.toggle('active', playing && !fastMode);
     document.getElementById('btnFast').classList.toggle('active', fastMode && playing);
 }
+
+document.getElementById('btnReset').onclick = () => {
+    if (!engine) return;
+    playing = false;
+    animating = false;
+    updateButtons();
+    const params = new URLSearchParams(window.location.search);
+    const config = params.get('config') || 'default';
+    engine.init_with_config(config);
+    mapW = engine.get_map_x();
+    mapH = engine.get_map_y();
+    engine.turn();
+    viewUnits = {};
+    updateViewUnits();
+    document.getElementById('btnSpawn').textContent = '+ Unit';
+};
+
+document.getElementById('btnSpawn').onclick = () => {
+    if (!engine) return;
+    engine.spawn_unit();
+    const count = engine.get_pending_count();
+    document.getElementById('btnSpawn').textContent = count > 0
+        ? `+ Unit (${count})` : '+ Unit';
+};
 
 document.getElementById('btnStep').onclick = () => {
     playing = false;
@@ -528,14 +598,7 @@ document.getElementById('btnFast').onclick = () => {
     if (playing && !animating) startTurn();
 };
 
-window.addEventListener('resize', () => {
-    resizeCanvas();
-    if (!animating) {
-        const origin = drawGrid();
-        for (const eid of Object.keys(viewUnits))
-            drawUnit(viewUnits[eid], origin, 1, 0, 0);
-    }
-});
+window.addEventListener('resize', resizeCanvas);
 
 // ── Init ────────────────────────────────────────────────────────────
 async function init() {
@@ -554,11 +617,17 @@ async function init() {
         get_unit_transformed: Module.cwrap('wasm_get_unit_transformed', 'number', ['number']),
         get_unit_stunned: Module.cwrap('wasm_get_unit_stunned', 'number', ['number']),
         get_unit_entity_id: Module.cwrap('wasm_get_unit_entity_id', 'number', ['number']),
-        get_unit_reflect_cd: Module.cwrap('wasm_get_unit_reflect_cd', 'number', ['number']),
-        get_unit_block_cd: Module.cwrap('wasm_get_unit_block_cd', 'number', ['number']),
+        get_unit_block_fwd_cd: Module.cwrap('wasm_get_unit_block_fwd_cd', 'number', ['number']),
+        get_unit_block_right_cd: Module.cwrap('wasm_get_unit_block_right_cd', 'number', ['number']),
+        get_unit_block_left_cd: Module.cwrap('wasm_get_unit_block_left_cd', 'number', ['number']),
         get_map_x: Module.cwrap('wasm_get_map_x', 'number', []),
         get_map_y: Module.cwrap('wasm_get_map_y', 'number', []),
         is_game_over: Module.cwrap('wasm_is_game_over', 'number', []),
+        spawn_unit: Module.cwrap('wasm_spawn_unit', 'number', []),
+        get_pending_count: Module.cwrap('wasm_get_pending_count', 'number', []),
+        get_pending_x: Module.cwrap('wasm_get_pending_x', 'number', ['number']),
+        get_pending_y: Module.cwrap('wasm_get_pending_y', 'number', ['number']),
+        get_pending_caps: Module.cwrap('wasm_get_pending_caps', 'number', ['number']),
     };
 
     // Get config from URL params
@@ -583,17 +652,12 @@ async function init() {
 
         resizeCanvas();
 
-        // Run first turn to spawn units
+        // Run first turn (processes app_start)
         engine.turn();
         updateViewUnits();
 
-        // Draw initial state
-        const origin = drawGrid();
-        for (const eid of Object.keys(viewUnits))
-            drawUnit(viewUnits[eid], origin, 1, 0, 0);
-
-        document.getElementById('turnLabel').textContent = `Turn: ${engine.get_turn()}`;
-        document.getElementById('unitCount').textContent = `Units: ${engine.get_unit_count()}`;
+        // Start continuous render loop
+        requestAnimationFrame(render);
     });
 }
 
