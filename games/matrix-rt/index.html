@@ -5,7 +5,7 @@
 <title>Non-Abelian Tag</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #1a1a2e; color: #e0e0e0; font-family: monospace; overflow: hidden; }
+body { background: #000000; color: #e0e0e0; font-family: monospace; overflow: hidden; }
 #ui { position: fixed; top: 8px; left: 8px; z-index: 10; font-size: 13px; }
 #ui button { margin: 0 4px; padding: 4px 12px; background: #333; color: #e0e0e0;
     border: 1px solid #555; cursor: pointer; font-family: monospace; }
@@ -34,51 +34,38 @@ canvas { display: block; }
     <div id="transformCount"></div>
 </div>
 <canvas id="c"></canvas>
-<div id="version">v (0f8b8ab)</div>
+<div id="version">v (ec3d378)</div>
 
+<!-- Shared render code (CLAUDE.md "Browser Client Rendering Policy") -->
+<script src="lib/render.js"></script>
+<script src="lib/sprites.js"></script>
+<script src="lib/draw-unit.js"></script>
 <script>
+// CLIENT-PARITY: ignore updateViewUnits  — reads WASM cwrap exports, no REST equivalent
+// CLIENT-PARITY: ignore updatePendingSpawns  — reads WASM cwrap exports
 // ── Config ──────────────────────────────────────────────────────────
-const TARGET_TURN_MS = 500;
-const FAST_TURN_MS = 50;
+const TARGET_TURN_MS = 1600;
+const FAST_TURN_MS = 100;
 const CELL_MIN = 4;
 
-// Overlapping phase timeline (fraction of turn duration)
+// Phase diagram matches the REST client so the same drawUnit animations work.
 const TIMELINE = {
-    movement:  { start: 0.0, end: 1.0 },
-    tag:       { start: 0.0, end: 0.4 },
-    transform: { start: 0.4, end: 0.85 },
-    stun:      { start: 0.7, end: 1.0 },
+    movement:  { start: 0.0,   end: 0.375 },
+    rotate:    { start: 0.375, end: 0.5 },
+    tag:       { start: 0.5,   end: 0.625 },
+    transform: { start: 0.625, end: 1.0 },
 };
 
-// Capability bit positions
-const CAP = {
-    Move: 0, Evade: 1, Rotate: 2, TagRight: 3, TagLeft: 4,
-    TagFwdAtRange: 5, BlockForward: 6, BlockRight: 7, BlockLeft: 8
-};
-
-const CAP_NAMES = ['move','evade','rotate','tag_right','tag_left',
-                   'tag_fwd_at_range','block_forward','block_right','block_left'];
-
-// Facing: 0=N, 1=E, 2=S, 3=W → rotation in degrees
-const FACING_DEG = [0, 90, 180, 270];
-
-// Colors
-const COL_BG      = '#1a1a2e';
-const COL_GRID    = '#252540';
-const COL_BODY    = '#8888aa';
-const COL_CAP     = '#ccccdd';
-const COL_TAG_FWD = '#9999bb';
-const COL_RED     = '#dd4444';
-const COL_GREEN   = '#44cc66';
-const COL_ORANGE  = '#ee8833';
-const COL_GRAY    = '#555566';
-const COL_STUN_BG = '#aa7733';
+// Color palette — defaults from lib/render.js. The WASM bundle has no server
+// to load colors.yaml from; if needed the color file can be inlined later.
+const COL = Object.assign({}, COL_DEFAULTS);
 
 // ── State ───────────────────────────────────────────────────────────
 let engine = null;
 let mapW = 0, mapH = 0;
 let CELL = 32;
-let viewUnits = {};  // keyed by entity_id
+let viewUnits = {};
+let pendingSpawns = [];
 let playing = false;
 let fastMode = false;
 let animating = false;
@@ -89,61 +76,11 @@ let turnTransformCount = 0;
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
-// ── Sprites (static bitmaps) ────────────────────────────────────────
-const sprites = {};
-let spritesLoaded = 0;
-let spritesTotal = 0;
-
-const STATIC_BITMAPS = [
-    'body_default','body_tagged','body_disabled',
-    'tag_capability_default','tag_capability_active',
-    'move_capability_default','move_capability_disabled',
-    'evade_capability_default','evade_capability_disabled',
-    'rotate_capability_default','rotate_capability_disabled',
-    'tag_at_range_capability_default','tag_at_range_capability_disabled',
-    'reflect_capability_default','reflect_capability_disabled',
-    'stun_capability_default','stun_capability_disabled',
-    'block_capability_default','block_capability_disabled'
-];
-
-const ANIM_DIRS = [];
-for (const name of CAP_NAMES) {
-    ANIM_DIRS.push(name + '_add');
-    ANIM_DIRS.push(name + '_remove');
-}
-ANIM_DIRS.push('body_transform');
-const ANIM_FRAMES = 8;
-
-function loadSprites(basePath, cb) {
-    // Static bitmaps
-    spritesTotal = STATIC_BITMAPS.length + ANIM_DIRS.length * ANIM_FRAMES;
-    spritesLoaded = 0;
-
-    function onLoad() {
-        spritesLoaded++;
-        if (spritesLoaded >= spritesTotal) cb();
-    }
-
-    for (const name of STATIC_BITMAPS) {
-        const img = new Image();
-        img.onload = img.onerror = onLoad;
-        img.src = basePath + '/bitmaps/' + name + '.png';
-        sprites[name] = img;
-    }
-
-    // Animation frame sequences
-    for (const dir of ANIM_DIRS) {
-        sprites[dir] = [];
-        for (let f = 0; f < ANIM_FRAMES; f++) {
-            const img = new Image();
-            img.onload = img.onerror = onLoad;
-            img.src = basePath + '/sprites/' + dir + '/frame_' + String(f).padStart(2,'0') + '.png';
-            sprites[dir].push(img);
-        }
-    }
-}
-
-// ── View Units ──────────────────────────────────────────────────────
+// ── View units (WASM-export side) ───────────────────────────────────
+// The WASM exports today provide: x, y, facing, caps, transformed, stunned,
+// entity_id, block_*_cd. They do NOT expose intent/activation markers, evade
+// turns, or per-direction tag flags. drawUnit() in lib/draw-unit.js
+// feature-detects these — undefined fields suppress their animations cleanly.
 function updateViewUnits() {
     if (!engine) return;
     const count = engine.get_unit_count();
@@ -156,7 +93,6 @@ function updateViewUnits() {
 
         let vu = viewUnits[eid];
         if (!vu) {
-            // New unit — initialize prev to current so it doesn't interpolate from (0,0)
             const nx = engine.get_unit_x(i);
             const ny = engine.get_unit_y(i);
             vu = { eid, x: nx, y: ny, prevX: nx, prevY: ny,
@@ -164,350 +100,71 @@ function updateViewUnits() {
                    caps: 0, prevCaps: 0,
                    gained: 0, lost: 0,
                    transformed: false, stunned: false,
-                   blockFwdCd: false, blockRightCd: false, blockLeftCd: false };
+                   blockFwdTurns: 0, blockRightTurns: 0, blockLeftTurns: 0, evadeTurns: 0 };
             viewUnits[eid] = vu;
         }
 
-        // Save previous state
-        vu.prevX = vu.x;
-        vu.prevY = vu.y;
+        vu.prevX = vu.x; vu.prevY = vu.y;
         vu.prevFacing = vu.facing;
         vu.prevCaps = vu.caps;
 
-        // Update current state
         vu.x = engine.get_unit_x(i);
         vu.y = engine.get_unit_y(i);
         vu.facing = engine.get_unit_facing(i);
         vu.caps = engine.get_unit_caps(i);
         vu.transformed = engine.get_unit_transformed(i) === 1;
         vu.stunned = engine.get_unit_stunned(i) === 1;
-        vu.blockFwdCd = engine.get_unit_block_fwd_cd(i) === 1;
-        vu.blockRightCd = engine.get_unit_block_right_cd(i) === 1;
-        vu.blockLeftCd = engine.get_unit_block_left_cd(i) === 1;
 
-        // Compute capability deltas
+        // Translate the WASM 0/1 cooldown booleans into the {turns} convention
+        // drawUnit expects. We only know "in cooldown now or not", so map true→1.
+        // Without the engine exposing a turns counter, we can't distinguish
+        // "fired this turn" (2) from "still cooling down" (1) — drawUnit will
+        // render cooldown tint either way, which is correct visually.
+        vu.blockFwdTurns   = engine.get_unit_block_fwd_cd(i)   === 1 ? 1 : 0;
+        vu.blockRightTurns = engine.get_unit_block_right_cd(i) === 1 ? 1 : 0;
+        vu.blockLeftTurns  = engine.get_unit_block_left_cd(i)  === 1 ? 1 : 0;
+        vu.evadeTurns = 0;
+
         vu.gained = vu.caps & ~vu.prevCaps;
         vu.lost = vu.prevCaps & ~vu.caps;
 
         if (vu.transformed) turnTransformCount++;
 
-        // Handle toroidal wrap (if distance > half map, it wrapped)
+        // Toroidal wrap: snap prev to current if jumped > half map.
         if (Math.abs(vu.x - vu.prevX) > mapW / 2) vu.prevX = vu.x;
         if (Math.abs(vu.y - vu.prevY) > mapH / 2) vu.prevY = vu.y;
     }
 
-    // Remove dead units (shouldn't happen in matrix, but safety)
     for (const eid of Object.keys(viewUnits)) {
         if (!seen.has(Number(eid))) delete viewUnits[eid];
     }
 }
 
-// ── Rendering ───────────────────────────────────────────────────────
-function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    if (mapW > 0 && mapH > 0) {
-        CELL = Math.max(CELL_MIN, Math.min(
-            Math.floor((canvas.width - 20) / mapW),
-            Math.floor((canvas.height - 50) / mapH)
-        ));
-    }
-}
-
-function phaseT(p, phase) {
-    const { start, end } = phase;
-    if (p < start) return 0;
-    if (p >= end) return 1;
-    return (p - start) / (end - start);
-}
-
-function drawGrid() {
-    ctx.fillStyle = COL_BG;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const offX = Math.floor((canvas.width - mapW * CELL) / 2);
-    const offY = Math.floor((canvas.height - mapH * CELL) / 2) + 20;
-
-    ctx.strokeStyle = COL_GRID;
-    ctx.lineWidth = 0.5;
-    for (let x = 0; x <= mapW; x++) {
-        ctx.beginPath();
-        ctx.moveTo(offX + x * CELL, offY);
-        ctx.lineTo(offX + x * CELL, offY + mapH * CELL);
-        ctx.stroke();
-    }
-    for (let y = 0; y <= mapH; y++) {
-        ctx.beginPath();
-        ctx.moveTo(offX, offY + y * CELL);
-        ctx.lineTo(offX + mapW * CELL, offY + y * CELL);
-        ctx.stroke();
-    }
-
-    return { offX, offY };
-}
-
-function drawUnit(u, origin, tMove, tTransform, tStun) {
-    // Interpolate position
-    const ix = u.prevX + (u.x - u.prevX) * tMove;
-    const iy = u.prevY + (u.y - u.prevY) * tMove;
-    const px = origin.offX + (ix - 1) * CELL;
-    const py = origin.offY + (iy - 1) * CELL;
-
-    const size = CELL - 1;
-    if (size < 2) return;
-
-    ctx.save();
-    ctx.translate(px + size / 2, py + size / 2);
-    ctx.rotate(FACING_DEG[u.facing] * Math.PI / 180);
-
-    const half = size / 2;
-
-    // Body rectangle
-    if (u.transformed && tTransform > 0 && tTransform < 1) {
-        // Flash red during transform
-        const intensity = 1 - Math.abs(2 * tTransform - 1);
-        ctx.fillStyle = `rgba(220, 50, 50, ${0.6 * intensity})`;
-        ctx.fillRect(-half, -half, size, size);
-        ctx.strokeStyle = COL_BODY;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(-half, -half, size, size);
-    } else if (u.stunned && tStun > 0) {
-        ctx.fillStyle = COL_STUN_BG;
-        ctx.globalAlpha = 0.5 + 0.3 * tStun;
-        ctx.fillRect(-half, -half, size, size);
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = COL_GRAY;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(-half, -half, size, size);
-    } else {
-        ctx.strokeStyle = COL_BODY;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(-half, -half, size, size);
-    }
-
-    // Scale factor for capability shapes
-    const capR = Math.max(2, size * 0.12);
-    const bodyR = Math.max(3, size * 0.17);
-
-    // Tag-forward circle (innate, always present) — at top
-    ctx.beginPath();
-    ctx.arc(0, -half + capR + 1, capR, 0, Math.PI * 2);
-    ctx.strokeStyle = COL_TAG_FWD;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // Draw capabilities
-    const isStunned = u.stunned;
-
-    function drawCap(bit, drawFn) {
-        const has = (u.caps >> bit) & 1;
-        const gained = (u.gained >> bit) & 1;
-        const lost = (u.lost >> bit) & 1;
-
-        if (gained && tTransform > 0 && tTransform < 1) {
-            // Add animation: scale up with green tint
-            const s = 0.1 + 0.9 * tTransform;
-            const alpha = tTransform;
-            const greenMix = 1 - tTransform;
-            ctx.save();
-            ctx.scale(s, s);
-            ctx.globalAlpha = alpha;
-            drawFn(isStunned ? COL_GRAY : lerpColor(COL_GREEN, COL_CAP, tTransform));
-            ctx.globalAlpha = 1;
-            ctx.restore();
-        } else if (lost && tTransform > 0 && tTransform < 1) {
-            // Remove animation: shrink with red tint
-            const s = 1 - 0.9 * tTransform;
-            const alpha = 1 - tTransform;
-            ctx.save();
-            ctx.scale(s, s);
-            ctx.globalAlpha = alpha;
-            drawFn(lerpColor(COL_CAP, COL_RED, tTransform));
-            ctx.globalAlpha = 1;
-            ctx.restore();
-        } else if (has) {
-            drawFn(isStunned ? COL_GRAY : COL_CAP);
-        }
-    }
-
-    // Move (triangles at bottom)
-    drawCap(CAP.Move, (col) => {
-        const ty = half - capR - 1;
-        ctx.fillStyle = col;
-        ctx.beginPath();
-        ctx.moveTo(-capR * 1.5, ty - capR);
-        ctx.lineTo(-capR * 0.5, ty - capR);
-        ctx.lineTo(-capR, ty + capR * 0.5);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(capR * 0.5, ty - capR);
-        ctx.lineTo(capR * 1.5, ty - capR);
-        ctx.lineTo(capR, ty + capR * 0.5);
-        ctx.fill();
-    });
-
-    // Evade (downward arrow at bottom)
-    drawCap(CAP.Evade, (col) => {
-        const ty = half - capR * 2;
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(0, ty);
-        ctx.lineTo(0, ty + capR * 2);
-        ctx.stroke();
-        ctx.fillStyle = col;
-        ctx.beginPath();
-        ctx.moveTo(0, ty + capR * 2.5);
-        ctx.lineTo(-capR, ty + capR * 1.5);
-        ctx.lineTo(capR, ty + capR * 1.5);
-        ctx.fill();
-    });
-
-    // Rotate (curved arrow in center)
-    drawCap(CAP.Rotate, (col) => {
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(0, 0, bodyR, Math.PI * 0.8, Math.PI * 2.1);
-        ctx.stroke();
-        // Arrowhead
-        const ax = bodyR * Math.cos(Math.PI * 2.1);
-        const ay = bodyR * Math.sin(Math.PI * 2.1);
-        ctx.fillStyle = col;
-        ctx.beginPath();
-        ctx.moveTo(ax + capR * 0.5, ay);
-        ctx.lineTo(ax - capR * 0.3, ay - capR * 0.6);
-        ctx.lineTo(ax - capR * 0.3, ay + capR * 0.4);
-        ctx.fill();
-    });
-
-    // TagRight (circle on right side)
-    drawCap(CAP.TagRight, (col) => {
-        ctx.beginPath();
-        ctx.arc(half - capR - 1, 0, capR, 0, Math.PI * 2);
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-    });
-
-    // TagLeft (circle on left side)
-    drawCap(CAP.TagLeft, (col) => {
-        ctx.beginPath();
-        ctx.arc(-half + capR + 1, 0, capR, 0, Math.PI * 2);
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-    });
-
-    // TagForwardAtRange (triangle on forward tag circle)
-    drawCap(CAP.TagFwdAtRange, (col) => {
-        const ty = -half + 1;
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(0, ty - capR);
-        ctx.lineTo(-capR * 0.8, ty + capR * 0.3);
-        ctx.lineTo(capR * 0.8, ty + capR * 0.3);
-        ctx.closePath();
-        ctx.stroke();
-    });
-
-    // BlockForward (line on top edge)
-    drawCap(CAP.BlockForward, (col) => {
-        ctx.strokeStyle = u.blockFwdCd ? COL_GRAY : col;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(-half * 0.8, -half);
-        ctx.lineTo(half * 0.8, -half);
-        ctx.stroke();
-    });
-
-    // BlockRight (line on right edge)
-    drawCap(CAP.BlockRight, (col) => {
-        ctx.strokeStyle = u.blockRightCd ? COL_GRAY : col;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(half, -half * 0.8);
-        ctx.lineTo(half, half * 0.8);
-        ctx.stroke();
-    });
-
-    // BlockLeft (line on left edge)
-    drawCap(CAP.BlockLeft, (col) => {
-        ctx.strokeStyle = u.blockLeftCd ? COL_GRAY : col;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(-half, -half * 0.8);
-        ctx.lineTo(-half, half * 0.8);
-        ctx.stroke();
-    });
-
-    ctx.restore();
-}
-
-function lerpColor(a, b, t) {
-    // Parse hex colors and lerp
-    const pa = hexToRgb(a), pb = hexToRgb(b);
-    const r = Math.round(pa.r + (pb.r - pa.r) * t);
-    const g = Math.round(pa.g + (pb.g - pa.g) * t);
-    const bl = Math.round(pa.b + (pb.b - pa.b) * t);
-    return `rgb(${r},${g},${bl})`;
-}
-
-function hexToRgb(hex) {
-    const v = parseInt(hex.slice(1), 16);
-    return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
-}
-
-// ── Pending spawns ──────────────────────────────────────────────────
-function drawPendingSpawns(origin) {
-    if (!engine || playing) return;
+function updatePendingSpawns() {
+    pendingSpawns = [];
+    if (!engine) return;
     const count = engine.get_pending_count();
-    if (count === 0) return;
-
-    const size = Math.max(4, CELL * 0.5);
-    const offset = (CELL - size) / 2;
-
     for (let i = 0; i < count; i++) {
-        const gx = engine.get_pending_x(i);
-        const gy = engine.get_pending_y(i);
-        if (gx <= 0 || gy <= 0) continue;
-
-        const px = origin.offX + (gx - 1) * CELL + offset;
-        const py = origin.offY + (gy - 1) * CELL + offset;
-
-        ctx.save();
-        ctx.globalAlpha = 0.8;
-        // Filled translucent green square
-        ctx.fillStyle = COL_GREEN;
-        ctx.globalAlpha = 0.3;
-        ctx.fillRect(px, py, size, size);
-        // Bright border
-        ctx.globalAlpha = 0.9;
-        ctx.strokeStyle = COL_GREEN;
-        ctx.lineWidth = 2;
-        ctx.setLineDash([3, 3]);
-        ctx.strokeRect(px, py, size, size);
-        ctx.setLineDash([]);
-        ctx.restore();
+        pendingSpawns.push({
+            x: engine.get_pending_x(i),
+            y: engine.get_pending_y(i),
+            caps: engine.get_pending_caps(i),
+        });
     }
 }
 
-// ── Render loop (runs every frame) ──────────────────────────────────
+// ── Render loop ─────────────────────────────────────────────────────
 function render(timestamp) {
     if (!engine) { requestAnimationFrame(render); return; }
 
-    // Compute animation phase progress. Loop so that when one turn's
-    // animation finishes and the next is started in the same frame,
-    // we recompute against the new animStartTime instead of leaving
-    // tMove at 1 (which would draw units one cell ahead for one frame).
-    let tMove = 1, tTransform = 0, tStun = 0;
+    let tMove = 1, tRotate = 1, tTag = 1, tTransform = 1;
     while (animating) {
         const elapsed = timestamp - animStartTime;
         const p = Math.min(1, elapsed / animDurationMs);
         tMove = phaseT(p, TIMELINE.movement);
+        tRotate = phaseT(p, TIMELINE.rotate);
+        tTag = phaseT(p, TIMELINE.tag);
         tTransform = phaseT(p, TIMELINE.transform);
-        tStun = phaseT(p, TIMELINE.stun);
 
         if (p < 1) break;
         animating = false;
@@ -515,17 +172,13 @@ function render(timestamp) {
         startTurn();
     }
 
-    resizeCanvas();
-    const origin = drawGrid();
-
-    // Draw all units
+    CELL = resizeCanvas(canvas, mapW, mapH, CELL_MIN);
+    const origin = drawGrid(ctx, canvas, mapW, mapH, CELL, COL);
+    const phases = { tMove, tRotate, tTag, tTransform };
     for (const eid of Object.keys(viewUnits))
-        drawUnit(viewUnits[eid], origin, tMove, tTransform, tStun);
+        drawUnit(ctx, viewUnits[eid], origin, CELL, phases);
+    if (!playing) drawPendingSpawns(ctx, origin, pendingSpawns, CELL, COL);
 
-    // Draw pending spawns (only when not playing)
-    drawPendingSpawns(origin);
-
-    // HUD
     document.getElementById('turnLabel').textContent = `Turn: ${engine.get_turn()}`;
     document.getElementById('unitCount').textContent = `Units: ${engine.get_unit_count()}`;
     document.getElementById('transformCount').textContent = `Transformed: ${turnTransformCount}`;
@@ -544,6 +197,7 @@ function startTurn() {
     engine.turn();
     document.getElementById('btnSpawn').textContent = '+ Unit';
     updateViewUnits();
+    updatePendingSpawns();
 
     animDurationMs = fastMode ? FAST_TURN_MS : TARGET_TURN_MS;
     animStartTime = performance.now();
@@ -569,13 +223,15 @@ document.getElementById('btnReset').onclick = () => {
     engine.turn();
     viewUnits = {};
     updateViewUnits();
+    updatePendingSpawns();
     document.getElementById('btnSpawn').textContent = '+ Unit';
 };
 
 document.getElementById('btnSpawn').onclick = () => {
     if (!engine) return;
     engine.spawn_unit();
-    const count = engine.get_pending_count();
+    updatePendingSpawns();
+    const count = pendingSpawns.length;
     document.getElementById('btnSpawn').textContent = count > 0
         ? `+ Unit (${count})` : '+ Unit';
 };
@@ -601,7 +257,9 @@ document.getElementById('btnFast').onclick = () => {
     if (playing && !animating) startTurn();
 };
 
-window.addEventListener('resize', resizeCanvas);
+window.addEventListener('resize', () => { CELL = resizeCanvas(canvas, mapW, mapH, CELL_MIN); });
+window.addEventListener('error', (e) => showFatal(e.error || e.message));
+window.addEventListener('unhandledrejection', (e) => showFatal(e.reason));
 
 // ── Init ────────────────────────────────────────────────────────────
 async function init() {
@@ -633,7 +291,6 @@ async function init() {
         get_pending_caps: Module.cwrap('wasm_get_pending_caps', 'number', ['number']),
     };
 
-    // Get config from URL params
     const params = new URLSearchParams(window.location.search);
     const config = params.get('config') || 'default';
 
@@ -648,23 +305,23 @@ async function init() {
     mapH = engine.get_map_y();
 
     document.getElementById('loading').textContent = 'Loading sprites...';
-    loadSprites('./assets', () => {
-        document.getElementById('loading').style.display = 'none';
-        document.getElementById('ui').style.display = '';
-        document.getElementById('info').style.display = '';
+    await loadSprites('assets/bitmaps');
+    buildTints(COL);
 
-        resizeCanvas();
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('ui').style.display = '';
+    document.getElementById('info').style.display = '';
 
-        // Run first turn (processes app_start)
-        engine.turn();
-        updateViewUnits();
+    CELL = resizeCanvas(canvas, mapW, mapH, CELL_MIN);
 
-        // Start continuous render loop
-        requestAnimationFrame(render);
-    });
+    // Run first turn (processes app_start)
+    engine.turn();
+    updateViewUnits();
+    updatePendingSpawns();
+
+    requestAnimationFrame(render);
 }
 
-// Load WASM module
 const script = document.createElement('script');
 script.src = './flecs-ecs.js';
 script.onload = init;
