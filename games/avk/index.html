@@ -222,9 +222,23 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <option value="wasm_38x" class="debug-only" hidden>608×342</option>
     </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
-    <div id="version">v0.1.0 (0f8b8ab)</div>
+    <div id="version">v0.1.0 (14928ea)</div>
 </div>
 
+<script>
+// AVK has TWO clients (wasm = instant render, wasm-rt = phase-animated)
+// that share UI chrome and helper utilities via lib/ but differ in rendering
+// model by design. The parity check below acknowledges that differentiation;
+// extracting the rendering pipelines would conflate two intentional approaches.
+// See sandboxes/avk/CLAUDE.md "Two clients, two paradigms" for the rationale.
+//
+// CLIENT-PARITY: ignore render        — instant immediate-mode render after each turn
+// CLIENT-PARITY: ignore tick          — wasm-only autoplay loop
+// CLIENT-PARITY: ignore startAutoPlay — wasm-only setInterval autoplay
+// CLIENT-PARITY: ignore elapsed       — load-progress helper
+// CLIENT-PARITY: ignore markActive    — load-step UI helper
+// CLIENT-PARITY: ignore markDone      — load-step UI helper
+</script>
 <script src="flecs-ecs.js"></script>
 <script src="/lib/controls.js"></script>
 <script src="/lib/layout.js"></script>
