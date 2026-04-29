@@ -22,6 +22,7 @@ canvas { display: block; }
 <body>
 <div id="loading">Loading WASM...</div>
 <div id="ui" style="display:none">
+    <button id="btnUnspawn">- Unit</button>
     <button id="btnSpawn">+ Unit</button>
     <button id="btnStep">Step</button>
     <button id="btnPlay">Play</button>
@@ -34,7 +35,7 @@ canvas { display: block; }
     <div id="transformCount"></div>
 </div>
 <canvas id="c"></canvas>
-<div id="version">v (f58968f)</div>
+<div id="version">v (0b7bd51)</div>
 
 <!-- Shared render code (CLAUDE.md "Browser Client Rendering Policy") -->
 <script src="lib/render.js"></script>
@@ -43,10 +44,13 @@ canvas { display: block; }
 <script>
 // CLIENT-PARITY: ignore updateViewUnits  — reads WASM cwrap exports, no REST equivalent
 // CLIENT-PARITY: ignore updatePendingSpawns  — reads WASM cwrap exports
+// CLIENT-PARITY: ignore applyDefaultSpawns  — uses WASM cwrap; REST queues via WS
+// CLIENT-PARITY: ignore refreshSpawnButton  — local helper (REST sets button inline)
 // ── Config ──────────────────────────────────────────────────────────
 const TARGET_TURN_MS = 1600;
 const FAST_TURN_MS = 100;
 const CELL_MIN = 4;
+const DEFAULT_INITIAL_SPAWNS = 40;
 
 // Phase diagram matches the REST client so the same drawUnit animations work.
 const TIMELINE = {
@@ -210,6 +214,14 @@ function updateButtons() {
     document.getElementById('btnFast').classList.toggle('active', fastMode && playing);
 }
 
+function applyDefaultSpawns() {
+    // No scenario loaded → queue DEFAULT_INITIAL_SPAWNS pending spawns so the
+    // game opens with `+ Unit (40)` and 40 green markers on the grid.
+    for (let i = 0; i < DEFAULT_INITIAL_SPAWNS; i++) engine.spawn_unit();
+    updatePendingSpawns();
+    refreshSpawnButton();
+}
+
 document.getElementById('btnReset').onclick = () => {
     if (!engine) return;
     playing = false;
@@ -220,20 +232,29 @@ document.getElementById('btnReset').onclick = () => {
     engine.init_with_config(config);
     mapW = engine.get_map_x();
     mapH = engine.get_map_y();
-    engine.turn();
     viewUnits = {};
     updateViewUnits();
-    updatePendingSpawns();
-    document.getElementById('btnSpawn').textContent = '+ Unit';
+    applyDefaultSpawns();
 };
+
+function refreshSpawnButton() {
+    const count = pendingSpawns.length;
+    document.getElementById('btnSpawn').textContent = count > 0
+        ? `+ Unit (${count})` : '+ Unit';
+}
 
 document.getElementById('btnSpawn').onclick = () => {
     if (!engine) return;
     engine.spawn_unit();
     updatePendingSpawns();
-    const count = pendingSpawns.length;
-    document.getElementById('btnSpawn').textContent = count > 0
-        ? `+ Unit (${count})` : '+ Unit';
+    refreshSpawnButton();
+};
+
+document.getElementById('btnUnspawn').onclick = () => {
+    if (!engine) return;
+    engine.unspawn_unit();
+    updatePendingSpawns();
+    refreshSpawnButton();
 };
 
 document.getElementById('btnStep').onclick = () => {
@@ -285,6 +306,7 @@ async function init() {
         get_map_y: Module.cwrap('wasm_get_map_y', 'number', []),
         is_game_over: Module.cwrap('wasm_is_game_over', 'number', []),
         spawn_unit: Module.cwrap('wasm_spawn_unit', 'number', []),
+        unspawn_unit: Module.cwrap('wasm_unspawn_unit', 'number', []),
         get_pending_count: Module.cwrap('wasm_get_pending_count', 'number', []),
         get_pending_x: Module.cwrap('wasm_get_pending_x', 'number', ['number']),
         get_pending_y: Module.cwrap('wasm_get_pending_y', 'number', ['number']),
@@ -314,10 +336,11 @@ async function init() {
 
     CELL = resizeCanvas(canvas, mapW, mapH, CELL_MIN);
 
-    // Run first turn (processes app_start)
-    engine.turn();
+    // Don't run the first turn yet — leaving SpawnRequests pending so the user
+    // sees "+ Unit (40)" and 40 green markers on load. The first Step turn
+    // materializes them.
     updateViewUnits();
-    updatePendingSpawns();
+    applyDefaultSpawns();
 
     requestAnimationFrame(render);
 }
