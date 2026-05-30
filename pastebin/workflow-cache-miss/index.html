@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workflow cache-miss reproduction</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { max-width: 820px; margin: 2.5rem auto; padding: 0 1.1rem;
+         font: 16px/1.6 -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+  h1 { font-size: 1.7rem; margin-bottom: .2rem; }
+  h2 { margin-top: 2rem; border-bottom: 1px solid #8884; padding-bottom: .25rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  code { background: #8881; padding: .1em .35em; border-radius: 4px; }
+  pre { background: #8881; padding: .8rem 1rem; border-radius: 7px; overflow-x: auto; font-size: 13.5px; }
+  table { border-collapse: collapse; width: 100%; margin: .7rem 0; font-size: 14.5px; }
+  th, td { border: 1px solid #8884; padding: .35rem .6rem; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  .lead { font-size: 1.05rem; color: #444; }
+  @media (prefers-color-scheme: dark) { .lead { color: #bbb; } }
+  .files a { margin-right: 1rem; }
+  .hit { font-weight: 600; }
+  blockquote { border-left: 3px solid #8886; margin: 1rem 0; padding: .2rem 0 .2rem 1rem; color: #555; }
+  @media (prefers-color-scheme: dark) { blockquote { color: #aaa; } }
+</style>
+</head>
+<body>
+
+<h1>Workflow cache-miss: parallel lanes don't share prompt cache</h1>
+<p class="lead">A reproduction kit for a Claude Code Workflow-tool inefficiency. Parallel sibling
+subagents ("lanes") each <strong>re-create</strong> the entire shared prompt prefix instead of
+reading it from cache &mdash; multiplying the shared-payload cost by ~N for an N-lane fan-out.</p>
+
+<p>Filed upstream: <a href="https://github.com/anthropics/claude-code/issues/63981">anthropics/claude-code#63981</a></p>
+
+<h2>The finding</h2>
+<p>Anthropic's prompt cache is cross-request (keyed on prefix + org, ~5-min TTL), so identical
+prefixes across concurrently-firing lanes <em>could</em> share: the first lane creates the cache
+entry, the rest read it. They don't. Sibling lanes share only a small (~10k-token) fixed harness
+shell; everything beyond that &mdash; shared instructions in the user message <em>and</em> identical
+system-prompt content &mdash; is paid at the 1.25&times; <code>cache_creation</code> rate once
+<strong>per lane</strong> (vs the 0.1&times; <code>cache_read</code> rate it would cost if shared).</p>
+
+<h2>Probe A &mdash; shared prefix in the user message</h2>
+<p>A ~14k-token identical block at the front of each lane's <code>agent()</code> prompt, plus a
+pre-warm pass, then a 3-lane fan-out.</p>
+<table>
+<tr><th>agent</th><th>cache_create</th><th>cache_read</th></tr>
+<tr><td>prewarm</td><td>~39.7k</td><td>~8.7k</td></tr>
+<tr><td>lane-0</td><td class="hit">~38.7k</td><td>~9.7k</td></tr>
+<tr><td>lane-1</td><td class="hit">~38.7k</td><td>~9.7k</td></tr>
+<tr><td>lane-2</td><td class="hit">~38.7k</td><td>~9.7k</td></tr>
+</table>
+<p>The shared block is cache-<em>created</em> 4 times. Lanes read only the ~10k shell, never the
+shared prefix. Cause: <code>agent()</code> takes a single prompt string, so the shared head and the
+per-lane tail are one cache unit that differs per lane &mdash; no breakpoint can sit between them.</p>
+
+<h2>Probe B &mdash; shared content in the system prompt</h2>
+<p>Relies on the large fixed system prompt of a built-in agent type (the surface most likely to
+share). Pre-warm, then a 3-lane fan-out of the same type.</p>
+<table>
+<tr><th>agent</th><th>cache_create</th><th>cache_read</th></tr>
+<tr><td>prewarm</td><td>~18.9k</td><td>~8.7k</td></tr>
+<tr><td>lane-0</td><td class="hit">~17.6k</td><td>~10k</td></tr>
+<tr><td>lane-1</td><td class="hit">~17.6k</td><td>~10k</td></tr>
+<tr><td>lane-2</td><td class="hit">~17.6k</td><td>~10k</td></tr>
+</table>
+<p>Even the system prompt is re-created per sibling lane. Only the ~10k shell is shared.</p>
+
+<blockquote>Cross-lane "create-once" is not achievable in the Workflow tool today &mdash; neither
+user-message nor system-prompt content is shared across sibling lanes. Within a single lane,
+multi-turn caching works fine (<code>cache_read</code> dominates that lane's own turns); the gap is
+specifically cross-sibling.</blockquote>
+
+<h2>Reproduce</h2>
+<ol>
+<li>Launch a probe with the Workflow tool: <code>Workflow({ scriptPath: ".../probe-a-prefix-sharing.js" })</code> (and the B probe). Each runs 1 pre-warm + 3 single-turn lanes.</li>
+<li>Find the transcripts at <code>&lt;session-project-dir&gt;/subagents/workflows/&lt;wf-id&gt;/agent-*.jsonl</code> (the launch result prints this path).</li>
+<li>Sum each agent's <code>cache_creation_input_tokens</code> vs <code>cache_read_input_tokens</code>:</li>
+</ol>
+<pre>import json, glob, sys
+for f in sorted(glob.glob(sys.argv[1] + "/agent-*.jsonl")):
+    ci = cr = 0
+    for line in open(f, encoding="utf-8"):
+        try: o = json.loads(line)
+        except: continue
+        m = o.get("message") if isinstance(o, dict) else None
+        u = (m or {}).get("usage") if isinstance(m, dict) else None
+        if isinstance(u, dict):
+            ci += u.get("cache_creation_input_tokens", 0)
+            cr += u.get("cache_read_input_tokens", 0)
+    print(f, "cache_create=", ci, "cache_read=", cr)</pre>
+
+<h2>Why it matters</h2>
+<p><code>cache_creation</code> bills at 1.25&times; input, <code>cache_read</code> at 0.1&times;.
+With sharing, an N-lane fan-out over a shared prefix would pay ~1&times; create + (N&minus;1)&times;
+read; without it, ~N&times; create. In a real multi-file audit workflow each lane re-created
+~200&ndash;250k tokens, much of it identical shared criteria &mdash; an avoidable usage multiplier
+that grows linearly with lane count.</p>
+
+<h2>Files</h2>
+<p class="files">
+  <a href="CLAUDE.md">CLAUDE.md</a>
+  <a href="probe-a-prefix-sharing.js">probe-a-prefix-sharing.js</a>
+  <a href="probe-b-system-prompt.js">probe-b-system-prompt.js</a>
+</p>
+<p style="color:#888;font-size:13px">Measured on Claude Code 2.1.158 (Windows). Exact counts vary with harness version; the shape (lane cache_create &asymp; prewarm cache_create) is the reproducible signal.</p>
+
+</body>
+</html>
