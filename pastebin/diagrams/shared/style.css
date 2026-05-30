@@ -1,0 +1,46 @@
+/* Shared styling for both navigation models. */
+:root{
+  --bg:#020617; --panel:#0b1220; --panel2:#0f172a; --border:#1e293b;
+  --text:#e2e8f0; --muted:#94a3b8; --dim:#64748b;
+  --cyan:#22d3ee; --emerald:#34d399; --violet:#a78bfa; --amber:#fbbf24; --rose:#fb7185;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'JetBrains Mono',ui-monospace,monospace;background:var(--bg);color:var(--text);line-height:1.5}
+a{color:var(--cyan);text-decoration:none} a:hover{text-decoration:underline}
+
+/* ---- shared header / skill nav ---- */
+.kit-head{padding:1rem 1.3rem .85rem;border-bottom:1px solid var(--border);background:var(--panel)}
+.kit-title{font-size:1.15rem;letter-spacing:-.02em;display:flex;align-items:center;gap:.55rem}
+.kit-title .dot{width:10px;height:10px;border-radius:50%;background:var(--cyan);animation:p 2s infinite}
+@keyframes p{0%,100%{opacity:1}50%{opacity:.4}}
+.kit-sub{color:var(--muted);font-size:.78rem;margin-top:.3rem;max-width:120ch}
+.kit-sub code{color:var(--amber)}
+.skillbar{display:flex;flex-wrap:wrap;gap:.45rem;margin-top:.8rem}
+.chip{display:inline-flex;align-items:center;gap:.4rem;padding:.32rem .6rem;font-size:.74rem;
+      background:var(--panel2);border:1px solid var(--border);border-radius:.5rem;cursor:pointer;
+      color:var(--text);transition:border-color .12s,background .12s;white-space:nowrap}
+.chip:hover{border-color:var(--cyan);text-decoration:none}
+.chip.active{border-color:var(--cyan);background:#0d1b30;box-shadow:0 0 0 1px var(--cyan) inset}
+.chip .st{color:var(--amber);font-size:.68rem}
+.chip.ref{border-left:3px solid var(--emerald)}
+
+/* ---- diagram detail / meta ---- */
+.detail{padding:1rem 1.3rem 2.5rem}
+.detail .dt{font-size:1.05rem;font-weight:700}
+.detail .dt small{color:var(--dim);font-weight:400;font-size:.72rem}
+.detail .how{font-size:.78rem;color:var(--muted);margin-top:.35rem;max-width:100ch}
+.detail .meta{display:flex;flex-wrap:wrap;gap:.4rem .9rem;font-size:.72rem;margin-top:.55rem;align-items:center}
+.tag{padding:.04rem .45rem;border:1px solid var(--border);border-radius:1rem}
+.tag.skill{color:var(--violet);border-color:#3b2a63}
+.tag.lic{color:var(--emerald)} .tag.lic.none{color:var(--rose)}
+.detail .links{display:flex;flex-wrap:wrap;gap:.9rem;font-size:.76rem;margin-top:.55rem}
+
+/* ---- the diagram stage ---- */
+.stage{margin-top:1rem;background:#020617;border:1px solid var(--border);border-radius:.7rem;overflow:hidden}
+.diagram-image{display:block;width:100%;height:auto;background:#020617}      /* page scrolls; never an inner bar */
+.diagram-frame{display:block;width:100%;border:0;background:#020617}
+.diagram-frame.html{height:1200px}            /* fallback; autofit overrides to exact content height */
+.diagram-frame.interactive{height:760px}      /* pan/zoom or click happens inside — intentional */
+.diagram-missing{padding:2rem;color:var(--dim);font-size:.8rem;text-align:center}
+
+footer{padding:1.5rem 1.3rem 2.5rem;color:var(--dim);font-size:.72rem;line-height:1.7;border-top:1px solid var(--border)}

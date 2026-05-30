@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>claude-md-audit — Skill Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #020617;
+    color: #e2e8f0;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 32px;
+    min-height: 100vh;
+  }
+  .container {
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+  .header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 24px;
+  }
+  .header-title { display: flex; align-items: center; gap: 12px; }
+  .pulse-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #22d3ee;
+    box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.7);
+    animation: pulse 2s infinite;
+    flex-shrink: 0;
+    margin-top: 6px;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.6); }
+    70% { box-shadow: 0 0 0 10px rgba(34, 211, 238, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); }
+  }
+  h1 { font-size: 20px; font-weight: 700; color: #f1f5f9; letter-spacing: -0.3px; }
+  .subtitle { font-size: 11px; color: #64748b; margin-top: 4px; }
+  /* Toolbar */
+  .toolbar { display: flex; align-items: center; gap: 8px; }
+  .toolbar-actions {
+    display: none;
+    gap: 8px;
+  }
+  .toolbar-actions.open { display: flex; }
+  .toolbar button {
+    background: rgba(30, 41, 59, 0.6);
+    border: 1px solid #334155;
+    color: #cbd5e1;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .toolbar button:hover { background: rgba(51, 65, 85, 0.8); }
+  .toolbar-toggle { font-size: 15px !important; line-height: 1; padding: 4px 10px !important; }
+  @media print { .toolbar { display: none !important; } }
+  .diagram-container {
+    background: #0b1120;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 12px;
+    overflow: hidden;
+  }
+  svg { display: block; width: 100%; height: auto; }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-top: 24px;
+  }
+  .card {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .card-dot.cyan { background: #22d3ee; }
+  .card-dot.emerald { background: #34d399; }
+  .card-dot.violet { background: #a78bfa; }
+  .card-dot.rose { background: #fb7185; }
+  .card-dot.amber { background: #fbbf24; }
+  .card h3 { font-size: 12px; font-weight: 600; color: #e2e8f0; }
+  .card ul { list-style: none; }
+  .card li { font-size: 10px; color: #94a3b8; line-height: 1.7; }
+  .footer { text-align: center; font-size: 9px; color: #475569; margin-top: 20px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+  <div class="header">
+    <div class="header-title">
+      <div class="pulse-dot"></div>
+      <div>
+        <h1>claude-md-audit — Skill Architecture</h1>
+        <div class="subtitle">resolve → fan-out DETECT per file → barrier + report → Q&amp;A gate → fan-out REMEDIATE per file → summary</div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <div class="toolbar-actions" id="toolbarActions">
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbarActions').classList.toggle('open')">⋯</button>
+    </div>
+  </div>
+
+  <div class="diagram-container">
+    <svg viewBox="0 0 1100 1500" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+        </marker>
+        <marker id="arrowhead-rose" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185"/>
+        </marker>
+      </defs>
+
+      <rect x="0" y="0" width="1100" height="1500" fill="#020617"/>
+      <rect x="0" y="0" width="1100" height="1500" fill="url(#grid)"/>
+
+      <!-- ===================== ARROWS (drawn first, behind boxes) ===================== -->
+      <!-- resolve -> DETECT -->
+      <line x1="550" y1="118" x2="550" y2="158" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <!-- DETECT branch -> audit lanes region -->
+      <line x1="550" y1="256" x2="550" y2="296" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <!-- fan-out from audit header to 3 lanes -->
+      <line x1="550" y1="346" x2="210" y2="392" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <line x1="550" y1="346" x2="550" y2="392" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <line x1="550" y1="346" x2="890" y2="392" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <!-- lanes -> barrier (join) -->
+      <line x1="210" y1="612" x2="540" y2="660" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <line x1="550" y1="612" x2="550" y2="660" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <line x1="890" y1="612" x2="560" y2="660" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <!-- barrier -> Q&A gate -->
+      <line x1="550" y1="738" x2="550" y2="788" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <!-- Q&A gate -> REMEDIATE (rose, human decision flow) -->
+      <line x1="550" y1="900" x2="550" y2="950" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="4,4" marker-end="url(#arrowhead-rose)"/>
+      <!-- REMEDIATE branch -> fix lanes header -->
+      <line x1="550" y1="1048" x2="550" y2="1088" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <!-- fan-out fix lanes -->
+      <line x1="550" y1="1138" x2="260" y2="1184" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <line x1="550" y1="1138" x2="550" y2="1184" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <line x1="550" y1="1138" x2="840" y2="1184" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <!-- fix lanes -> summary (join) -->
+      <line x1="260" y1="1314" x2="540" y2="1362" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <line x1="550" y1="1314" x2="550" y2="1362" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+      <line x1="840" y1="1314" x2="560" y2="1362" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+      <!-- ===================== NODES ===================== -->
+
+      <!-- 1. resolve (entry / accent = cyan frontend) -->
+      <rect x="400" y="50" width="300" height="68" rx="6" fill="#0f172a"/>
+      <rect x="400" y="50" width="300" height="68" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+      <text x="550" y="74" fill="white" font-size="12" font-weight="600" text-anchor="middle">resolve · entry</text>
+      <text x="550" y="91" fill="#94a3b8" font-size="9" text-anchor="middle">parse $ARGUMENTS → N targets · discover.py</text>
+      <text x="550" y="106" fill="#64748b" font-size="8" text-anchor="middle">classify role: root / ancestor / child / local → (path, role, parentPath)</text>
+
+      <!-- 2. DETECT branch (emerald backend / process) -->
+      <rect x="370" y="158" width="360" height="98" rx="6" fill="#0f172a"/>
+      <rect x="370" y="158" width="360" height="98" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+      <text x="550" y="182" fill="white" font-size="12" font-weight="600" text-anchor="middle">DETECT — before Q&amp;A</text>
+      <text x="550" y="200" fill="#94a3b8" font-size="9" text-anchor="middle">1 file → inline in main loop</text>
+      <text x="550" y="215" fill="#94a3b8" font-size="9" text-anchor="middle">2+ files → Workflow detect.js</text>
+      <text x="550" y="234" fill="#34d399" font-size="9" font-weight="600" text-anchor="middle">parallel() · one agent per file</text>
+      <text x="550" y="248" fill="#64748b" font-size="8" text-anchor="middle">(fan-out, NOT a pipeline)</text>
+
+      <!-- 3. audit lanes region: header band + dashed fan-out boundary -->
+      <rect x="60" y="296" width="980" height="52" rx="6" fill="#0f172a"/>
+      <rect x="60" y="296" width="980" height="52" rx="6" fill="rgba(6, 78, 59, 0.25)" stroke="#34d399" stroke-width="1.5"/>
+      <text x="550" y="318" fill="white" font-size="12" font-weight="600" text-anchor="middle">audit lanes · fan-out of N parallel agents (one per file) — DETECTION ONLY, no edits</text>
+      <text x="550" y="336" fill="#64748b" font-size="8" text-anchor="middle">each lane: read → criteria → apply CCP/CRP/ADP (+Hygiene) → schema-validate (if claude_md:) → classify (taxonomy A–G,K + AUTO/DISCUSS/SPECIAL)</text>
+
+      <!-- dashed boundary around the 3 lanes -->
+      <rect x="50" y="372" width="1000" height="244" rx="12" fill="none" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+
+      <!-- LANE 1 · root -->
+      <rect x="70" y="392" width="280" height="220" rx="6" fill="#0f172a"/>
+      <rect x="70" y="392" width="280" height="220" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+      <text x="210" y="414" fill="white" font-size="12" font-weight="600" text-anchor="middle">FILE 1 · root</text>
+      <text x="210" y="436" fill="#94a3b8" font-size="9" text-anchor="middle">1. read root CLAUDE.md</text>
+      <text x="210" y="454" fill="#94a3b8" font-size="9" text-anchor="middle">2. load audit-criteria.md</text>
+      <text x="210" y="472" fill="#94a3b8" font-size="9" text-anchor="middle">3. apply CCP / CRP / ADP + Hygiene</text>
+      <text x="210" y="490" fill="#94a3b8" font-size="9" text-anchor="middle">4. schema-validate claude_md:</text>
+      <text x="210" y="508" fill="#94a3b8" font-size="9" text-anchor="middle">5. classify → taxonomy + bucket</text>
+      <text x="210" y="540" fill="#64748b" font-size="8" text-anchor="middle">full criteria set for root role</text>
+      <text x="210" y="588" fill="#34d399" font-size="8" text-anchor="middle">→ findings (no edits)</text>
+
+      <!-- LANE 2 · child -->
+      <rect x="410" y="392" width="280" height="220" rx="6" fill="#0f172a"/>
+      <rect x="410" y="392" width="280" height="220" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+      <text x="550" y="414" fill="white" font-size="12" font-weight="600" text-anchor="middle">FILE 2 · child</text>
+      <text x="550" y="436" fill="#94a3b8" font-size="9" text-anchor="middle">1. read child + parent CLAUDE.md</text>
+      <text x="550" y="454" fill="#94a3b8" font-size="9" text-anchor="middle">2. load audit-criteria.md</text>
+      <text x="550" y="472" fill="#94a3b8" font-size="9" text-anchor="middle">3. apply CCP / CRP / ADP + Hygiene</text>
+      <text x="550" y="490" fill="#94a3b8" font-size="9" text-anchor="middle">4. schema-validate claude_md:</text>
+      <text x="550" y="508" fill="#94a3b8" font-size="9" text-anchor="middle">5. classify → taxonomy + bucket</text>
+      <text x="550" y="540" fill="#fb7185" font-size="8" text-anchor="middle">CCP cross-file dup-check vs parent</text>
+      <text x="550" y="556" fill="#fb7185" font-size="8" text-anchor="middle">= taxonomy B</text>
+      <text x="550" y="588" fill="#34d399" font-size="8" text-anchor="middle">→ findings (no edits)</text>
+
+      <!-- LANE N · local + ellipsis -->
+      <rect x="750" y="392" width="280" height="220" rx="6" fill="#0f172a"/>
+      <rect x="750" y="392" width="280" height="220" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+      <text x="890" y="414" fill="white" font-size="12" font-weight="600" text-anchor="middle">FILE N · local</text>
+      <text x="890" y="436" fill="#94a3b8" font-size="9" text-anchor="middle">1. read local CLAUDE.md</text>
+      <text x="890" y="454" fill="#94a3b8" font-size="9" text-anchor="middle">2. load audit-criteria.md</text>
+      <text x="890" y="472" fill="#94a3b8" font-size="9" text-anchor="middle">3. apply D-group criteria only</text>
+      <text x="890" y="490" fill="#64748b" font-size="9" text-anchor="middle">   (skip ADP / Hygiene)</text>
+      <text x="890" y="508" fill="#94a3b8" font-size="9" text-anchor="middle">5. classify → taxonomy + bucket</text>
+      <text x="890" y="540" fill="#64748b" font-size="8" text-anchor="middle">scoped, lighter-weight lane</text>
+      <text x="890" y="572" fill="#64748b" font-size="18" font-weight="700" text-anchor="middle">⋯</text>
+      <text x="890" y="592" fill="#64748b" font-size="8" text-anchor="middle">N files total</text>
+
+      <!-- 4. barrier: collect + report (amber cloud = the one sync point) -->
+      <rect x="370" y="660" width="360" height="78" rx="6" fill="#0f172a"/>
+      <rect x="370" y="660" width="360" height="78" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+      <text x="550" y="684" fill="white" font-size="12" font-weight="600" text-anchor="middle">barrier · collect findings + render report</text>
+      <text x="550" y="702" fill="#94a3b8" font-size="9" text-anchor="middle">parallel() join — wait for every lane (the one sync point)</text>
+      <text x="550" y="720" fill="#fbbf24" font-size="9" text-anchor="middle">bucket totals AUTO / DISCUSS / SPECIAL · per-file report</text>
+
+      <!-- 5. Q&A GATE (decision, human-in-the-loop = rose security) -->
+      <polygon points="550,788 760,844 550,900 340,844" fill="#0f172a"/>
+      <polygon points="550,788 760,844 550,900 340,844" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1.5"/>
+      <text x="550" y="832" fill="white" font-size="12" font-weight="600" text-anchor="middle">Q&amp;A GATE · human-in-the-loop</text>
+      <text x="550" y="850" fill="#fda4af" font-size="9" text-anchor="middle">decide each DISCUSS / SPECIAL finding</text>
+      <text x="550" y="866" fill="#94a3b8" font-size="8" text-anchor="middle">AUTO auto-applies · inferred when non-interactive ('fast')</text>
+
+      <!-- 6. REMEDIATE branch (violet database / process) -->
+      <rect x="370" y="950" width="360" height="98" rx="6" fill="#0f172a"/>
+      <rect x="370" y="950" width="360" height="98" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+      <text x="550" y="974" fill="white" font-size="12" font-weight="600" text-anchor="middle">REMEDIATE — after Q&amp;A</text>
+      <text x="550" y="992" fill="#94a3b8" font-size="9" text-anchor="middle">1 file → inline</text>
+      <text x="550" y="1007" fill="#94a3b8" font-size="9" text-anchor="middle">2+ files → Workflow remediate.js</text>
+      <text x="550" y="1026" fill="#a78bfa" font-size="9" font-weight="600" text-anchor="middle">parallel() · one lane per file</text>
+      <text x="550" y="1040" fill="#64748b" font-size="8" text-anchor="middle">disjoint files never conflict (fan-out, not a pipeline)</text>
+
+      <!-- 7. fix lanes region header -->
+      <rect x="60" y="1088" width="980" height="50" rx="6" fill="#0f172a"/>
+      <rect x="60" y="1088" width="980" height="50" rx="6" fill="rgba(76, 29, 149, 0.25)" stroke="#a78bfa" stroke-width="1.5"/>
+      <text x="550" y="1110" fill="white" font-size="12" font-weight="600" text-anchor="middle">fix lanes · N parallel lanes (one per file) — apply decided edits in order</text>
+      <text x="550" y="1128" fill="#64748b" font-size="8" text-anchor="middle">each lane: Read → Edit, applying the edits decided at the Q&amp;A gate</text>
+
+      <!-- dashed boundary around the 3 fix lanes -->
+      <rect x="50" y="1164" width="1000" height="150" rx="12" fill="none" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+
+      <!-- FIX LANE 1 -->
+      <rect x="120" y="1184" width="280" height="120" rx="6" fill="#0f172a"/>
+      <rect x="120" y="1184" width="280" height="120" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+      <text x="260" y="1208" fill="white" font-size="12" font-weight="600" text-anchor="middle">fix FILE 1 · root</text>
+      <text x="260" y="1232" fill="#94a3b8" font-size="9" text-anchor="middle">Read → Edit</text>
+      <text x="260" y="1250" fill="#94a3b8" font-size="9" text-anchor="middle">apply decided edits in order</text>
+      <text x="260" y="1280" fill="#a78bfa" font-size="8" text-anchor="middle">applied / skipped / failed</text>
+
+      <!-- FIX LANE 2 -->
+      <rect x="410" y="1184" width="280" height="120" rx="6" fill="#0f172a"/>
+      <rect x="410" y="1184" width="280" height="120" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+      <text x="550" y="1208" fill="white" font-size="12" font-weight="600" text-anchor="middle">fix FILE 2 · child</text>
+      <text x="550" y="1232" fill="#94a3b8" font-size="9" text-anchor="middle">Read → Edit</text>
+      <text x="550" y="1250" fill="#94a3b8" font-size="9" text-anchor="middle">apply decided edits in order</text>
+      <text x="550" y="1280" fill="#a78bfa" font-size="8" text-anchor="middle">applied / skipped / failed</text>
+
+      <!-- FIX LANE N -->
+      <rect x="700" y="1184" width="280" height="120" rx="6" fill="#0f172a"/>
+      <rect x="700" y="1184" width="280" height="120" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+      <text x="840" y="1208" fill="white" font-size="12" font-weight="600" text-anchor="middle">fix FILE N · local</text>
+      <text x="840" y="1232" fill="#94a3b8" font-size="9" text-anchor="middle">Read → Edit</text>
+      <text x="840" y="1250" fill="#94a3b8" font-size="9" text-anchor="middle">apply decided edits in order</text>
+      <text x="840" y="1272" fill="#64748b" font-size="16" font-weight="700" text-anchor="middle">⋯</text>
+      <text x="840" y="1290" fill="#64748b" font-size="8" text-anchor="middle">N lanes total</text>
+
+      <!-- 8. final summary (exit / accent = cyan) -->
+      <rect x="370" y="1362" width="360" height="88" rx="6" fill="#0f172a"/>
+      <rect x="370" y="1362" width="360" height="88" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+      <text x="550" y="1388" fill="white" font-size="12" font-weight="600" text-anchor="middle">final summary · exit</text>
+      <text x="550" y="1408" fill="#94a3b8" font-size="9" text-anchor="middle">applied / skipped / failed counts</text>
+      <text x="550" y="1426" fill="#67e8f9" font-size="9" text-anchor="middle">re-run the audit to verify FAILs cleared</text>
+      <text x="550" y="1442" fill="#64748b" font-size="8" text-anchor="middle">detection &amp; remediation are separate passes → idempotent re-run = verification</text>
+    </svg>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-header"><div class="card-dot emerald"></div><h3>DETECT fan-out</h3></div>
+      <ul>
+        <li>• 1 file → inline; 2+ → Workflow detect.js</li>
+        <li>• parallel() · one agent per file</li>
+        <li>• each lane: read → criteria → CCP/CRP/ADP → schema → classify</li>
+        <li>• detection only — no edits in this phase</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot rose"></div><h3>Barrier &amp; Q&amp;A gate</h3></div>
+      <ul>
+        <li>• parallel() join — the one sync point</li>
+        <li>• bucket totals AUTO / DISCUSS / SPECIAL + report</li>
+        <li>• Q&amp;A gate = only human-interaction point</li>
+        <li>• AUTO auto-applies; inferred when 'fast'</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot violet"></div><h3>REMEDIATE fan-out</h3></div>
+      <ul>
+        <li>• 1 file → inline; 2+ → Workflow remediate.js</li>
+        <li>• parallel() · one lane per file (disjoint, no conflicts)</li>
+        <li>• each lane: Read → Edit decided changes in order</li>
+        <li>• summary: applied/skipped/failed → re-run to verify</li>
+      </ul>
+    </div>
+  </div>
+
+  <p class="footer">claude-md-audit skill architecture · source: SKILL.md + workflow/detect.js + workflow/remediate.js · generated with the Architecture Diagram skill by Cocoon AI (MIT)</p>
+</div>
+
+<script>
+function captureRect() {
+  const el = document.getElementById('report-container');
+  const r = el.getBoundingClientRect();
+  const pad = 32;
+  return html2canvas(document.body, {
+    backgroundColor: '#020617',
+    scale: 2,
+    x: r.left - pad,
+    y: r.top - pad,
+    width: r.width + pad * 2,
+    height: r.height + pad * 2,
+    ignoreElements: (node) => node.classList && node.classList.contains('toolbar')
+  });
+}
+function copyAsImage() {
+  captureRect().then(canvas => {
+    canvas.toBlob(blob => {
+      navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+        .catch(err => alert('Copy failed: ' + err));
+    });
+  });
+}
+function downloadPNG() {
+  captureRect().then(canvas => {
+    const link = document.createElement('a');
+    link.download = 'claude-md-audit-architecture.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  });
+}
+function downloadPDF() {
+  captureRect().then(canvas => {
+    const img = canvas.toDataURL('image/png');
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({
+      orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+      unit: 'px',
+      format: [canvas.width, canvas.height]
+    });
+    pdf.addImage(img, 'PNG', 0, 0, canvas.width, canvas.height);
+    pdf.save('claude-md-audit-architecture.pdf');
+  });
+}
+</script>
+</body>
+</html>

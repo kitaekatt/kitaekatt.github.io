@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en" style="color-scheme: dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>claude-md-audit — Skill Architecture</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          wt: {
+            bg: '#000000', surface: '#0a0a0a', raised: '#141414',
+            border: '#2a2a2a', fg: '#ffffff', muted: '#a0a0a0',
+            accent: '#a855f7', file: '#c084fc', red: '#ef4444',
+          },
+          node: {
+            component: '#a855f7', composable: '#7c3aed', utility: '#6d28d9',
+            external: '#525252', event: '#d8b4fe', data: '#9333ea',
+          },
+        },
+      },
+    },
+  };
+</script>
+<style>
+  .mermaid-wrap svg { max-width: none !important; height: auto !important; }
+  .mermaid-wrap .node { cursor: pointer; }
+  .mermaid-wrap .node:hover rect,
+  .mermaid-wrap .node:hover polygon,
+  .mermaid-wrap .node:hover circle,
+  .mermaid-wrap .node:hover .label-container {
+    filter: brightness(1.3); transition: filter .15s;
+  }
+  .dt-body p { color:#a0a0a0; font-size:.88rem; line-height:1.65; margin-bottom:10px; }
+  .dt-body p code {
+    background:rgba(168,85,247,.12); padding:1px 6px; border-radius:4px;
+    font-family:'SF Mono','Fira Code',monospace; font-size:.82rem; color:#c084fc;
+  }
+  .dt-body .shiki {
+    background: #000000 !important;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 8px 0 14px;
+  }
+  .dt-body .shiki code {
+    font-family: 'SF Mono','Fira Code',monospace;
+    font-size: .78rem;
+    line-height: 1.55;
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    color: inherit;
+  }
+  .dt-body pre.code-fallback {
+    background: #000000;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 8px 0 14px;
+  }
+  .dt-body pre.code-fallback code {
+    font-family: 'SF Mono','Fira Code',monospace;
+    font-size: .78rem;
+    line-height: 1.55;
+    color: #e0e0e0;
+    background: none;
+    padding: 0;
+    border-radius: 0;
+  }
+</style>
+</head>
+<body class="bg-wt-bg text-wt-fg m-0 overflow-hidden">
+<div id="root"></div>
+<script type="module">
+import { createHighlighter } from 'https://cdn.jsdelivr.net/npm/shiki@3.22.0/+esm'
+
+const { useState, useEffect, useRef, useCallback } = React;
+
+const SUMMARY = "The claude-md-audit skill audits one or more CLAUDE.md files in two parallel passes split by a single human gate. It resolves targets and their roles, fans out DETECT (one agent per file) to find findings, joins at a barrier to render a report, asks the human to decide DISCUSS/SPECIAL findings, then fans out REMEDIATE (one lane per file) to apply the edits and prints a final summary. DETECT and REMEDIATE are both parallel() fan-outs — never pipelines — and AUTO/DISCUSS/SPECIAL are buckets assigned during classify, decided at the gate.";
+
+const DIAGRAM = `graph TD
+  subgraph setup["Setup"]
+    resolve["Resolve Targets"]
+  end
+
+  subgraph detectPhase["Detect Pass (before Q&A)"]
+    detectDispatch["Detect Dispatch"]
+    auditLaneRoot["Audit Lane · root"]
+    auditLaneChild["Audit Lane · child"]
+    auditLaneLocal["Audit Lane · local (… N files)"]
+    barrier["Barrier + Report"]
+  end
+
+  subgraph humanGate["Human Decision"]
+    qaGate["Q&A Gate"]
+  end
+
+  subgraph remediatePhase["Remediate Pass (after Q&A)"]
+    remediateDispatch["Remediate Dispatch"]
+    fixLanes["Fix Lanes (… N files)"]
+  end
+
+  subgraph done["Done"]
+    summary["Final Summary"]
+  end
+
+  resolve ==>|"feeds targets"| detectDispatch
+  detectDispatch -->|"parallel(): one agent / file"| auditLaneRoot
+  detectDispatch -->|"parallel(): one agent / file"| auditLaneChild
+  detectDispatch -->|"parallel(): one agent / file"| auditLaneLocal
+  auditLaneRoot -->|"join"| barrier
+  auditLaneChild -->|"join"| barrier
+  auditLaneLocal -->|"join"| barrier
+  barrier -->|"renders, then asks"| qaGate
+  qaGate ==>|"decided edits"| remediateDispatch
+  remediateDispatch -->|"parallel(): one lane / file"| fixLanes
+  fixLanes -->|"produces counts"| summary
+
+  class resolve event
+  class detectDispatch composable
+  class auditLaneRoot utility
+  class auditLaneChild utility
+  class auditLaneLocal utility
+  class barrier data
+  class qaGate event
+  class remediateDispatch composable
+  class fixLanes utility
+  class summary component
+
+  classDef component fill:#a855f7,stroke:#c084fc,color:#fff
+  classDef composable fill:#7c3aed,stroke:#a78bfa,color:#fff
+  classDef utility fill:#6d28d9,stroke:#8b5cf6,color:#fff
+  classDef external fill:#525252,stroke:#737373,color:#fff
+  classDef event fill:#d8b4fe,stroke:#e9d5ff,color:#000
+  classDef data fill:#9333ea,stroke:#a855f7,color:#fff
+
+  click resolve nodeClickHandler "View details"
+  click detectDispatch nodeClickHandler "View details"
+  click auditLaneRoot nodeClickHandler "View details"
+  click auditLaneChild nodeClickHandler "View details"
+  click auditLaneLocal nodeClickHandler "View details"
+  click barrier nodeClickHandler "View details"
+  click qaGate nodeClickHandler "View details"
+  click remediateDispatch nodeClickHandler "View details"
+  click fixLanes nodeClickHandler "View details"
+  click summary nodeClickHandler "View details"
+`;
+
+const NODES = {
+  resolve: {
+    title: "Resolve Targets",
+    description: "The entry point. Parses $ARGUMENTS into N target files, runs discover.py, and classifies each file's role — root, ancestor, child, or local. Each target becomes a (path, role, parentPath) tuple that drives the rest of the run.",
+    files: ["skills/claude-md-audit/SKILL.md", "skills/claude-md-audit/workflow/discover.py"],
+    code: `targets = discover($ARGUMENTS)
+# each target -> (path, role, parentPath)
+# role in {root, ancestor, child, local}`,
+    lang: "python",
+  },
+  detectDispatch: {
+    title: "Detect Dispatch",
+    description: "The DETECT fan-out, before the Q&A gate. One file runs inline in the main loop; two or more files dispatch to the Workflow detect.js. The fan-out is parallel(), one agent per file — not a multi-stage pipeline.",
+    files: ["skills/claude-md-audit/workflow/detect.js"],
+    code: `// 1 file: inline main loop
+// 2+ files: Workflow detect.js
+await parallel(targets.map(t => auditLane(t)))`,
+    lang: "javascript",
+  },
+  auditLaneRoot: {
+    title: "Audit Lane · root",
+    description: "One concurrent lane per file; this one handles the root CLAUDE.md. Each lane is a single agent that reads the file, loads the self-contained audit-criteria.md, applies CCP/CRP/ADP (+Hygiene), schema-validates if a claude_md: block exists, then classifies findings. Detection only — nothing is edited.",
+    files: ["skills/claude-md-audit/workflow/detect.js", "skills/claude-md-audit/audit-criteria.md"],
+    code: `read(file)              // role=root -> read root
+load("audit-criteria.md")
+apply(CCP, CRP, ADP, Hygiene)
+if (hasYaml) schemaValidate()
+classify(findings)      // taxonomy A-G,K + bucket`,
+    lang: "javascript",
+  },
+  auditLaneChild: {
+    title: "Audit Lane · child",
+    description: "A child-role lane reads the child file and its parent CLAUDE.md. The CCP cross-file duplication check (parent vs child) maps to taxonomy B. Findings are then classified into AUTO / DISCUSS / SPECIAL buckets.",
+    files: ["skills/claude-md-audit/workflow/detect.js", "skills/claude-md-audit/audit-criteria.md"],
+    code: `read(file); read(parentPath)   // child + parent
+ccpCrossFileDupCheck()         // -> taxonomy B
+classify(findings)`,
+    lang: "javascript",
+  },
+  auditLaneLocal: {
+    title: "Audit Lane · local (… N files)",
+    description: "A local-role lane applies only the D-group criteria and skips ADP / Hygiene. This node also stands in for the remaining of N concurrent lanes. Every finding is tagged with a taxonomy code (A–G, K) and a remediation bucket — AUTO, DISCUSS, or SPECIAL — assigned here at classify time, not decided yet.",
+    files: ["skills/claude-md-audit/workflow/detect.js", "skills/claude-md-audit/audit-criteria.md"],
+    code: `// role=local: D-group criteria only
+apply(Dgroup)          // skip ADP / Hygiene
+classify(findings)     // bucket: AUTO|DISCUSS|SPECIAL`,
+    lang: "javascript",
+  },
+  barrier: {
+    title: "Barrier + Report",
+    description: "The parallel() join and the one synchronization point in the whole flow. The main loop waits for every lane to finish, computes the AUTO / DISCUSS / SPECIAL bucket totals, and renders the per-file report.",
+    files: ["skills/claude-md-audit/workflow/detect.js"],
+    code: `const findings = await Promise.all(lanes)  // join
+const totals = tally(findings)             // AUTO/DISCUSS/SPECIAL
+renderReport(findings, totals)`,
+    lang: "javascript",
+  },
+  qaGate: {
+    title: "Q&A Gate",
+    description: "The only human-in-the-loop point, sitting between detect and remediate. Interactive decisions are made per DISCUSS / SPECIAL finding; when run non-interactively ('fast') they are inferred automatically. AUTO findings auto-apply and need no decision.",
+    files: ["skills/claude-md-audit/SKILL.md"],
+    code: `for (f of discussAndSpecial)
+  f.decision = interactive ? ask(f) : infer(f)
+// AUTO findings auto-apply, no prompt`,
+    lang: "javascript",
+  },
+  remediateDispatch: {
+    title: "Remediate Dispatch",
+    description: "The REMEDIATE fan-out, after the Q&A gate. One file runs inline; two or more files dispatch to the Workflow remediate.js. Again a parallel() fan-out, one lane per file — disjoint files never conflict, so they remediate concurrently.",
+    files: ["skills/claude-md-audit/workflow/remediate.js"],
+    code: `// 1 file: inline
+// 2+ files: Workflow remediate.js
+await parallel(targets.map(t => fixLane(t)))`,
+    lang: "javascript",
+  },
+  fixLanes: {
+    title: "Fix Lanes (… N files)",
+    description: "N parallel lanes, one per file. Each lane applies its decided edits in order via Read → Edit. Because each file set is disjoint, no lane contends with another.",
+    files: ["skills/claude-md-audit/workflow/remediate.js"],
+    code: `for (edit of decidedEdits) {
+  Read(file)
+  Edit(file, edit.old, edit.new)
+}`,
+    lang: "javascript",
+  },
+  summary: {
+    title: "Final Summary",
+    description: "The exit point. Reports applied / skipped / failed counts and prompts the user to re-run the audit to verify FAILs cleared. Detection and remediation are separate passes, so an idempotent re-run is itself the verification.",
+    files: ["skills/claude-md-audit/SKILL.md"],
+    code: `print(\`applied=\${applied} skipped=\${skipped} failed=\${failed}\`)
+print("re-run the audit to verify FAILs cleared")`,
+    lang: "javascript",
+  },
+};
+
+const LEGEND = [
+  { label: "Entry / Gate (event)", color: "bg-node-event" },
+  { label: "Dispatch (fan-out)", color: "bg-node-composable" },
+  { label: "Lane (work)", color: "bg-node-utility" },
+  { label: "Barrier (join/data)", color: "bg-node-data" },
+  { label: "Exit (component)", color: "bg-node-component" },
+];
+
+// Initialize Shiki
+const langs = [...new Set(Object.values(NODES).map(n => n.lang).filter(Boolean))];
+if (langs.length === 0) langs.push('typescript');
+
+let highlighter = null;
+try {
+  highlighter = await createHighlighter({ themes: ['vitesse-dark'], langs });
+} catch (e) {
+  console.warn('Shiki failed to load:', e);
+}
+
+const HIGHLIGHTED = {};
+for (const [id, node] of Object.entries(NODES)) {
+  if (node.code && highlighter) {
+    try {
+      HIGHLIGHTED[id] = highlighter.codeToHtml(node.code, {
+        lang: node.lang || 'typescript',
+        theme: 'vitesse-dark',
+      });
+    } catch (e) { console.warn(`Highlight failed for ${id}:`, e); }
+  }
+}
+
+// --- React Components (createElement, no JSX) ---
+const h = React.createElement;
+
+function usePanZoom() {
+  const viewportRef = useRef(null);
+  const canvasRef = useRef(null);
+  const zoomDisplayRef = useRef(null);
+  const st = useRef({ zoom: 1, panX: 0, panY: 0 });
+  const drag = useRef({ on: false, lx: 0, ly: 0 });
+
+  const apply = useCallback(() => {
+    const { zoom, panX, panY } = st.current;
+    if (canvasRef.current)
+      canvasRef.current.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+    if (zoomDisplayRef.current)
+      zoomDisplayRef.current.textContent = Math.round(zoom * 100) + '%';
+  }, []);
+
+  const fitToScreen = useCallback(() => {
+    const svg = canvasRef.current?.querySelector('svg');
+    const vp = viewportRef.current;
+    if (!svg || !vp) return;
+    const s = st.current;
+    const vw = vp.clientWidth, vh = vp.clientHeight;
+    const sw = svg.getBoundingClientRect().width / s.zoom;
+    const sh = svg.getBoundingClientRect().height / s.zoom;
+    const fit = Math.max(0.15, Math.min(2, Math.min((vw - 80) / sw, (vh - 80) / sh)));
+    s.zoom = fit;
+    s.panX = (vw - sw * fit) / 2;
+    s.panY = (vh - sh * fit) / 2;
+    apply();
+  }, [apply]);
+
+  useEffect(() => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+
+    const onWheel = (e) => {
+      e.preventDefault();
+      const r = vp.getBoundingClientRect();
+      const mx = e.clientX - r.left, my = e.clientY - r.top;
+      const s = st.current;
+      const f = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const nz = Math.min(4, Math.max(0.15, s.zoom * f));
+      const sc = nz / s.zoom;
+      s.panX = mx - sc * (mx - s.panX);
+      s.panY = my - sc * (my - s.panY);
+      s.zoom = nz;
+      apply();
+    };
+
+    const onDown = (e) => {
+      if (e.target.closest('.node')) return;
+      drag.current = { on: true, lx: e.clientX, ly: e.clientY };
+      vp.setPointerCapture(e.pointerId);
+    };
+    const onMove = (e) => {
+      const d = drag.current;
+      if (!d.on) return;
+      st.current.panX += e.clientX - d.lx;
+      st.current.panY += e.clientY - d.ly;
+      d.lx = e.clientX; d.ly = e.clientY;
+      apply();
+    };
+    const onUp = () => { drag.current.on = false; };
+
+    vp.addEventListener('wheel', onWheel, { passive: false });
+    vp.addEventListener('pointerdown', onDown);
+    vp.addEventListener('pointermove', onMove);
+    vp.addEventListener('pointerup', onUp);
+    vp.addEventListener('pointercancel', onUp);
+    window.addEventListener('resize', fitToScreen);
+
+    return () => {
+      vp.removeEventListener('wheel', onWheel);
+      vp.removeEventListener('pointerdown', onDown);
+      vp.removeEventListener('pointermove', onMove);
+      vp.removeEventListener('pointerup', onUp);
+      vp.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('resize', fitToScreen);
+    };
+  }, [apply, fitToScreen]);
+
+  const zoomIn = useCallback(() => { st.current.zoom = Math.min(4, st.current.zoom * 1.25); apply(); }, [apply]);
+  const zoomOut = useCallback(() => { st.current.zoom = Math.max(0.15, st.current.zoom / 1.25); apply(); }, [apply]);
+
+  return { viewportRef, canvasRef, zoomDisplayRef, zoomIn, zoomOut, fitToScreen };
+}
+
+function MermaidDiagram({ onNodeClick }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    window.nodeClickHandler = onNodeClick;
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      themeVariables: {
+        primaryColor: '#0a0a0a',
+        primaryTextColor: '#ffffff',
+        primaryBorderColor: '#2a2a2a',
+        lineColor: '#a0a0a0',
+        secondaryColor: '#000000',
+        tertiaryColor: '#000000',
+        background: '#000000',
+        mainBkg: '#0a0a0a',
+        nodeBorder: '#2a2a2a',
+        clusterBkg: 'rgba(10,10,10,0.8)',
+        clusterBorder: '#7c3aed',
+        titleColor: '#ffffff',
+        edgeLabelBackground: 'transparent',
+      },
+      flowchart: { useMaxWidth: false, htmlLabels: true, curve: 'basis' },
+      securityLevel: 'loose',
+    });
+    mermaid.render('walkthrough-diagram', DIAGRAM).then(({ svg, bindFunctions }) => {
+      if (ref.current) {
+        ref.current.innerHTML = svg;
+        bindFunctions?.(ref.current);
+      }
+    });
+    return () => { delete window.nodeClickHandler; };
+  }, [onNodeClick]);
+
+  return h('div', { ref, className: 'mermaid-wrap' });
+}
+
+function Summary({ collapsed, onToggle }) {
+  if (collapsed) {
+    return h('div', {
+      onClick: onToggle,
+      className: 'fixed top-16 left-6 z-10 px-3 py-1.5 bg-wt-surface/60 backdrop-blur border border-wt-border rounded-full shadow-lg cursor-pointer hover:bg-wt-surface/80 transition-all duration-300'
+    },
+      h('span', { className: 'text-xs text-wt-muted font-medium' }, 'ℹ︎ Summary')
+    );
+  }
+  return h('div', {
+    onClick: onToggle,
+    className: 'fixed top-16 left-6 z-10 max-w-lg px-4 py-3 bg-wt-surface/80 backdrop-blur border border-wt-border rounded-lg shadow-lg cursor-pointer transition-all duration-300'
+  },
+    h('p', { className: 'text-sm text-wt-muted leading-relaxed' }, SUMMARY),
+    h('p', { className: 'text-[0.65rem] text-wt-muted/50 mt-1.5' }, 'Click to dismiss')
+  );
+}
+
+function DetailPanel({ nodeId, node, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const codeHtml = HIGHLIGHTED[nodeId];
+
+  return h('div', {
+    className: 'fixed top-4 right-4 bottom-4 w-[560px] z-30 bg-wt-surface border border-wt-border rounded-xl shadow-2xl flex flex-col overflow-hidden'
+  },
+    h('button', {
+      onClick: onClose,
+      className: 'absolute top-3 right-3 z-10 w-7 h-7 rounded-md border border-wt-border bg-wt-raised text-wt-muted flex items-center justify-center text-lg hover:bg-wt-red hover:border-wt-red hover:text-white transition-colors'
+    }, '×'),
+    h('div', { className: 'flex-1 overflow-y-auto p-5' },
+      h('h2', { className: 'text-lg font-bold text-wt-fg mb-3 pr-9' }, node.title),
+      h('div', { className: 'dt-body' },
+        h('p', null, node.description)
+      ),
+      node.code ? h('div', { className: 'dt-body' },
+        codeHtml
+          ? h('div', { dangerouslySetInnerHTML: { __html: codeHtml } })
+          : h('pre', { className: 'code-fallback' }, h('code', null, node.code))
+      ) : null,
+      node.files && node.files.length > 0 ? h('div', { className: 'mt-4 pt-3 border-t border-wt-border' },
+        h('div', { className: 'text-[0.7rem] uppercase tracking-wider text-wt-muted font-semibold mb-1.5' }, 'Files'),
+        h('code', { className: 'text-sm text-wt-file font-mono leading-relaxed' },
+          node.files.map((f, i) => h('span', { key: i }, f, h('br')))
+        )
+      ) : null
+    )
+  );
+}
+
+function ZoomControls({ zoomDisplayRef, onZoomIn, onZoomOut, onFit }) {
+  return h('div', { className: 'fixed bottom-5 left-5 z-20 flex items-center gap-1 bg-wt-surface border border-wt-border rounded-lg shadow-xl overflow-hidden' },
+    h('button', { onClick: onZoomOut, className: 'px-2.5 py-1.5 text-wt-muted hover:text-wt-fg hover:bg-wt-raised transition-colors text-sm' }, '−'),
+    h('span', { ref: zoomDisplayRef, className: 'px-2 py-1.5 text-xs text-wt-muted min-w-[3rem] text-center' }, '100%'),
+    h('button', { onClick: onZoomIn, className: 'px-2.5 py-1.5 text-wt-muted hover:text-wt-fg hover:bg-wt-raised transition-colors text-sm' }, '+'),
+    h('button', { onClick: onFit, className: 'px-2.5 py-1.5 text-wt-muted hover:text-wt-fg hover:bg-wt-raised transition-colors text-xs border-l border-wt-border' }, 'Fit')
+  );
+}
+
+function App() {
+  const [activeId, _setActiveId] = useState(null);
+  const [summaryCollapsed, setSummaryCollapsed] = useState(false);
+  const pz = usePanZoom();
+
+  const collapseSummary = useCallback(() => {
+    setSummaryCollapsed(true);
+  }, []);
+
+  const setActiveNode = useCallback((nodeId) => {
+    _setActiveId(nodeId);
+    collapseSummary();
+    document.querySelectorAll('.mermaid-wrap .node').forEach(n => { n.style.opacity = nodeId ? '0.4' : '1'; });
+    if (nodeId) {
+      const el = document.querySelector(`.mermaid-wrap .node[id*="${nodeId}"]`);
+      if (el) el.style.opacity = '1';
+    }
+  }, [collapseSummary]);
+
+  const closeDetail = useCallback(() => {
+    _setActiveId(null);
+    document.querySelectorAll('.mermaid-wrap .node').forEach(n => { n.style.opacity = '1'; });
+  }, []);
+
+  useEffect(() => {
+    const vp = pz.viewportRef.current;
+    if (!vp) return;
+    const onInteract = () => { collapseSummary(); };
+    vp.addEventListener('wheel', onInteract, { once: true });
+    vp.addEventListener('pointerdown', onInteract, { once: true });
+    return () => {
+      vp.removeEventListener('wheel', onInteract);
+      vp.removeEventListener('pointerdown', onInteract);
+    };
+  }, [collapseSummary, pz.viewportRef]);
+
+  useEffect(() => { setTimeout(pz.fitToScreen, 600); }, [pz.fitToScreen]);
+
+  return h(React.Fragment, null,
+    h('header', { className: 'fixed top-0 inset-x-0 z-10 px-6 py-3.5 bg-gradient-to-b from-wt-bg to-transparent pointer-events-none' },
+      h('h1', { className: 'text-base font-semibold text-wt-fg' }, 'claude-md-audit — Skill Architecture'),
+      h('p', { className: 'text-sm text-wt-muted mt-0.5' }, 'resolve → fan-out DETECT per file → barrier + report → Q&A gate → fan-out REMEDIATE per file → summary')
+    ),
+    h(Summary, { collapsed: summaryCollapsed, onToggle: () => setSummaryCollapsed(c => !c) }),
+    h('div', { ref: pz.viewportRef, className: 'w-full h-screen overflow-hidden cursor-grab active:cursor-grabbing' },
+      h('div', { ref: pz.canvasRef, className: 'origin-top-left will-change-transform inline-block p-[80px_60px_60px]' },
+        h(MermaidDiagram, { onNodeClick: setActiveNode })
+      )
+    ),
+    h(ZoomControls, { zoomDisplayRef: pz.zoomDisplayRef, onZoomIn: pz.zoomIn, onZoomOut: pz.zoomOut, onFit: pz.fitToScreen }),
+    h('div', { className: 'fixed bottom-5 left-1/2 -translate-x-1/2 z-20 flex gap-4 px-4 py-2 bg-wt-surface border border-wt-border rounded-lg shadow-xl' },
+      LEGEND.map(l =>
+        h('span', { key: l.label, className: 'flex items-center gap-1.5 text-xs text-wt-muted' },
+          h('span', { className: `w-2 h-2 rounded-full ${l.color}` }),
+          l.label
+        )
+      )
+    ),
+    activeId && NODES[activeId] ? h(DetailPanel, { nodeId: activeId, node: NODES[activeId], onClose: closeDetail }) : null,
+    h('div', { className: 'fixed bottom-5 right-5 z-20 text-xs text-wt-muted opacity-50' },
+      h('kbd', null, 'Scroll'), ' zoom · ', h('kbd', null, 'Drag'), ' pan · Click nodes'
+    )
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(h(App));
+</script>
+</body>
+</html>

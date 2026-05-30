@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="claude-md-audit">
+    <mxGraphModel dx="1400" dy="2000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="1820" math="0" shadow="0" background="#1e1e1e">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- TITLE -->
+        <mxCell id="title" value="claude-md-audit &#8212; Skill Architecture&#10;resolve -&gt; fan-out DETECT per file -&gt; barrier + report -&gt; Q&amp;A gate -&gt; fan-out REMEDIATE per file -&gt; summary" style="text;html=1;align=center;verticalAlign=middle;fontColor=#ffffff;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="10" width="1060" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- 1. resolve (entry / accent) -->
+        <mxCell id="resolve" value="resolve&#10;parse $ARGUMENTS -&gt; N targets; discover.py&#10;classify each file role (root / ancestor / child / local)&#10;-&gt; (path, role, parentPath)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#1a1a1a;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="450" y="80" width="400" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- 2. DETECT (branch / process) -->
+        <mxCell id="detect" value="DETECT &#8212; before Q&amp;A&#10;1 file: inline in main loop; 2+ files: Workflow detect.js&#10;fan-out = parallel(), ONE agent per file" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontColor=#1a1a1a;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="430" y="220" width="440" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- 3. audit lanes container -->
+        <mxCell id="auditBox" value="audit lanes &#8212; parallel(), one agent per file (detection ONLY, no edits)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#6c8ebf;fontColor=#9ecbff;verticalAlign=top;fontStyle=2;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="60" y="360" width="1180" height="540" as="geometry" />
+        </mxCell>
+
+        <!-- Lane: FILE 1 (root) -->
+        <mxCell id="laneRoot" value="FILE 1 - root&#10;(one agent)" style="swimlane;whiteSpace=wrap;html=1;startSize=44;fillColor=#dae8fc;strokeColor=#6c8ebf;fontColor=#1a1a1a;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="100" y="400" width="280" height="470" as="geometry" />
+        </mxCell>
+        <mxCell id="r1" value="1. read the file (root)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="laneRoot">
+          <mxGeometry x="30" y="60" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="r2" value="2. load audit-criteria.md&#10;(single self-contained)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="laneRoot">
+          <mxGeometry x="30" y="130" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="r3" value="3. apply CCP / CRP / ADP&#10;+ Hygiene (role-to-criteria map)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontColor=#1a1a1a;" vertex="1" parent="laneRoot">
+          <mxGeometry x="30" y="200" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="r4" value="4. schema-validate&#10;(if claude_md: YAML block)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="laneRoot">
+          <mxGeometry x="30" y="270" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="r5" value="5. classify findings&#10;taxonomy A-G,K + bucket&#10;(AUTO / DISCUSS / SPECIAL)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="laneRoot">
+          <mxGeometry x="30" y="340" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="er12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="laneRoot" source="r1" target="r2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="er23" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="laneRoot" source="r2" target="r3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="er34" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="laneRoot" source="r3" target="r4"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="er45" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="laneRoot" source="r4" target="r5"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- Lane: FILE 2 (child) -->
+        <mxCell id="laneChild" value="FILE 2 - child&#10;(one agent)" style="swimlane;whiteSpace=wrap;html=1;startSize=44;fillColor=#dae8fc;strokeColor=#6c8ebf;fontColor=#1a1a1a;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="510" y="400" width="280" height="470" as="geometry" />
+        </mxCell>
+        <mxCell id="c1" value="1. read child + parent CLAUDE.md" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="laneChild">
+          <mxGeometry x="30" y="60" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="c2" value="2. load audit-criteria.md&#10;(single self-contained)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="laneChild">
+          <mxGeometry x="30" y="130" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" value="3. apply CCP / CRP / ADP + Hygiene&#10;CCP cross-file dup-check = taxonomy B" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontColor=#1a1a1a;" vertex="1" parent="laneChild">
+          <mxGeometry x="30" y="200" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="c4" value="4. schema-validate&#10;(if claude_md: YAML block)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="laneChild">
+          <mxGeometry x="30" y="270" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="c5" value="5. classify findings&#10;taxonomy A-G,K + bucket&#10;(AUTO / DISCUSS / SPECIAL)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="laneChild">
+          <mxGeometry x="30" y="340" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="ec12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="laneChild" source="c1" target="c2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ec23" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="laneChild" source="c2" target="c3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ec34" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="laneChild" source="c3" target="c4"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="ec45" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="laneChild" source="c4" target="c5"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- Lane: FILE N (local) -->
+        <mxCell id="laneLocal" value="FILE N - local&#10;(one agent) ..." style="swimlane;whiteSpace=wrap;html=1;startSize=44;fillColor=#dae8fc;strokeColor=#6c8ebf;fontColor=#1a1a1a;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="920" y="400" width="280" height="470" as="geometry" />
+        </mxCell>
+        <mxCell id="n1" value="1. read the file (local)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="laneLocal">
+          <mxGeometry x="30" y="60" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n2" value="2. load audit-criteria.md&#10;(single self-contained)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="laneLocal">
+          <mxGeometry x="30" y="130" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n3" value="3. apply D-group criteria ONLY&#10;(skip ADP / Hygiene)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontColor=#1a1a1a;" vertex="1" parent="laneLocal">
+          <mxGeometry x="30" y="200" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n4" value="4. schema-validate&#10;(if claude_md: YAML block)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="laneLocal">
+          <mxGeometry x="30" y="270" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="n5" value="5. classify findings&#10;taxonomy A-G,K + bucket&#10;(AUTO / DISCUSS / SPECIAL)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef3fb;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="laneLocal">
+          <mxGeometry x="30" y="340" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="en12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="laneLocal" source="n1" target="n2"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="en23" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="laneLocal" source="n2" target="n3"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="en34" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="laneLocal" source="n3" target="n4"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="en45" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="laneLocal" source="n4" target="n5"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <!-- 4. barrier: collect findings + render report -->
+        <mxCell id="barrier" value="barrier: collect findings + render report&#10;parallel() join &#8212; wait for every lane&#10;compute bucket totals AUTO / DISCUSS / SPECIAL; main loop renders per-file report&#10;(the one sync point)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#1a1a1a;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="400" y="940" width="500" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- 5. Q&A GATE (decision; human-in-the-loop) -->
+        <mxCell id="gate" value="Q&amp;A GATE&#10;human-in-the-loop&#10;(inferred when 'fast')" style="rhombus;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontColor=#1a1a1a;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="520" y="1080" width="260" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="autoNote" value="AUTO findings&#10;auto-apply&#10;(no decision)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="900" y="1090" width="180" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- 6. REMEDIATE (branch / process) -->
+        <mxCell id="remediate" value="REMEDIATE &#8212; after Q&amp;A&#10;1 file: inline; 2+ files: Workflow remediate.js&#10;fan-out = parallel(), ONE lane per file (disjoint files never conflict)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontColor=#1a1a1a;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="420" y="1250" width="460" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- 7. fix lanes container -->
+        <mxCell id="fixBox" value="fix lanes &#8212; parallel(), one lane per file: apply decided edits in order (Read -&gt; Edit)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#82b366;fontColor=#9be59e;verticalAlign=top;fontStyle=2;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1390" width="1180" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="fixRoot" value="fix lane: FILE 1 - root&#10;&#10;Read -&gt; Edit&#10;apply decided edits in order" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#1a1a1a;" vertex="1" parent="1">
+          <mxGeometry x="120" y="1440" width="280" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="fixChild" value="fix lane: FILE 2 - child&#10;&#10;Read -&gt; Edit&#10;apply decided edits in order" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#1a1a1a;" vertex="1" parent="1">
+          <mxGeometry x="510" y="1440" width="280" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="fixLocal" value="fix lane: FILE N - local ...&#10;&#10;Read -&gt; Edit&#10;apply decided edits in order" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#1a1a1a;" vertex="1" parent="1">
+          <mxGeometry x="920" y="1440" width="280" height="130" as="geometry" />
+        </mxCell>
+
+        <!-- 8. final summary (exit / accent) -->
+        <mxCell id="summary" value="final summary&#10;applied / skipped / failed counts&#10;&quot;re-run the audit to verify FAILs cleared&quot;&#10;(detection &amp; remediation are separate passes -&gt; idempotent re-run = verification)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#1a1a1a;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="430" y="1670" width="440" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- ===== TOP-LEVEL EDGES ===== -->
+        <mxCell id="e_res_det" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#cccccc;" edge="1" parent="1" source="resolve" target="detect"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e_det_root" value="parallel()" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d79b00;fontColor=#ffcc80;" edge="1" parent="1" source="detect" target="laneRoot"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_det_child" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d79b00;" edge="1" parent="1" source="detect" target="laneChild"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_det_local" value="one agent / file" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d79b00;fontColor=#ffcc80;" edge="1" parent="1" source="detect" target="laneLocal"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e_root_bar" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;strokeColor=#d6b656;" edge="1" parent="1" source="laneRoot" target="barrier"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_child_bar" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d6b656;" edge="1" parent="1" source="laneChild" target="barrier"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_local_bar" value="join" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;strokeColor=#d6b656;fontColor=#e0c870;" edge="1" parent="1" source="laneLocal" target="barrier"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e_bar_gate" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#cccccc;" edge="1" parent="1" source="barrier" target="gate"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e_gate_auto" value="AUTO" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#999999;fontColor=#cccccc;" edge="1" parent="1" source="gate" target="autoNote"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e_gate_rem" value="DISCUSS / SPECIAL decided" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#cccccc;fontColor=#e0e0e0;" edge="1" parent="1" source="gate" target="remediate"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e_rem_root" value="parallel()" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d79b00;fontColor=#ffcc80;" edge="1" parent="1" source="remediate" target="fixRoot"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_rem_child" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d79b00;" edge="1" parent="1" source="remediate" target="fixChild"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_rem_local" value="one lane / file" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#d79b00;fontColor=#ffcc80;" edge="1" parent="1" source="remediate" target="fixLocal"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="e_fr_sum" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;strokeColor=#82b366;" edge="1" parent="1" source="fixRoot" target="summary"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_fc_sum" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#82b366;" edge="1" parent="1" source="fixChild" target="summary"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e_fl_sum" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;strokeColor=#82b366;" edge="1" parent="1" source="fixLocal" target="summary"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

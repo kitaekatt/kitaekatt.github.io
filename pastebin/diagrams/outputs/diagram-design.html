@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>claude-md-audit — Skill Architecture</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #2d3142;   /* jet-black */
+      --color-paper-2: #393e53;
+      --color-ink:     #f5f5f5;   /* white-smoke */
+      --color-muted:   #bfc0c0;   /* silver */
+      --color-accent:  #f08a59;   /* atomic-tangerine (dark) */
+      --color-link:    #6a95d8;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1080px; width: 100%; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2.1rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 0.4rem;
+    }
+
+    .subtitle {
+      font-family: var(--font-sans);
+      font-size: 0.86rem;
+      color: var(--color-muted);
+      margin-bottom: 1.5rem;
+      max-width: 760px;
+    }
+
+    svg { width: 100%; min-width: 900px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Flowchart · Diagram Design</p>
+    <h1>claude-md-audit — Skill Architecture</h1>
+    <p class="subtitle">resolve → fan-out DETECT per file → barrier + report → Q&amp;A gate → fan-out REMEDIATE per file → summary</p>
+
+    <svg viewBox="0 0 1000 1648" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#6a95d8"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#2d3142"/>
+
+      <!-- ================= ARROWS (drawn first, behind nodes) ================= -->
+
+      <!-- resolve -> fan-out marker (DETECT) -->
+      <line x1="500" y1="100" x2="500" y2="136" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- DETECT fan-out dot -> three lanes + ellipsis (parallel, one agent per file) -->
+      <line x1="500" y1="172" x2="184" y2="236" stroke="#f08a59" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+      <line x1="500" y1="172" x2="500" y2="236" stroke="#f08a59" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+      <line x1="500" y1="172" x2="816" y2="236" stroke="#f08a59" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+
+      <!-- lanes -> barrier (join) -->
+      <line x1="160" y1="612" x2="492" y2="660" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="500" y1="612" x2="500" y2="660" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="840" y1="612" x2="508" y2="660" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- barrier -> Q&A gate -->
+      <line x1="500" y1="716" x2="500" y2="760" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- Q&A gate AUTO branch (right, auto-apply) -->
+      <line x1="616" y1="824" x2="752" y2="824" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- Q&A gate DISCUSS/SPECIAL decided -> down to REMEDIATE fan-out (happy path coral) -->
+      <line x1="500" y1="888" x2="500" y2="936" stroke="#f08a59" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+      <!-- AUTO end-oval rejoins toward remediate fan-out -->
+      <line x1="832" y1="848" x2="832" y2="912" stroke="#bfc0c0" stroke-width="1.2"/>
+      <line x1="832" y1="912" x2="512" y2="960" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- REMEDIATE fan-out dot -> three fix lanes + ellipsis (parallel, one lane per file) -->
+      <line x1="500" y1="996" x2="184" y2="1060" stroke="#f08a59" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+      <line x1="500" y1="996" x2="500" y2="1060" stroke="#f08a59" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+      <line x1="500" y1="996" x2="816" y2="1060" stroke="#f08a59" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+
+      <!-- fix lanes -> final summary (join) -->
+      <line x1="160" y1="1300" x2="492" y2="1356" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="500" y1="1300" x2="500" y2="1356" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <line x1="840" y1="1300" x2="508" y2="1356" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+      <!-- ================= ARROW LABELS (masked) ================= -->
+      <rect x="468" y="116" width="64" height="12" rx="2" fill="#2d3142"/>
+      <text x="500" y="125" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">2+ FILES</text>
+
+      <rect x="318" y="196" width="120" height="12" rx="2" fill="#2d3142"/>
+      <text x="378" y="205" fill="#f08a59" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">PARALLEL() · 1 AGENT/FILE</text>
+
+      <rect x="660" y="812" width="36" height="12" rx="2" fill="#2d3142"/>
+      <text x="678" y="821" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">AUTO</text>
+
+      <rect x="380" y="906" width="240" height="12" rx="2" fill="#2d3142"/>
+      <text x="500" y="915" fill="#f08a59" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">DISCUSS / SPECIAL DECIDED</text>
+
+      <rect x="318" y="1020" width="120" height="12" rx="2" fill="#2d3142"/>
+      <text x="378" y="1029" fill="#f08a59" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">PARALLEL() · 1 LANE/FILE</text>
+
+      <!-- ================= NODES ================= -->
+
+      <!-- 1. resolve (entry oval, accent focal) -->
+      <rect x="380" y="40" width="240" height="60" rx="30" fill="rgba(240,138,89,0.10)" stroke="#f08a59" stroke-width="1.2"/>
+      <text x="500" y="68" fill="#f5f5f5" font-size="13" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">resolve</text>
+      <text x="500" y="86" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">$ARGUMENTS → discover.py → role</text>
+
+      <!-- 2. DETECT fan-out marker (rectangle: branch into Workflow detect.js) -->
+      <rect x="380" y="136" width="240" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <rect x="388" y="143" width="56" height="12" rx="2" fill="transparent" stroke="rgba(245,245,245,0.40)" stroke-width="0.8"/>
+      <text x="416" y="152" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">DETECT</text>
+      <text x="536" y="159" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Workflow detect.js</text>
+
+      <!-- fan-out merge dot (DETECT) -->
+      <circle cx="500" cy="172" r="4" fill="#f08a59"/>
+
+      <!-- audit lanes header band -->
+      <text x="500" y="222" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.16em">AUDIT LANES · DETECTION ONLY — NO FILE EDITED</text>
+
+      <!-- ===== LANE 1 · FILE 1 root ===== -->
+      <rect x="40" y="236" width="240" height="376" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.20)" stroke-width="1"/>
+      <text x="60" y="262" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif">FILE 1 · root</text>
+      <text x="60" y="278" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace">one agent</text>
+
+      <rect x="60" y="292" width="200" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="160" y="314" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">1 · read root file</text>
+
+      <rect x="60" y="340" width="200" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="160" y="362" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">2 · load audit-criteria.md</text>
+
+      <rect x="60" y="388" width="200" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="160" y="410" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">3 · apply CCP / CRP / ADP</text>
+
+      <rect x="60" y="436" width="200" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="160" y="458" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">4 · schema-validate</text>
+      <text x="160" y="471" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">if claude_md: block</text>
+
+      <rect x="60" y="496" width="200" height="40" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="160" y="514" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">5 · classify findings</text>
+      <text x="160" y="528" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">taxonomy A–G,K → bucket</text>
+
+      <!-- inner sequence connectors lane 1 -->
+      <line x1="160" y1="328" x2="160" y2="338" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+      <line x1="160" y1="376" x2="160" y2="386" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+      <line x1="160" y1="424" x2="160" y2="434" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+      <line x1="160" y1="486" x2="160" y2="494" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+
+      <!-- ===== LANE 2 · FILE 2 child ===== -->
+      <rect x="380" y="236" width="240" height="376" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.20)" stroke-width="1"/>
+      <text x="400" y="262" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif">FILE 2 · child</text>
+      <text x="400" y="278" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace">one agent</text>
+
+      <rect x="400" y="292" width="200" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="500" y="310" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">1 · read child + parent</text>
+      <text x="500" y="323" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">parent CLAUDE.md</text>
+
+      <rect x="400" y="340" width="200" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="500" y="362" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">2 · load audit-criteria.md</text>
+
+      <rect x="400" y="388" width="200" height="40" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="500" y="406" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">3 · apply CCP / CRP / ADP</text>
+      <text x="500" y="420" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">cross-file dup → taxonomy B</text>
+
+      <rect x="400" y="440" width="200" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="500" y="462" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">4 · schema-validate</text>
+
+      <rect x="400" y="496" width="200" height="40" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="500" y="514" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">5 · classify findings</text>
+      <text x="500" y="528" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">taxonomy → bucket</text>
+
+      <line x1="500" y1="328" x2="500" y2="338" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+      <line x1="500" y1="376" x2="500" y2="386" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+      <line x1="500" y1="428" x2="500" y2="438" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+      <line x1="500" y1="476" x2="500" y2="494" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+
+      <!-- ===== LANE 3 · FILE N local ===== -->
+      <rect x="720" y="236" width="240" height="376" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.20)" stroke-width="1"/>
+      <text x="740" y="262" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif">FILE N · local</text>
+      <text x="740" y="278" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace">one agent · ellipsis ⋯</text>
+
+      <rect x="740" y="292" width="200" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="840" y="314" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">1 · read local file</text>
+
+      <rect x="740" y="340" width="200" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="840" y="362" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">2 · load audit-criteria.md</text>
+
+      <rect x="740" y="388" width="200" height="40" rx="6" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="840" y="406" fill="#bfc0c0" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">3 · D-group criteria only</text>
+      <text x="840" y="420" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">skip ADP / Hygiene</text>
+
+      <rect x="740" y="440" width="200" height="36" rx="6" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="840" y="462" fill="#bfc0c0" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">4 · schema-validate</text>
+
+      <rect x="740" y="496" width="200" height="40" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="840" y="514" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">5 · classify findings</text>
+      <text x="840" y="528" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">taxonomy → bucket</text>
+
+      <line x1="840" y1="328" x2="840" y2="338" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+      <line x1="840" y1="376" x2="840" y2="386" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+      <line x1="840" y1="428" x2="840" y2="438" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+      <line x1="840" y1="476" x2="840" y2="494" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+
+      <!-- 4. barrier: collect + render report (the one sync point) -->
+      <rect x="340" y="660" width="320" height="56" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1.2"/>
+      <rect x="348" y="668" width="64" height="12" rx="2" fill="transparent" stroke="rgba(245,245,245,0.40)" stroke-width="0.8"/>
+      <text x="380" y="677" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">BARRIER</text>
+      <text x="500" y="687" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">collect findings + render report</text>
+      <text x="500" y="703" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">parallel() join · totals AUTO / DISCUSS / SPECIAL</text>
+
+      <!-- 5. Q&A GATE (decision diamond, human-in-the-loop) -->
+      <polygon points="500,760 624,824 500,888 376,824" fill="#393e53" stroke="#f5f5f5" stroke-width="1.2"/>
+      <text x="500" y="816" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Q&amp;A GATE</text>
+      <text x="500" y="832" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">human-in-the-loop</text>
+      <text x="500" y="846" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">inferred if 'fast'</text>
+
+      <!-- AUTO end-oval (auto-apply, no decision) -->
+      <rect x="752" y="800" width="160" height="48" rx="24" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.30)" stroke-width="1"/>
+      <text x="832" y="824" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">AUTO auto-apply</text>
+      <text x="832" y="838" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">no decision needed</text>
+
+      <!-- 6. REMEDIATE fan-out marker (rectangle: branch into Workflow remediate.js) -->
+      <rect x="380" y="936" width="240" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <rect x="388" y="943" width="76" height="12" rx="2" fill="transparent" stroke="rgba(245,245,245,0.40)" stroke-width="0.8"/>
+      <text x="426" y="952" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">REMEDIATE</text>
+      <text x="552" y="959" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Workflow remediate.js</text>
+
+      <!-- fan-out merge dot (REMEDIATE) -->
+      <circle cx="500" cy="996" r="4" fill="#f08a59"/>
+
+      <!-- fix lanes header -->
+      <text x="500" y="1046" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.16em">FIX LANES · DISJOINT FILES NEVER CONFLICT</text>
+
+      <!-- ===== FIX LANE 1 ===== -->
+      <rect x="40" y="1060" width="240" height="240" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.20)" stroke-width="1"/>
+      <text x="60" y="1086" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif">FILE 1 · fix</text>
+      <text x="60" y="1102" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace">one lane</text>
+
+      <rect x="60" y="1116" width="200" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="160" y="1138" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Read</text>
+
+      <rect x="60" y="1164" width="200" height="40" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="160" y="1182" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Edit</text>
+      <text x="160" y="1196" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">apply decided edits in order</text>
+
+      <line x1="160" y1="1152" x2="160" y2="1162" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+
+      <!-- ===== FIX LANE 2 ===== -->
+      <rect x="380" y="1060" width="240" height="240" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.20)" stroke-width="1"/>
+      <text x="400" y="1086" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif">FILE 2 · fix</text>
+      <text x="400" y="1102" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace">one lane</text>
+
+      <rect x="400" y="1116" width="200" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="500" y="1138" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Read</text>
+
+      <rect x="400" y="1164" width="200" height="40" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="500" y="1182" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Edit</text>
+      <text x="500" y="1196" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">apply decided edits in order</text>
+
+      <line x1="500" y1="1152" x2="500" y2="1162" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+
+      <!-- ===== FIX LANE N ===== -->
+      <rect x="720" y="1060" width="240" height="240" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.20)" stroke-width="1"/>
+      <text x="740" y="1086" fill="#f5f5f5" font-size="12" font-weight="600" font-family="'Geist', sans-serif">FILE N · fix</text>
+      <text x="740" y="1102" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace">one lane · ellipsis ⋯</text>
+
+      <rect x="740" y="1116" width="200" height="36" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="840" y="1138" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Read</text>
+
+      <rect x="740" y="1164" width="200" height="40" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="840" y="1182" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Edit</text>
+      <text x="840" y="1196" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">apply decided edits in order</text>
+
+      <line x1="840" y1="1152" x2="840" y2="1162" stroke="#bfc0c0" stroke-width="1" marker-end="url(#arrow)"/>
+
+      <!-- 8. final summary (exit oval, accent focal) -->
+      <rect x="370" y="1356" width="260" height="64" rx="32" fill="rgba(240,138,89,0.10)" stroke="#f08a59" stroke-width="1.2"/>
+      <text x="500" y="1384" fill="#f5f5f5" font-size="13" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">final summary</text>
+      <text x="500" y="1400" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">applied / skipped / failed</text>
+      <text x="500" y="1412" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">re-run audit → idempotent verify</text>
+
+      <!-- ================= LEGEND (horizontal bottom strip) ================= -->
+      <line x1="40" y1="1480" x2="960" y2="1480" stroke="rgba(245,245,245,0.10)" stroke-width="0.8"/>
+      <text x="40" y="1498" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEGEND · SHAPE CARRIES TYPE</text>
+
+      <!-- oval -->
+      <rect x="40" y="1516" width="24" height="14" rx="7" fill="rgba(240,138,89,0.10)" stroke="#f08a59" stroke-width="1"/>
+      <text x="74" y="1527" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Entry / exit (oval, focal)</text>
+
+      <!-- rectangle -->
+      <rect x="248" y="1516" width="24" height="14" rx="4" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="282" y="1527" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Step (rectangle)</text>
+
+      <!-- diamond -->
+      <polygon points="440,1517 452,1523 440,1529 428,1523" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+      <text x="462" y="1527" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Decision (diamond)</text>
+
+      <!-- fan-out dot -->
+      <circle cx="612" cy="1523" r="4" fill="#f08a59"/>
+      <text x="624" y="1527" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">parallel() fan-out</text>
+
+      <!-- accent arrow -->
+      <line x1="772" y1="1523" x2="800" y2="1523" stroke="#f08a59" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+      <text x="808" y="1527" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Happy path</text>
+
+      <!-- second legend row: dashed = skipped, branch -->
+      <rect x="40" y="1544" width="24" height="14" rx="4" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="74" y="1555" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Skipped step (local lane)</text>
+
+      <line x1="248" y1="1551" x2="276" y2="1551" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <text x="284" y="1555" fill="#bfc0c0" font-size="8.5" font-family="'Geist', sans-serif">Branch / join</text>
+    </svg>
+  </div>
+</body>
+</html>

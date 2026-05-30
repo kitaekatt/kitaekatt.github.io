@@ -1,0 +1,54 @@
+%%{init: {'theme':'dark','themeVariables':{'fontSize':'14px','clusterBkg':'#0f172a','clusterBorder':'#334155','lineColor':'#94a3b8'},'flowchart':{'curve':'basis','htmlLabels':true,'nodeSpacing':45,'rankSpacing':55}}}%%
+flowchart TB
+
+    resolve(["<b>resolve</b><br/><span style='font-size:11px'>$ARGUMENTS → N targets · discover.py<br/>classify role: root / ancestor / child / local<br/>→ (path, role, parentPath)</span>"])
+
+    detect{{"<b>DETECT — before Q&amp;A</b><br/><span style='font-size:11px'>1 file → inline in main loop<br/>2+ files → Workflow detect.js<br/>fan-out = parallel(), one agent per file</span>"}}
+
+    subgraph lanes ["AUDIT LANES — parallel(), one agent per file · detection only, no edits"]
+        direction LR
+        l1["<b>FILE 1 · root</b><br/>1 read root<br/>2 load audit-criteria.md<br/>3 apply CCP / CRP / ADP + Hygiene<br/>4 schema-validate (if claude_md: block)<br/>5 classify → taxonomy + bucket"]
+        l2["<b>FILE 2 · child</b><br/>1 read child + parent CLAUDE.md<br/>2 CCP cross-file dup-check → taxonomy B<br/>3 apply CRP / ADP + Hygiene<br/>4 schema-validate (if block)<br/>5 classify → taxonomy + bucket"]
+        ln["<b>FILE N · local</b><br/>1 read .local file<br/>2 D-group criteria only<br/>3 skip ADP / Hygiene<br/>5 classify → taxonomy + bucket"]
+        dots["… one lane per file<br/><span style='font-size:11px'>(N files total)</span>"]
+    end
+
+    barrier["<b>BARRIER — collect findings + render report</b><br/><span style='font-size:11px'>parallel() join · wait for every lane<br/>compute bucket totals AUTO / DISCUSS / SPECIAL<br/>main loop renders per-file report · the one sync point</span>"]
+
+    gate{"<b>Q&amp;A GATE</b><br/><span style='font-size:11px'>human-in-the-loop · interactive per DISCUSS / SPECIAL<br/>inferred automatically when non-interactive ('fast')<br/>AUTO findings auto-apply — no decision needed</span>"}
+
+    remediate{{"<b>REMEDIATE — after Q&amp;A</b><br/><span style='font-size:11px'>1 file → inline<br/>2+ files → Workflow remediate.js<br/>fan-out = parallel(), one lane per file (disjoint, no conflict)</span>"}}
+
+    subgraph fixlanes ["FIX LANES — parallel(), one lane per file · apply decided edits"]
+        direction LR
+        f1["<b>FILE 1</b><br/>apply decided edits in order<br/>Read → Edit"]
+        f2["<b>FILE 2</b><br/>apply decided edits in order<br/>Read → Edit"]
+        fn["<b>FILE N</b><br/>apply decided edits in order<br/>Read → Edit"]
+        fdots["… one lane per file"]
+    end
+
+    summary(["<b>final summary</b><br/><span style='font-size:11px'>applied / skipped / failed counts<br/>re-run the audit to verify FAILs cleared<br/>(detect &amp; remediate are separate passes → idempotent)</span>"])
+
+    resolve --> detect
+    detect --> l1 & l2 & ln
+    l1 & l2 & ln --> barrier
+    barrier --> gate
+    gate -->|"decisions resolved"| remediate
+    remediate --> f1 & f2 & fn
+    f1 & f2 & fn --> summary
+
+    classDef entry fill:#0e7490,stroke:#22d3ee,color:#fff,font-weight:bold;
+    classDef branch fill:#4c1d95,stroke:#a78bfa,color:#fff;
+    classDef lane fill:#083344,stroke:#22d3ee,color:#e2e8f0;
+    classDef fix fill:#78350f,stroke:#fbbf24,color:#fff;
+    classDef decision fill:#881337,stroke:#fb7185,color:#fff,font-weight:bold;
+    classDef sync fill:#1e293b,stroke:#64748b,color:#e2e8f0;
+    classDef ghost fill:none,stroke:#475569,color:#94a3b8,stroke-dasharray:4 3;
+
+    class resolve,summary entry;
+    class detect,remediate branch;
+    class l1,l2,ln lane;
+    class f1,f2,fn fix;
+    class gate decision;
+    class barrier sync;
+    class dots,fdots ghost;
