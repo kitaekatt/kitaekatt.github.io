@@ -11,7 +11,9 @@
  *     │     └── RTView.update(reader)  scalar accessors -> view units
  *     │           (reader.extra copies kind/flags/radius per unit)
  *     └── RTRender.frame(units, alpha)  camera follows P1's hero,
- *           tilemap arena, y-sort, per-kind placeholder sprites, HUD
+ *           tilemap arena, y-sort, per-kind real Unity sprites
+ *           (assets/*.png + lib/sashimi-art-data.js manifests;
+ *           ?art=proc falls back to the procedural placeholders), HUD
  *
  * Join = possession: both heroes exist from app start; a device's first
  * input claims clientId 1..2 and wasm_join adds PossessedBy so hero_ai
@@ -124,6 +126,32 @@ var SashimiClient = (function() {
                     : label + ': no free hero to possess');
             },
         });
+        /* Animation state machine over the per-tick flags, mirroring the
+           Unity UnitAnimationManager: Defeated -> Defeat (plays once,
+           holds the last frame), TookDamage -> Damage (a blocking
+           animation: latched until its clip length elapses even though
+           the flag lasts one tick), else Walk/Idle. State changes reset
+           the unit's animation clock (animTimeFor) so play-once rows
+           start at frame 0 — the UASO clips are authored to run from
+           the state edge, exactly like Unity's animator. */
+        function stateFor(u) {
+            var t = performance.now() / 1000;
+            var want;
+            if (u.flags & FLAG_DEFEATED) want = 'defeat';
+            else if (u.flags & FLAG_HIT) want = 'damage';
+            else want = u.moving ? 'walk' : 'idle';
+            if (want !== 'damage' && want !== 'defeat' &&
+                u.animState === 'damage' &&
+                t - u.animStart < sprites.stateDuration(u.kind, 'damage')) {
+                want = 'damage';   /* blocking anim runs to completion */
+            }
+            if (want !== u.animState) {
+                u.animState = want;
+                u.animStart = t;
+            }
+            return want;
+        }
+
         var render = RTRender.init({
             canvas: opts.canvas,
             mapW: mapW, mapH: mapH,
@@ -136,15 +164,19 @@ var SashimiClient = (function() {
             sizeFor: function(u, tilePx) {
                 return tilePx * sprites.size(u.kind);
             },
-            stateFor: function(u) {
-                if (u.flags & FLAG_DEFEATED) return 'idle';
-                return u.moving ? 'walk' : 'idle';
+            stateFor: stateFor,
+            animTimeFor: function(u, t) {
+                return u.animStart !== undefined ? t - u.animStart
+                                                 : t + u.animPhase;
+            },
+            barFor: function(u, tilePx) {
+                return sprites.barFor(u.kind, tilePx);
             },
             alphaFor: function(u, t) {
-                if (u.flags & FLAG_DEFEATED) return 0.3;
+                if (u.flags & FLAG_DEFEATED) return 0.55;
                 if (u.flags & FLAG_IFRAMES)
                     return 0.45 + 0.35 * Math.sin(t * 24);
-                if (u.flags & FLAG_HIT) return 0.65;
+                if (u.flags & FLAG_HIT) return 0.75;
                 return 1;
             },
         });

@@ -6,7 +6,9 @@
  * "<state>_<dir>" with dir in E NE N NW W SW S SE (screen coords, y down,
  * N = up). Each entry is either:
  *
- *   authored:  { row, frames, fps, mirror? }   — a sheet row
+ *   authored:  { row, frames, fps, mirror?, once? }   — a sheet row
+ *              (once: play once and hold the last frame — blocking
+ *              animations like Damage/Defeat; loops otherwise)
  *   fallback:  { fallback: '<state>_<dir>', mirror? }  — follow the chain,
  *              XOR-accumulating mirror flags (FallbackName/FallbackInverse)
  *
@@ -15,6 +17,10 @@
  *
  * A unit definition:
  *   { sheet: <canvas|image>, frameSize: 32, anchorY: 0.85, table: {...} }
+ * Non-square frames use frameW/frameH instead of frameSize; anchorX
+ * (default 0.5) places the horizontal pivot. draw() takes an optional
+ * angle (radians, rotation about the anchor) for units rendered facing
+ * their travel direction (projectiles).
  *
  * makePlaceholderUnit(palette) builds a procedurally drawn sheet + a table
  * that exercises the machinery (5 authored walk directions, 3 authored idle
@@ -33,7 +39,7 @@ var RTSprites = (function() {
     }
 
     /* Follow fallback chains to the authored row; returns
-       { row, frames, fps, mirror } or null. */
+       { row, frames, fps, mirror, once } or null. */
     function resolve(table, stateKey) {
         var mirror = false;
         var key = stateKey;
@@ -42,34 +48,46 @@ var RTSprites = (function() {
             if (!e) return null;
             if (e.mirror) mirror = !mirror;
             if (typeof e.row === 'number') {
-                return { row: e.row, frames: e.frames, fps: e.fps, mirror: mirror };
+                return { row: e.row, frames: e.frames, fps: e.fps,
+                         mirror: mirror, once: !!e.once };
             }
             key = e.fallback;
         }
         return null;
     }
 
-    /* Draw one unit sprite. (cx, cy) is the screen-space anchor (feet),
-       sizePx the on-screen frame size, tSec a monotonic animation clock. */
-    function draw(ctx, def, state, dir, tSec, cx, cy, sizePx) {
+    /* Draw one unit sprite. (cx, cy) is the screen-space anchor (the
+       def's pivot point), sizePx the on-screen frame *height* (width
+       follows the frame aspect), tSec a monotonic animation clock —
+       state-relative for `once` rows to make sense. angleRad (optional)
+       rotates about the anchor. Image sheets that have not finished
+       loading draw nothing (drawImage no-ops), so art pops in when
+       ready. */
+    function draw(ctx, def, state, dir, tSec, cx, cy, sizePx, angleRad) {
         var a = resolve(def.table, state + '_' + dir);
         if (!a) a = resolve(def.table, 'idle_S');
         if (!a) return;
-        var frame = Math.floor(tSec * a.fps) % a.frames;
-        var fs = def.frameSize;
-        var sx = frame * fs;
-        var sy = a.row * fs;
-        var anchorY = def.anchorY !== undefined ? def.anchorY : 0.85;
-        var dx = cx - sizePx / 2;
-        var dy = cy - sizePx * anchorY;
-        if (a.mirror) {
+        var idx = Math.floor(tSec * a.fps);
+        var frame = a.once ? Math.min(Math.max(idx, 0), a.frames - 1)
+                           : ((idx % a.frames) + a.frames) % a.frames;
+        var fw = def.frameW !== undefined ? def.frameW : def.frameSize;
+        var fh = def.frameH !== undefined ? def.frameH : def.frameSize;
+        var sx = frame * fw;
+        var sy = a.row * fh;
+        var h = sizePx;
+        var w = sizePx * fw / fh;
+        var ax = def.anchorX !== undefined ? def.anchorX : 0.5;
+        var ay = def.anchorY !== undefined ? def.anchorY : 0.85;
+        if (a.mirror || angleRad) {
             ctx.save();
-            ctx.translate(cx, 0);
-            ctx.scale(-1, 1);
-            ctx.drawImage(def.sheet, sx, sy, fs, fs, -sizePx / 2, dy, sizePx, sizePx);
+            ctx.translate(cx, cy);
+            if (angleRad) ctx.rotate(angleRad);
+            if (a.mirror) ctx.scale(-1, 1);
+            ctx.drawImage(def.sheet, sx, sy, fw, fh, -w * ax, -h * ay, w, h);
             ctx.restore();
         } else {
-            ctx.drawImage(def.sheet, sx, sy, fs, fs, dx, dy, sizePx, sizePx);
+            ctx.drawImage(def.sheet, sx, sy, fw, fh,
+                          cx - w * ax, cy - h * ay, w, h);
         }
     }
 

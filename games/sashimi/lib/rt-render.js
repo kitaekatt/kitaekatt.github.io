@@ -154,9 +154,18 @@ var RTRender = (function() {
 
             /* Sprites. Optional per-unit hooks (all additive, defaults
                reproduce the original behavior):
-                 sizeFor(u, tilePx) -> on-screen frame size in px
-                 stateFor(u)        -> animation state name
-                 alphaFor(u, tSec)  -> draw opacity (i-frame flicker etc.) */
+                 sizeFor(u, tilePx)   -> on-screen frame size in px
+                 stateFor(u)          -> animation state name
+                 alphaFor(u, tSec)    -> draw opacity (i-frame flicker etc.)
+                 animTimeFor(u, tSec) -> animation clock (state-relative
+                                         clocks for play-once rows)
+                 barFor(u, tilePx)    -> { dy, w } health-bar geometry in px
+                                         (dy above the anchor); art whose
+                                         frames are padded by FX cells needs
+                                         bars tied to visual bounds, not the
+                                         frame size
+               A def with rotate: true is drawn rotated to the unit's
+               facing vector (projectiles fly point-first). */
             var t = performance.now() / 1000;
             for (var j = 0; j < draw.length; j++) {
                 var d = draw[j];
@@ -179,13 +188,19 @@ var RTRender = (function() {
                     ctx.stroke();
                 }
 
-                RTSprites.draw(ctx, def, state, dir, t + u2.animPhase, d.sx, d.sy, sizePx);
+                var animT = cfg.animTimeFor ? cfg.animTimeFor(u2, t)
+                                            : t + u2.animPhase;
+                var angle = def.rotate
+                    ? Math.atan2(u2.faceY || 0, u2.faceX || 1) : 0;
+                RTSprites.draw(ctx, def, state, dir, animT, d.sx, d.sy, sizePx, angle);
 
                 /* health bar above the sprite (entities without a health
                    pool — maxHealth 0 — draw none) */
+                var bar = cfg.barFor ? cfg.barFor(u2, tilePx) : null;
+                var barY = d.sy - (bar ? bar.dy : sizePx * 0.95);
                 if (u2.maxHealth > 0) {
                     var pct = u2.health / u2.maxHealth;
-                    drawHealthBar(d.sx, d.sy - sizePx * 0.95, sizePx * 0.6, Math.max(0, Math.min(1, pct)));
+                    drawHealthBar(d.sx, barY, bar ? bar.w : sizePx * 0.6, Math.max(0, Math.min(1, pct)));
                 }
 
                 /* player label */
@@ -193,7 +208,8 @@ var RTRender = (function() {
                     ctx.fillStyle = SLOT_COLORS[u2.slot] || '#ffffff';
                     ctx.font = 'bold ' + Math.round(tilePx * 0.25) + 'px monospace';
                     ctx.textAlign = 'center';
-                    ctx.fillText('P' + u2.slot, d.sx, d.sy - sizePx * 1.05);
+                    ctx.fillText('P' + u2.slot, d.sx,
+                                 bar ? barY - 5 : d.sy - sizePx * 1.05);
                 }
                 if (alpha !== 1) ctx.globalAlpha = 1;
             }

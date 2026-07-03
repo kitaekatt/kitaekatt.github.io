@@ -1,15 +1,25 @@
 /**
- * SashimiSprites — placeholder procedural sprite sheets for the sashimi
- * client, expressed as rt-sprites.js unit definitions (sheet + directional
- * animation table with mirror fallback chains — the UnitAnimationDataSO
- * pattern). Real art is a later swap: replace the painters/sheets, keep the
- * table format and kind mapping.
+ * SashimiSprites — sprite sheets + animation tables for the sashimi client,
+ * as rt-sprites.js unit definitions (sheet + directional animation table
+ * with mirror fallback chains — the UnitAnimationDataSO pattern).
+ *
+ * Two art paths:
+ *   REAL (default)   — the Unity project's actual sprites: packed sheet
+ *     PNGs (assets/<name>.png, HTTP-loaded) + generated manifests
+ *     (lib/sashimi-art-data.js), both emitted by
+ *     clients/tools/extract-art.py from the UnitAnimationDataSO tables,
+ *     .anim keyframes and texture slicing metadata. World sizes are
+ *     PPU-derived, so entities render at exactly Unity's scale.
+ *   PROCEDURAL (fallback) — the original placeholder painters, kept for
+ *     art-less debugging and as a reference for the def format. Select
+ *     with ?art=proc, or automatically when sashimi-art-data.js is absent.
  *
  * Kinds mirror the WASM bridge enum (wasm_main.c SW_KIND_*):
  *   1 HeroEagle  2 HeroFrog  3 Slime  4 Wolf  5 Golem  6 Wisp  7 Cube
  *   8 Shuriken  9 Feather  10 WispShot  11 Gem  12 Heart
+ * KIND_INFO names match the manifest unit names 1:1.
  *
- * All values here are presentation-only (silhouette shapes, colors, on-screen
+ * All values here are presentation-only (frame rects, anchors, on-screen
  * sizes). Game parameters stay engine-side (root CLAUDE.md decision 13).
  */
 var SashimiSprites = (function() {
@@ -375,7 +385,64 @@ var SashimiSprites = (function() {
         12: { name: 'heart',    size: 0.5 },
     };
 
-    function build() {
+    /* ── Real art (extract-art.py manifests + packed sheet PNGs) ────── */
+
+    function buildReal() {
+        var version = SashimiArtData.version;
+        var defs = {};
+        var byKind = {};
+        Object.keys(SashimiArtData.units).forEach(function(name) {
+            var u = SashimiArtData.units[name];
+            var img = new Image();
+            /* content-hash version busts GitHub Pages caching (root
+               CLAUDE.md decision 22); rt-sprites draws nothing until the
+               sheet is decoded, so art pops in as it loads */
+            img.src = u.sheet + '?v=' + version;
+            defs[name] = {
+                sheet: img,
+                frameW: u.frameW, frameH: u.frameH,
+                anchorX: u.anchorX, anchorY: u.anchorY,
+                rotate: u.rotate,
+                table: u.table,
+            };
+            byKind[u.kind] = { name: name, unit: u };
+        });
+
+        return {
+            real: true,
+            defs: defs,
+            defName: function(kind) {
+                var k = byKind[kind];
+                return k ? k.name : 'slime';
+            },
+            /* on-screen height in world units == Unity sprite height
+               (frame px / PPU) */
+            size: function(kind) {
+                var k = byKind[kind];
+                return k ? k.unit.worldH : 0.7;
+            },
+            /* health-bar geometry from the idle art's visual bounds (the
+               frame cell is padded by defeat/attack FX frames) */
+            barFor: function(kind, tilePx) {
+                var k = byKind[kind];
+                if (!k) return null;
+                var w = Math.max(12, Math.min(60, k.unit.uiW * tilePx * 0.9));
+                return { dy: k.unit.uiTop * tilePx + 6, w: w };
+            },
+            /* seconds a play-once state runs (0 = looping/absent) */
+            stateDuration: function(kind, state) {
+                var k = byKind[kind];
+                if (!k) return 0;
+                var a = RTSprites.resolve(k.unit.table, state + '_SE');
+                if (!a) a = RTSprites.resolve(k.unit.table, state + '_S');
+                return (a && a.once) ? a.frames / a.fps : 0;
+            },
+        };
+    }
+
+    /* ── Procedural placeholder art (fallback path) ─────────────────── */
+
+    function buildProcedural() {
         var FS = 32;
         var defs = {
             eagle: RTSprites.makePlaceholderUnit({
@@ -414,6 +481,7 @@ var SashimiSprites = (function() {
         };
 
         return {
+            real: false,
             defs: defs,
             defName: function(kind) {
                 var k = KIND_INFO[kind];
@@ -423,7 +491,18 @@ var SashimiSprites = (function() {
                 var k = KIND_INFO[kind];
                 return k ? k.size : 0.7;
             },
+            barFor: function() { return null; },       /* default geometry */
+            stateDuration: function() { return 0; },   /* nothing blocks */
         };
+    }
+
+    function build() {
+        var wantProc = typeof location !== 'undefined' &&
+            /[?&]art=proc\b/.test(location.search);
+        if (wantProc || typeof SashimiArtData === 'undefined') {
+            return buildProcedural();
+        }
+        return buildReal();
     }
 
     return { build: build };
