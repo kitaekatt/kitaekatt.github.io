@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>sashimi — survival action (60Hz WASM)</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    height: 100%; overflow: hidden; background: #10101c;
+    touch-action: none; overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+canvas { display: block; touch-action: none; }
+#hud {
+    position: fixed; z-index: 5;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    left: calc(env(safe-area-inset-left, 0px) + 8px);
+    background: rgba(10, 10, 25, 0.78); border: 1px solid #333;
+    border-radius: 6px; padding: 8px 12px;
+    color: #9fe8a0; font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+    font-size: 12px; line-height: 1.5; white-space: pre;
+}
+#banner {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    z-index: 5; color: #ccc; font-family: monospace; font-size: 13px;
+    background: rgba(10, 10, 25, 0.78); border: 1px solid #333;
+    border-radius: 6px; padding: 6px 14px; white-space: pre;
+    max-width: 94vw;
+}
+#pausebtn {
+    position: fixed; z-index: 6;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    right: calc(env(safe-area-inset-right, 0px) + 8px);
+    width: 44px; height: 44px;
+    background: rgba(10, 10, 25, 0.78); border: 1px solid #444;
+    border-radius: 8px; color: #9fe8a0;
+    font: 16px monospace; cursor: pointer;
+}
+#pausebtn:active { background: rgba(40, 40, 70, 0.9); }
+#overlay {
+    position: fixed; inset: 0; z-index: 10; display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; background: rgba(8, 8, 18, 0.82);
+    color: #ddd; font-family: monospace; text-align: center;
+}
+#overlay .go-title { font-size: 52px; letter-spacing: 8px; font-weight: bold; }
+#overlay .go-victory { color: #8fe89a; text-shadow: 0 0 24px rgba(90, 230, 120, 0.5); }
+#overlay .go-defeat { color: #e86a6a; text-shadow: 0 0 24px rgba(230, 80, 80, 0.5); }
+#overlay .go-msg { font-size: 13px; color: #999; }
+#overlay .go-stats { font-size: 15px; line-height: 1.7; white-space: pre; text-align: left; }
+#overlay .go-restart {
+    margin-top: 8px; padding: 12px 32px; min-height: 44px;
+    background: rgba(30, 40, 60, 0.9); border: 1px solid #8ab6e8;
+    border-radius: 8px; color: #8ab6e8;
+    font: bold 15px monospace; letter-spacing: 2px; cursor: pointer;
+}
+#overlay .go-restart:active { background: rgba(50, 70, 100, 0.95); }
+#overlay .go-hint { font-size: 13px; color: #8ab6e8; }
+#version { position: fixed; bottom: 2px; right: 6px; color: #444; font: 10px monospace; z-index: 5; }
+
+/* Phone-size HUD: smaller type, tighter panel, wrap the banner */
+@media (max-width: 600px), (max-height: 500px) {
+    #hud { font-size: 10px; line-height: 1.4; padding: 5px 8px; }
+    #banner { font-size: 11px; white-space: normal; text-align: center; }
+    #overlay .go-title { font-size: 32px; letter-spacing: 5px; }
+    #overlay .go-stats { font-size: 13px; }
+}
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+<div id="hud">loading…</div>
+<div id="banner">Touch, WASD/arrows, or a gamepad stick to join (2-player co-op possession) — P / ❚❚ pauses</div>
+<button id="pausebtn" aria-label="pause">❚❚</button>
+<div id="overlay"></div>
+<div id="version">vdev (fe7a618)</div>
+
+<!-- Thin client per the Browser Client Rendering Policy: DOM shell +
+     WASM-export transport + bootstrap. Loop/render/input/view logic is the
+     shared engine runtime (lib/rt-*.js, source: engine/clients/lib/);
+     sashimi-specific sprites/HUD/bootstrap live in the sandbox lib
+     (lib/sashimi-*.js, source: sandboxes/sashimi/clients/lib/).
+     ?v=N cache-busts GitHub Pages (root CLAUDE.md decision 22). -->
+<script src="flecs-ecs.js?v=2"></script>
+<script src="lib/rt-loop.js?v=2"></script>
+<script src="lib/rt-input.js?v=2"></script>
+<script src="lib/rt-view.js?v=2"></script>
+<script src="lib/rt-sprites.js?v=2"></script>
+<script src="lib/rt-render.js?v=2"></script>
+<script src="lib/sashimi-sprites.js?v=2"></script>
+<script src="lib/sashimi-hud.js?v=2"></script>
+<script src="lib/sashimi-client.js?v=2"></script>
+<script>
+FlecsECS().then(function(M) {
+    /* window.__sashimi: debug/test handle (loop, engine, restart) */
+    window.__sashimi = SashimiClient.start(M, {
+        config: new URLSearchParams(location.search).get('config') || 'default',
+        canvas: document.getElementById('canvas'),
+        hud: document.getElementById('hud'),
+        banner: document.getElementById('banner'),
+        overlay: document.getElementById('overlay'),
+        pauseBtn: document.getElementById('pausebtn'),
+    });
+});
+</script>
+</body>
+</html>
