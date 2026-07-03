@@ -164,6 +164,11 @@ var RTRender = (function() {
                                          frames are padded by FX cells needs
                                          bars tied to visual bounds, not the
                                          frame size
+                 underlayFor(u, tilePx, tSec) -> null or { def, state, dir,
+                                         t, sizePx, alpha } — an extra
+                                         sprite drawn at the unit's anchor
+                                         before the unit itself (ground
+                                         markers, spawn telegraphs)
                A def with rotate: true is drawn rotated to the unit's
                facing vector (projectiles fly point-first). */
             var t = performance.now() / 1000;
@@ -175,6 +180,22 @@ var RTRender = (function() {
                 var state = cfg.stateFor ? cfg.stateFor(u2)
                                          : (u2.moving ? 'walk' : 'idle');
                 var dir = RTSprites.dirFromVector(u2.faceX, u2.faceY);
+
+                /* underlay (drawn first, own opacity) */
+                var un = cfg.underlayFor ? cfg.underlayFor(u2, tilePx, t) : null;
+                if (un && cfg.unitDefs[un.def]) {
+                    var ua = un.alpha === undefined ? 1 : un.alpha;
+                    if (ua > 0) {
+                        ctx.globalAlpha = Math.max(0, Math.min(1, ua));
+                        RTSprites.draw(ctx, cfg.unitDefs[un.def],
+                                       un.state || 'idle', un.dir || 'S',
+                                       un.t === undefined ? t : un.t,
+                                       d.sx, d.sy,
+                                       un.sizePx || sizePx, 0);
+                        ctx.globalAlpha = 1;
+                    }
+                }
+
                 var alpha = cfg.alphaFor ? cfg.alphaFor(u2, t) : 1;
                 if (alpha !== 1)
                     ctx.globalAlpha = Math.max(0, Math.min(1, alpha));

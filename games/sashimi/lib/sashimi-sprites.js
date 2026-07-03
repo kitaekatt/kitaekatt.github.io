@@ -405,12 +405,23 @@ var SashimiSprites = (function() {
                 rotate: u.rotate,
                 table: u.table,
             };
-            byKind[u.kind] = { name: name, unit: u };
+            if (u.kind > 0) byKind[u.kind] = { name: name, unit: u };
         });
+
+        /* Spawn telegraph (kind 0 indicator def + the Unity window:
+           spawnConfig.SpawnDelay, see extract-art.py). Drawn by the
+           client's underlayFor hook, not a unit. */
+        var warnUnit = SashimiArtData.units.spawnWarning;
+        var warn = warnUnit ? {
+            def: 'spawnWarning',
+            seconds: SashimiArtData.spawnWarnSeconds || 1.25,
+            size: warnUnit.worldH,
+        } : null;
 
         return {
             real: true,
             defs: defs,
+            warn: warn,
             defName: function(kind) {
                 var k = byKind[kind];
                 return k ? k.name : 'slime';
@@ -483,6 +494,7 @@ var SashimiSprites = (function() {
         return {
             real: false,
             defs: defs,
+            warn: null,                      /* no telegraph art */
             defName: function(kind) {
                 var k = KIND_INFO[kind];
                 return k ? k.name : 'slime';

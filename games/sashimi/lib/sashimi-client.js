@@ -10,10 +10,14 @@
  *     │     ├── wasm_tick()      -> one sashimi simulation tick
  *     │     └── RTView.update(reader)  scalar accessors -> view units
  *     │           (reader.extra copies kind/flags/radius per unit)
+ *     │     └── processTick()   event ring -> SashimiAudio (SFX) + hero
+ *     │           attack/respawn anim latches; stage edges -> windup
+ *     │           audio; first-seen creatures -> spawn telegraph window
  *     └── RTRender.frame(units, alpha)  camera follows P1's hero,
  *           tilemap arena, y-sort, per-kind real Unity sprites
  *           (assets/*.png + lib/sashimi-art-data.js manifests;
- *           ?art=proc falls back to the procedural placeholders), HUD
+ *           ?art=proc falls back to the procedural placeholders), spawn
+ *           telegraphs (underlayFor + materialize fade), HUD
  *
  * Join = possession: both heroes exist from app start; a device's first
  * input claims clientId 1..2 and wasm_join adds PossessedBy so hero_ai
@@ -58,7 +62,13 @@ var SashimiClient = (function() {
             radius: M.cwrap('wasm_get_unit_radius', 'number', ['number']),
             kind: M.cwrap('wasm_get_unit_kind', 'number', ['number']),
             flags: M.cwrap('wasm_get_unit_flags', 'number', ['number']),
+            stage: M.cwrap('wasm_get_unit_stage', 'number', ['number']),
             slot: M.cwrap('wasm_get_unit_slot', 'number', ['number']),
+            eventCount: M.cwrap('wasm_get_event_count', 'number', []),
+            eventType: M.cwrap('wasm_get_event_type', 'number', ['number']),
+            eventKind: M.cwrap('wasm_get_event_kind', 'number', ['number']),
+            eventEntity: M.cwrap('wasm_get_event_entity', 'number', ['number']),
+            eventData: M.cwrap('wasm_get_event_data', 'number', ['number']),
             getTurn: M.cwrap('wasm_get_turn', 'number', []),
             getTickMs: M.cwrap('wasm_get_tick_ms', 'number', []),
             gameTick: M.cwrap('wasm_get_game_tick', 'number', []),
@@ -109,41 +119,70 @@ var SashimiClient = (function() {
             extra: function(u, i) {
                 u.kind = engine.kind(i);
                 u.flags = engine.flags(i);
+                u.stage = engine.stage(i);
                 u.radius = engine.radius(i);
             },
         };
 
         /* ── Shared runtime ── */
         var sprites = SashimiSprites.build();
+        var audio = SashimiAudio.init({
+            muteBtn: opts.muteBtn,
+            volSlider: opts.volSlider,
+        });
+        audio.startMusic();   /* starts on the unlock gesture */
         var view = RTView.init();
         var input = RTInput.init({
             maxPlayers: 2,   /* two heroes exist: co-op = possession */
             onJoin: function(clientId, label) {
                 var eid = engine.join(clientId);
+                if (eid) {
+                    var hu = view.find(eid);
+                    audio.select(hu ? hu.kind : clientId); /* Select VO */
+                }
                 hud.setBanner(eid
                     ? label + ' joined as P' + clientId +
                       ' — a second device joins on its first input'
                     : label + ': no free hero to possess');
             },
         });
-        /* Animation state machine over the per-tick flags, mirroring the
-           Unity UnitAnimationManager: Defeated -> Defeat (plays once,
-           holds the last frame), TookDamage -> Damage (a blocking
-           animation: latched until its clip length elapses even though
-           the flag lasts one tick), else Walk/Idle. State changes reset
-           the unit's animation clock (animTimeFor) so play-once rows
-           start at frame 0 — the UASO clips are authored to run from
-           the state edge, exactly like Unity's animator. */
+        /* Animation state machine over the per-tick flags + ability stage,
+           mirroring the Unity UnitAnimationManager: Defeated -> Defeat
+           (plays once, holds the last frame), TookDamage -> Damage (a
+           blocking animation: latched until its clip length elapses even
+           though the flag lasts one tick), spawn telegraph -> Spawn,
+           ability stage -> Windup/Active/Recovery (the manifests' attack
+           rows; stage timing comes from the engine so the rows track the
+           real hitbox windows), hero weapon fire / respawn -> latched
+           play-once Attack / Spawn rows, else Walk/Idle. State changes
+           reset the unit's animation clock (animTimeFor) so play-once
+           rows start at frame 0 — the UASO clips are authored to run
+           from the state edge, exactly like Unity's animator. */
+        var STAGE_STATE = { 1: 'windup', 2: 'active', 3: 'recovery' };
+        var ATTACK_LATCH_FALLBACK = 0.35;  /* s, for looping attack rows */
+        function blockDur(kind, state) {
+            var d = sprites.stateDuration(kind, state);
+            return d > 0 ? d : ATTACK_LATCH_FALLBACK;
+        }
         function stateFor(u) {
             var t = performance.now() / 1000;
             var want;
             if (u.flags & FLAG_DEFEATED) want = 'defeat';
             else if (u.flags & FLAG_HIT) want = 'damage';
+            else if (u.warnUntil && t < u.warnUntil) want = 'spawn';
+            else if (STAGE_STATE[u.stage]) want = STAGE_STATE[u.stage];
             else want = u.moving ? 'walk' : 'idle';
-            if (want !== 'damage' && want !== 'defeat' &&
-                u.animState === 'damage' &&
-                t - u.animStart < sprites.stateDuration(u.kind, 'damage')) {
-                want = 'damage';   /* blocking anim runs to completion */
+            if (want !== 'damage' && want !== 'defeat') {
+                if (u.animState === 'damage' &&
+                    t - u.animStart <
+                        sprites.stateDuration(u.kind, 'damage')) {
+                    want = 'damage';  /* blocking anim runs to completion */
+                } else if ((want === 'walk' || want === 'idle') &&
+                           (u.animState === 'attack' ||
+                            u.animState === 'spawn') &&
+                           t - u.animStart < blockDur(u.kind, u.animState)) {
+                    want = u.animState;  /* play-once latch */
+                }
             }
             if (want !== u.animState) {
                 u.animState = want;
@@ -172,7 +211,29 @@ var SashimiClient = (function() {
             barFor: function(u, tilePx) {
                 return sprites.barFor(u.kind, tilePx);
             },
+            /* Spawn telegraph (Unity: SpawnWarning entity lives
+               spawnConfig.SpawnDelay before the creature materializes;
+               here the window is client-side from first sight — see
+               extract-art.py provenance note): indicator under the unit,
+               fading out while the creature fades in. */
+            underlayFor: function(u, tilePx, t) {
+                if (!sprites.warn || !u.warnUntil || t >= u.warnUntil)
+                    return null;
+                var left = (u.warnUntil - t) / sprites.warn.seconds;
+                return {
+                    def: sprites.warn.def,
+                    sizePx: tilePx * sprites.warn.size,
+                    /* full strength for 60% of the window, then fade */
+                    alpha: Math.min(1, left / 0.4),
+                };
+            },
             alphaFor: function(u, t) {
+                if (sprites.warn && u.warnUntil && t < u.warnUntil) {
+                    /* materialize: invisible during the telegraph's first
+                       35%, then fade in under the fading indicator */
+                    var frac = 1 - (u.warnUntil - t) / sprites.warn.seconds;
+                    return frac < 0.35 ? 0 : (frac - 0.35) / 0.65;
+                }
                 if (u.flags & FLAG_DEFEATED) return 0.55;
                 if (u.flags & FLAG_IFRAMES)
                     return 0.45 + 0.35 * Math.sin(t * 24);
@@ -185,6 +246,52 @@ var SashimiClient = (function() {
         var engineMs = 0;
         var paused = false;
         var gameOverShown = false;
+        var tickIndex = 0;   /* spawn telegraphs skip the initial roster */
+
+        /* SW kind range that owns abilities / spawn telegraphs. */
+        function isCreature(kind) { return kind >= 3 && kind <= 7; }
+
+        /* Per-tick post-processing: presentation events -> audio + hero
+           anim latches; stage edges -> windup/active audio; first-seen
+           creatures -> spawn telegraph window. */
+        var EV_WEAPON_FIRED = 1, EV_HERO_RESPAWN = 6;
+        function processTick() {
+            var now = performance.now() / 1000;
+            tickIndex++;
+            for (var i = 0; i < units.length; i++) {
+                var u = units[i];
+                if (!u.seen) {
+                    u.seen = true;
+                    if (tickIndex > 1 && isCreature(u.kind) && sprites.warn)
+                        u.warnUntil = now + sprites.warn.seconds;
+                }
+                if (isCreature(u.kind)) {
+                    var prev = u.prevStage || 0;
+                    if (u.stage !== prev)
+                        audio.stageChange(u.kind, prev, u.stage);
+                    u.prevStage = u.stage;
+                }
+            }
+            var n = engine.eventCount();
+            for (var e = 0; e < n; e++) {
+                var type = engine.eventType(e);
+                audio.onEvent(type, engine.eventKind(e));
+                if (type === EV_WEAPON_FIRED) {
+                    /* data = firing owner: heroes play their Attack row */
+                    var owner = view.find(engine.eventData(e));
+                    if (owner && (owner.kind === 1 || owner.kind === 2)) {
+                        owner.animState = 'attack';
+                        owner.animStart = now;
+                    }
+                } else if (type === EV_HERO_RESPAWN) {
+                    var hero = view.find(engine.eventEntity(e));
+                    if (hero) {
+                        hero.animState = 'spawn';   /* respawn pop-in row */
+                        hero.animStart = now;
+                    }
+                }
+            }
+        }
 
         function freeze() {
             for (var i = 0; i < units.length; i++) {
@@ -205,6 +312,8 @@ var SashimiClient = (function() {
 
         function showGameOver() {
             gameOverShown = true;
+            var hero = firstHero();
+            audio.gameOver(engine.isVictory() === 1, hero ? hero.kind : 1);
             hud.showGameOver({
                 victory: engine.isVictory() === 1,
                 message: engine.gameOverMessage(),
@@ -225,9 +334,11 @@ var SashimiClient = (function() {
             }
             view = RTView.init();
             units = [];
+            tickIndex = 0;
             gameOverShown = false;
             setPaused(false);
             hud.hideGameOver();
+            audio.startMusic();   /* back to the adventure loop */
             /* Re-possess heroes for already-joined devices. */
             var players = input.players();
             for (var i = 0; i < players.length; i++)
@@ -273,6 +384,7 @@ var SashimiClient = (function() {
                 engine.tick();
                 engineMs = engine.getTickMs();
                 units = view.update(reader);
+                processTick();
             },
             render: function(alpha, frameDt) {
                 render.frame(units, alpha, frameDt, firstHero());
@@ -308,7 +420,8 @@ var SashimiClient = (function() {
         });
 
         loop.start();
-        return { loop: loop, engine: engine, restart: restart };
+        return { loop: loop, engine: engine, restart: restart,
+                 audio: audio };
     }
 
     return { start: start };

@@ -4,6 +4,7 @@
  * UnitAnimationDataSO / .anim / texture-meta slicing data.
  * Regenerate: see the extractor's module docstring. */
 var SashimiArtData = {
+  "spawnWarnSeconds": 1.25,
   "units": {
     "cube": {
       "anchorX": 0.4839,
@@ -1640,6 +1641,72 @@ var SashimiArtData = {
       "worldH": 0.875,
       "worldW": 1.0
     },
+    "spawnWarning": {
+      "anchorX": 0.4971,
+      "anchorY": 0.4971,
+      "frameH": 171,
+      "frameW": 171,
+      "kind": 0,
+      "ppu": 300.0,
+      "rotate": false,
+      "sheet": "assets/spawnWarning.png",
+      "table": {
+        "idle_E": {
+          "fallback": "idle_S"
+        },
+        "idle_N": {
+          "fallback": "idle_S"
+        },
+        "idle_NE": {
+          "fallback": "idle_S"
+        },
+        "idle_NW": {
+          "fallback": "idle_S"
+        },
+        "idle_S": {
+          "fps": 8,
+          "frames": 4,
+          "row": 0
+        },
+        "idle_SE": {
+          "fallback": "idle_S"
+        },
+        "idle_SW": {
+          "fallback": "idle_S"
+        },
+        "idle_W": {
+          "fallback": "idle_S"
+        },
+        "walk_E": {
+          "fallback": "idle_S"
+        },
+        "walk_N": {
+          "fallback": "idle_S"
+        },
+        "walk_NE": {
+          "fallback": "idle_S"
+        },
+        "walk_NW": {
+          "fallback": "idle_S"
+        },
+        "walk_S": {
+          "fallback": "idle_S"
+        },
+        "walk_SE": {
+          "fallback": "idle_S"
+        },
+        "walk_SW": {
+          "fallback": "idle_S"
+        },
+        "walk_W": {
+          "fallback": "idle_S"
+        }
+      },
+      "uiTop": 0.2811,
+      "uiW": 0.5633,
+      "worldH": 0.57,
+      "worldW": 0.57
+    },
     "wisp": {
       "anchorX": 0.5,
       "anchorY": 0.6957,
@@ -2316,6 +2383,6 @@ var SashimiArtData = {
       "worldW": 1.375
     }
   },
-  "version": "b577bfa2a9"
+  "version": "2c4e1124a2"
 };
 if (typeof module !== 'undefined') module.exports = SashimiArtData;
