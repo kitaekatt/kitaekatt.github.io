@@ -385,6 +385,48 @@ var SashimiSprites = (function() {
         12: { name: 'heart',    size: 0.5 },
     };
 
+    /* ── Hit-flash silhouettes ───────────────────────────────────────
+       A parallel def per unit whose sheet is the same sprite sheet
+       flattened to solid white (alpha preserved). The client's
+       rt-render overlayFor hook draws it over the current frame at a
+       fading opacity — the Unity hit flash (PresentDamageSystem tints
+       the SpriteRenderer white on damage) without touching the base
+       art. Works for both Image (real art, tinted once decoded) and
+       canvas (procedural) sheets. */
+    function makeFlashDef(base) {
+        var flash = {
+            sheet: base.sheet,   /* base art until the tint is ready */
+            frameW: base.frameW, frameH: base.frameH,
+            frameSize: base.frameSize,
+            anchorX: base.anchorX, anchorY: base.anchorY,
+            rotate: base.rotate,
+            table: base.table,   /* same rows/fallbacks, same geometry */
+        };
+        function tint() {
+            var src = base.sheet;
+            var w = src.naturalWidth || src.width;
+            var h = src.naturalHeight || src.height;
+            if (!w || !h) return;
+            var c = document.createElement('canvas');
+            c.width = w;
+            c.height = h;
+            var g = c.getContext('2d');
+            g.drawImage(src, 0, 0);
+            g.globalCompositeOperation = 'source-in';
+            g.fillStyle = '#ffffff';
+            g.fillRect(0, 0, w, h);
+            flash.sheet = c;
+        }
+        if (typeof HTMLImageElement !== 'undefined' &&
+            base.sheet instanceof HTMLImageElement &&
+            !(base.sheet.complete && base.sheet.naturalWidth)) {
+            base.sheet.addEventListener('load', tint);
+        } else {
+            tint();
+        }
+        return flash;
+    }
+
     /* ── Real art (extract-art.py manifests + packed sheet PNGs) ────── */
 
     function buildReal() {
@@ -406,6 +448,10 @@ var SashimiSprites = (function() {
                 table: u.table,
             };
             if (u.kind > 0) byKind[u.kind] = { name: name, unit: u };
+            /* hit-flash silhouette for damageable units (heroes 1-2,
+               creatures 3-7) */
+            if (u.kind >= 1 && u.kind <= 7)
+                defs[name + '_flash'] = makeFlashDef(defs[name]);
         });
 
         /* Spawn telegraph (kind 0 indicator def + the Unity window:
@@ -418,13 +464,66 @@ var SashimiSprites = (function() {
             size: warnUnit.worldH,
         } : null;
 
+        /* Ground layer: the real Adventure tilemap rendered by
+           extract-art.py to exactly the arena rect (assets/ground.png).
+           rt-render draws whatever this canvas holds each frame (its
+           cfg.ground hook); it stays 0-sized — procedural fallback —
+           until the image decodes. */
+        var ground = null;
+        if (SashimiArtData.ground) {
+            ground = document.createElement('canvas');
+            ground.width = 0;
+            ground.height = 0;
+            var gimg = new Image();
+            gimg.src = SashimiArtData.ground.sheet + '?v=' + version;
+            gimg.onload = function() {
+                ground.width = gimg.naturalWidth;
+                ground.height = gimg.naturalHeight;
+                var g = ground.getContext('2d');
+                g.drawImage(gimg, 0, 0);
+                /* subtle arena-edge line (Unity's ground continues past
+                   the bounds; ours crops at the map rect, so keep the
+                   playfield edge readable against the letterbox) */
+                g.strokeStyle = 'rgba(255,255,255,0.25)';
+                g.lineWidth = 4;
+                g.strokeRect(2, 2, ground.width - 4, ground.height - 4);
+            };
+        }
+
+        /* Hit-FX flipbooks: attacker kind -> the extracted EASO "Spawn"
+           row (see extract-art.py HIT_FX). */
+        var hitFxCache = {};
+        function hitFxFor(kind) {
+            if (kind in hitFxCache) return hitFxCache[kind];
+            var spec = null;
+            var name = (SashimiArtData.hitFx || {})[kind];
+            var u = name && SashimiArtData.units[name];
+            if (u && defs[name]) {
+                var a = RTSprites.resolve(u.table, 'spawn_S');
+                if (a && a.fps > 0) {
+                    spec = { def: name, seconds: a.frames / a.fps,
+                             size: u.worldH };
+                }
+            }
+            hitFxCache[kind] = spec;
+            return spec;
+        }
+
         return {
             real: true,
             defs: defs,
             warn: warn,
+            ground: ground,
+            hitFxFor: hitFxFor,
             defName: function(kind) {
                 var k = byKind[kind];
                 return k ? k.name : 'slime';
+            },
+            /* hit-flash silhouette def (null when the kind has none) */
+            flashDefName: function(kind) {
+                var k = byKind[kind];
+                return (k && defs[k.name + '_flash'])
+                    ? k.name + '_flash' : null;
             },
             /* on-screen height in world units == Unity sprite height
                (frame px / PPU) */
@@ -490,14 +589,25 @@ var SashimiSprites = (function() {
             heart: makeSimpleUnit(FS, 4, 4, 0.7, paintHeart({
                 body: '#e03848' })),
         };
+        for (var kind = 1; kind <= 7; kind++) {
+            var nm = KIND_INFO[kind].name;
+            defs[nm + '_flash'] = makeFlashDef(defs[nm]);
+        }
 
         return {
             real: false,
             defs: defs,
             warn: null,                      /* no telegraph art */
+            ground: null,                    /* rt-render's procedural tilemap */
+            hitFxFor: function() { return null; },
             defName: function(kind) {
                 var k = KIND_INFO[kind];
                 return k ? k.name : 'slime';
+            },
+            flashDefName: function(kind) {
+                var k = KIND_INFO[kind];
+                return (k && defs[k.name + '_flash'])
+                    ? k.name + '_flash' : null;
             },
             size: function(kind) {
                 var k = KIND_INFO[kind];

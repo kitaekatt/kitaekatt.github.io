@@ -11,13 +11,18 @@
  *     │     └── RTView.update(reader)  scalar accessors -> view units
  *     │           (reader.extra copies kind/flags/radius per unit)
  *     │     └── processTick()   event ring -> SashimiAudio (SFX) + hero
- *     │           attack/respawn anim latches; stage edges -> windup
- *     │           audio; first-seen creatures -> spawn telegraph window
+ *     │           attack/respawn anim latches + SashimiFX (hit/death FX
+ *     │           entries, trail points, white hit-flash latch); stage
+ *     │           edges -> windup audio; first-seen creatures -> spawn
+ *     │           telegraph window
  *     └── RTRender.frame(units, alpha)  camera follows P1's hero,
- *           tilemap arena, y-sort, per-kind real Unity sprites
- *           (assets/*.png + lib/sashimi-art-data.js manifests;
- *           ?art=proc falls back to the procedural placeholders), spawn
- *           telegraphs (underlayFor + materialize fade), HUD
+ *           the real Adventure ground (cfg.ground; assets/ground.png),
+ *           projectile trails (effectsUnder), y-sort, per-kind real
+ *           Unity sprites (assets/*.png + lib/sashimi-art-data.js
+ *           manifests; ?art=proc falls back to the procedural
+ *           placeholders), white hit-flash silhouettes (overlayFor),
+ *           spawn telegraphs (underlayFor + materialize fade), hit/death
+ *           FX (effectsOver), HUD
  *
  * Join = possession: both heroes exist from app start; a device's first
  * input claims clientId 1..2 and wasm_join adds PossessedBy so hero_ai
@@ -126,6 +131,8 @@ var SashimiClient = (function() {
 
         /* ── Shared runtime ── */
         var sprites = SashimiSprites.build();
+        /* trails + hit/death FX (tick rate matches RTLoop's tickHz) */
+        var fx = SashimiFX.init({ sprites: sprites, tickRate: 60 });
         var audio = SashimiAudio.init({
             muteBtn: opts.muteBtn,
             volSlider: opts.volSlider,
@@ -191,6 +198,14 @@ var SashimiClient = (function() {
             return want;
         }
 
+        /* White hit-flash (PORT-INVENTED, minimal): Unity has no damage
+           tint — its feedback is the Damage clip + the attacker's HitFX
+           + impact SFX (PresentDamageSystem / PresentUnitAnimationSystem).
+           This client adds a white-silhouette overlay fading out over
+           FLASH_SECONDS, replacing the earlier port-invented alpha dip
+           on TookDamage. */
+        var FLASH_SECONDS = 0.15, FLASH_ALPHA = 0.75;
+
         var render = RTRender.init({
             canvas: opts.canvas,
             mapW: mapW, mapH: mapH,
@@ -199,6 +214,10 @@ var SashimiClient = (function() {
                                       on the shorter axis, both orientations */
             followRate: 5,
             unitDefs: sprites.defs,
+            ground: sprites.ground,   /* real Adventure tilemap (null ->
+                                         rt-render's procedural ground) */
+            effectsUnder: fx.drawTrails,
+            effectsOver: fx.drawFx,
             defFor: function(u) { return sprites.defName(u.kind); },
             sizeFor: function(u, tilePx) {
                 return tilePx * sprites.size(u.kind);
@@ -237,8 +256,21 @@ var SashimiClient = (function() {
                 if (u.flags & FLAG_DEFEATED) return 0.55;
                 if (u.flags & FLAG_IFRAMES)
                     return 0.45 + 0.35 * Math.sin(t * 24);
-                if (u.flags & FLAG_HIT) return 0.75;
+                /* damage feedback is the white flash overlay now, not an
+                   alpha dip */
                 return 1;
+            },
+            /* white hit-flash: the unit's silhouette def drawn over the
+               current frame (same state/dir/clock — rt-render defaults),
+               fading out across FLASH_SECONDS */
+            overlayFor: function(u, tilePx, t) {
+                if (!u.flashUntil || t >= u.flashUntil) return null;
+                var fd = sprites.flashDefName(u.kind);
+                if (!fd) return null;
+                return {
+                    def: fd,
+                    alpha: FLASH_ALPHA * (u.flashUntil - t) / FLASH_SECONDS,
+                };
             },
         });
 
@@ -252,9 +284,18 @@ var SashimiClient = (function() {
         function isCreature(kind) { return kind >= 3 && kind <= 7; }
 
         /* Per-tick post-processing: presentation events -> audio + hero
-           anim latches; stage edges -> windup/active audio; first-seen
-           creatures -> spawn telegraph window. */
-        var EV_WEAPON_FIRED = 1, EV_HERO_RESPAWN = 6;
+           anim latches + FX (hit bursts, detached death clips); flags ->
+           white hit-flash latch; trail point append; stage edges ->
+           windup/active audio; first-seen creatures -> spawn telegraph
+           window. lastPos remembers every exported unit's previous-tick
+           position/facing so events about entities deleted this tick
+           (creature deaths, spent projectiles) can still be placed. */
+        var EV_WEAPON_FIRED = 1, EV_HIT = 2, EV_CREATURE_DIED = 4,
+            EV_HERO_RESPAWN = 6;
+        var lastPos = {};
+        function unitPos(id) {
+            return view.find(id) || lastPos[id] || null;
+        }
         function processTick() {
             var now = performance.now() / 1000;
             tickIndex++;
@@ -265,6 +306,8 @@ var SashimiClient = (function() {
                     if (tickIndex > 1 && isCreature(u.kind) && sprites.warn)
                         u.warnUntil = now + sprites.warn.seconds;
                 }
+                if (u.flags & FLAG_HIT)
+                    u.flashUntil = now + FLASH_SECONDS;
                 if (isCreature(u.kind)) {
                     var prev = u.prevStage || 0;
                     if (u.stage !== prev)
@@ -272,6 +315,7 @@ var SashimiClient = (function() {
                     u.prevStage = u.stage;
                 }
             }
+            fx.tick(units, now);
             var n = engine.eventCount();
             for (var e = 0; e < n; e++) {
                 var type = engine.eventType(e);
@@ -283,6 +327,22 @@ var SashimiClient = (function() {
                         owner.animState = 'attack';
                         owner.animStart = now;
                     }
+                } else if (type === EV_HIT) {
+                    /* kind = attacker (projectile or ability owner);
+                       data = victim: the attacker's HitFX flipbook plays
+                       at the victim */
+                    var v = unitPos(engine.eventData(e));
+                    if (v) fx.spawnHit(engine.eventKind(e), v.x, v.y, now);
+                } else if (type === EV_CREATURE_DIED) {
+                    /* the sim deletes creatures the tick they die; play
+                       the detached Defeat clip where it fell */
+                    var c = unitPos(engine.eventEntity(e));
+                    if (c) {
+                        fx.spawnDeath(engine.eventKind(e),
+                                      RTSprites.dirFromVector(
+                                          c.faceX || 0, c.faceY || 1),
+                                      c.x, c.y, now);
+                    }
                 } else if (type === EV_HERO_RESPAWN) {
                     var hero = view.find(engine.eventEntity(e));
                     if (hero) {
@@ -290,6 +350,12 @@ var SashimiClient = (function() {
                         hero.animStart = now;
                     }
                 }
+            }
+            lastPos = {};
+            for (var j = 0; j < units.length; j++) {
+                var lu = units[j];
+                lastPos[lu.id] = { x: lu.x, y: lu.y,
+                                   faceX: lu.faceX, faceY: lu.faceY };
             }
         }
 
@@ -335,6 +401,8 @@ var SashimiClient = (function() {
             view = RTView.init();
             units = [];
             tickIndex = 0;
+            lastPos = {};
+            fx.reset();
             gameOverShown = false;
             setPaused(false);
             hud.hideGameOver();

@@ -4,6 +4,22 @@
  * UnitAnimationDataSO / .anim / texture-meta slicing data.
  * Regenerate: see the extractor's module docstring. */
 var SashimiArtData = {
+  "ground": {
+    "cellPx": 64,
+    "sheet": "assets/ground.png",
+    "worldH": 13.0,
+    "worldW": 19.0
+  },
+  "hitFx": {
+    "3": "fxHitSlime",
+    "4": "fxHitBow",
+    "5": "fxHitSlime",
+    "6": "fxHitSlime",
+    "7": "fxHitCube",
+    "8": "fxHitShuriken",
+    "9": "fxHitFeather",
+    "10": "fxHitWisp"
+  },
   "spawnWarnSeconds": 1.25,
   "units": {
     "cube": {
@@ -835,6 +851,264 @@ var SashimiArtData = {
       "worldH": 2.0,
       "worldW": 1.75
     },
+    "fxHitBow": {
+      "anchorX": 0.5,
+      "anchorY": 0.4615,
+      "frameH": 13,
+      "frameW": 16,
+      "kind": 0,
+      "ppu": 24.0,
+      "rotate": false,
+      "sheet": "assets/fxHitBow.png",
+      "table": {
+        "spawn_E": {
+          "fallback": "spawn_S"
+        },
+        "spawn_N": {
+          "fallback": "spawn_S"
+        },
+        "spawn_NE": {
+          "fallback": "spawn_S"
+        },
+        "spawn_NW": {
+          "fallback": "spawn_S"
+        },
+        "spawn_S": {
+          "fps": 12.0,
+          "frames": 4,
+          "once": true,
+          "row": 0
+        },
+        "spawn_SE": {
+          "fallback": "spawn_S"
+        },
+        "spawn_SW": {
+          "fallback": "spawn_S"
+        },
+        "spawn_W": {
+          "fallback": "spawn_S"
+        }
+      },
+      "uiTop": 0.2083,
+      "uiW": 0.5833,
+      "worldH": 0.5417,
+      "worldW": 0.6667
+    },
+    "fxHitCube": {
+      "anchorX": 0.5172,
+      "anchorY": 0.875,
+      "frameH": 16,
+      "frameW": 29,
+      "kind": 0,
+      "ppu": 16.0,
+      "rotate": false,
+      "sheet": "assets/fxHitCube.png",
+      "table": {
+        "spawn_E": {
+          "fallback": "spawn_S"
+        },
+        "spawn_N": {
+          "fallback": "spawn_S"
+        },
+        "spawn_NE": {
+          "fallback": "spawn_S"
+        },
+        "spawn_NW": {
+          "fallback": "spawn_S"
+        },
+        "spawn_S": {
+          "fps": 12.0,
+          "frames": 4,
+          "once": true,
+          "row": 0
+        },
+        "spawn_SE": {
+          "fallback": "spawn_S"
+        },
+        "spawn_SW": {
+          "fallback": "spawn_S"
+        },
+        "spawn_W": {
+          "fallback": "spawn_S"
+        }
+      },
+      "uiTop": 0.8125,
+      "uiW": 1.6875,
+      "worldH": 1.0,
+      "worldW": 1.8125
+    },
+    "fxHitFeather": {
+      "anchorX": 0.5,
+      "anchorY": 0.5,
+      "frameH": 10,
+      "frameW": 10,
+      "kind": 0,
+      "ppu": 24.0,
+      "rotate": false,
+      "sheet": "assets/fxHitFeather.png",
+      "table": {
+        "spawn_E": {
+          "fallback": "spawn_S"
+        },
+        "spawn_N": {
+          "fallback": "spawn_S"
+        },
+        "spawn_NE": {
+          "fallback": "spawn_S"
+        },
+        "spawn_NW": {
+          "fallback": "spawn_S"
+        },
+        "spawn_S": {
+          "fps": 12.0,
+          "frames": 4,
+          "once": true,
+          "row": 0
+        },
+        "spawn_SE": {
+          "fallback": "spawn_S"
+        },
+        "spawn_SW": {
+          "fallback": "spawn_S"
+        },
+        "spawn_W": {
+          "fallback": "spawn_S"
+        }
+      },
+      "uiTop": 0.1667,
+      "uiW": 0.3333,
+      "worldH": 0.4167,
+      "worldW": 0.4167
+    },
+    "fxHitShuriken": {
+      "anchorX": 0.5,
+      "anchorY": 0.5,
+      "frameH": 10,
+      "frameW": 10,
+      "kind": 0,
+      "ppu": 15.0,
+      "rotate": false,
+      "sheet": "assets/fxHitShuriken.png",
+      "table": {
+        "spawn_E": {
+          "fallback": "spawn_S"
+        },
+        "spawn_N": {
+          "fallback": "spawn_S"
+        },
+        "spawn_NE": {
+          "fallback": "spawn_S"
+        },
+        "spawn_NW": {
+          "fallback": "spawn_S"
+        },
+        "spawn_S": {
+          "fps": 12.0,
+          "frames": 4,
+          "once": true,
+          "row": 0
+        },
+        "spawn_SE": {
+          "fallback": "spawn_S"
+        },
+        "spawn_SW": {
+          "fallback": "spawn_S"
+        },
+        "spawn_W": {
+          "fallback": "spawn_S"
+        }
+      },
+      "uiTop": 0.2667,
+      "uiW": 0.5333,
+      "worldH": 0.6667,
+      "worldW": 0.6667
+    },
+    "fxHitSlime": {
+      "anchorX": 0.5172,
+      "anchorY": 0.875,
+      "frameH": 16,
+      "frameW": 29,
+      "kind": 0,
+      "ppu": 32.0,
+      "rotate": false,
+      "sheet": "assets/fxHitSlime.png",
+      "table": {
+        "spawn_E": {
+          "fallback": "spawn_S"
+        },
+        "spawn_N": {
+          "fallback": "spawn_S"
+        },
+        "spawn_NE": {
+          "fallback": "spawn_S"
+        },
+        "spawn_NW": {
+          "fallback": "spawn_S"
+        },
+        "spawn_S": {
+          "fps": 12.0,
+          "frames": 4,
+          "once": true,
+          "row": 0
+        },
+        "spawn_SE": {
+          "fallback": "spawn_S"
+        },
+        "spawn_SW": {
+          "fallback": "spawn_S"
+        },
+        "spawn_W": {
+          "fallback": "spawn_S"
+        }
+      },
+      "uiTop": 0.4062,
+      "uiW": 0.8438,
+      "worldH": 0.5,
+      "worldW": 0.9062
+    },
+    "fxHitWisp": {
+      "anchorX": 0.5,
+      "anchorY": 0.5,
+      "frameH": 12,
+      "frameW": 12,
+      "kind": 0,
+      "ppu": 24.0,
+      "rotate": false,
+      "sheet": "assets/fxHitWisp.png",
+      "table": {
+        "spawn_E": {
+          "fallback": "spawn_S"
+        },
+        "spawn_N": {
+          "fallback": "spawn_S"
+        },
+        "spawn_NE": {
+          "fallback": "spawn_S"
+        },
+        "spawn_NW": {
+          "fallback": "spawn_S"
+        },
+        "spawn_S": {
+          "fps": 12.0,
+          "frames": 5,
+          "once": true,
+          "row": 0
+        },
+        "spawn_SE": {
+          "fallback": "spawn_S"
+        },
+        "spawn_SW": {
+          "fallback": "spawn_S"
+        },
+        "spawn_W": {
+          "fallback": "spawn_S"
+        }
+      },
+      "uiTop": 0.2083,
+      "uiW": 0.4167,
+      "worldH": 0.5,
+      "worldW": 0.5
+    },
     "gem": {
       "anchorX": 0.5,
       "anchorY": 0.5,
@@ -1211,7 +1485,7 @@ var SashimiArtData = {
     "heart": {
       "anchorX": 0.5,
       "anchorY": 0.5,
-      "frameH": 48,
+      "frameH": 72,
       "frameW": 52,
       "kind": 12,
       "ppu": 200.0,
@@ -1231,8 +1505,8 @@ var SashimiArtData = {
           "fallback": "idle_S"
         },
         "idle_S": {
-          "fps": 1,
-          "frames": 1,
+          "fps": 7.5,
+          "frames": 12,
           "row": 0
         },
         "idle_SE": {
@@ -1269,9 +1543,9 @@ var SashimiArtData = {
           "fallback": "idle_S"
         }
       },
-      "uiTop": 0.12,
+      "uiTop": 0.18,
       "uiW": 0.26,
-      "worldH": 0.24,
+      "worldH": 0.36,
       "worldW": 0.26
     },
     "shuriken": {
@@ -2383,6 +2657,6 @@ var SashimiArtData = {
       "worldW": 1.375
     }
   },
-  "version": "2c4e1124a2"
+  "version": "7cce4a51b6"
 };
 if (typeof module !== 'undefined') module.exports = SashimiArtData;

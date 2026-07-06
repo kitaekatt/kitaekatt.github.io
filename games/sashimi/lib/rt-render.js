@@ -118,6 +118,16 @@ var RTRender = (function() {
             ctx.fillRect(x, y, Math.max(0, w * pct), h);
         }
 
+        /* Optional client-owned ground layer (cfg.ground: a canvas whose
+           whole area maps onto the map rect). The client paints/repaints
+           it (e.g. once a texture image decodes); rt-render just draws
+           whatever it currently holds each frame. Absent -> the internal
+           procedural tilemap (original behavior). */
+        function groundLayer() {
+            var g = cfg.ground;
+            return (g && g.width > 0 && g.height > 0) ? g : tilemap;
+        }
+
         function frame(units, alpha, frameDtMs, followUnit) {
             /* Camera: smooth follow (frame-rate independent exp smoothing) */
             var tx = mapW / 2, ty = mapH / 2;
@@ -135,7 +145,21 @@ var RTRender = (function() {
             ctx.fillRect(0, 0, viewW, viewH);
             var mx0 = worldToScreenX(0), my0 = worldToScreenY(0);
             ctx.imageSmoothingEnabled = false;
-            ctx.drawImage(tilemap, mx0, my0, mapW * tilePx, mapH * tilePx);
+            ctx.drawImage(groundLayer(), mx0, my0, mapW * tilePx, mapH * tilePx);
+
+            /* Optional effects passes (additive hooks; see the sprite-hook
+               comment below). Both receive a screen-projection view:
+                 { toX(wx), toY(wy), tilePx, alpha }
+               (alpha = this frame's tick-interpolation factor, for
+               effects glued to interpolated unit positions).
+               effectsUnder draws between the ground and the unit pass
+               (projectile trails, ground decals); effectsOver draws after
+               the unit pass (impact sparks, death poofs). State-driven
+               only — hooks draw from client state, never mutate it. */
+            var t = performance.now() / 1000;
+            var fxv = { toX: worldToScreenX, toY: worldToScreenY,
+                        tilePx: tilePx, alpha: alpha };
+            if (cfg.effectsUnder) cfg.effectsUnder(ctx, fxv, t);
 
             /* Interpolate + cull + y-sort */
             var draw = [];
@@ -169,9 +193,13 @@ var RTRender = (function() {
                                          sprite drawn at the unit's anchor
                                          before the unit itself (ground
                                          markers, spawn telegraphs)
+                 overlayFor(u, tilePx, tSec) -> same spec, drawn right
+                                         after the unit sprite (hit-flash
+                                         tints: a white-silhouette def of
+                                         the same sheet drawn over the
+                                         frame at a fading alpha)
                A def with rotate: true is drawn rotated to the unit's
                facing vector (projectiles fly point-first). */
-            var t = performance.now() / 1000;
             for (var j = 0; j < draw.length; j++) {
                 var d = draw[j];
                 var u2 = d.u;
@@ -215,6 +243,22 @@ var RTRender = (function() {
                     ? Math.atan2(u2.faceY || 0, u2.faceX || 1) : 0;
                 RTSprites.draw(ctx, def, state, dir, animT, d.sx, d.sy, sizePx, angle);
 
+                /* overlay (drawn right after the sprite, own opacity) */
+                var ov = cfg.overlayFor ? cfg.overlayFor(u2, tilePx, t) : null;
+                if (ov && cfg.unitDefs[ov.def]) {
+                    var oa = ov.alpha === undefined ? 1 : ov.alpha;
+                    if (oa > 0) {
+                        ctx.globalAlpha = Math.max(0, Math.min(1, oa));
+                        RTSprites.draw(ctx, cfg.unitDefs[ov.def],
+                                       ov.state || state, ov.dir || dir,
+                                       ov.t === undefined ? animT : ov.t,
+                                       d.sx, d.sy,
+                                       ov.sizePx || sizePx, angle);
+                        ctx.globalAlpha = alpha !== 1
+                            ? Math.max(0, Math.min(1, alpha)) : 1;
+                    }
+                }
+
                 /* health bar above the sprite (entities without a health
                    pool — maxHealth 0 — draw none) */
                 var bar = cfg.barFor ? cfg.barFor(u2, tilePx) : null;
@@ -234,6 +278,8 @@ var RTRender = (function() {
                 }
                 if (alpha !== 1) ctx.globalAlpha = 1;
             }
+
+            if (cfg.effectsOver) cfg.effectsOver(ctx, fxv, t);
         }
 
         return { frame: frame, resize: resize, camera: cam };
