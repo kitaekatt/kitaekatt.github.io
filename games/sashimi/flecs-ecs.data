@@ -56,12 +56,11 @@ Game rules and value provenance: `~/Dev/sashimi/CONTENT-ANALYSIS.md`.
 
 Run headless: `./build/local/test_sashimi_systems` (ctest) includes the
 acceptance run — FLECS_SEED pinned + `--config headless-verify` must
-reproduce the pinned deterministic outcome. Since the 2026-07
-steering/movement/abilities batch that outcome is DEFEAT at tick 7591
-(no-target creatures converge on the players arena-wide; the game is
-strictly harder at ratio 0.5 — winnability verified at ratio 0.25, see
-the acceptance test comment). The pin records what the port DOES, never
-a tuned target.
+reproduce the pinned deterministic outcome. Since the 2026-07 Eagle
+FeatherRecall batch that outcome is VICTORY at tick 10801 (gems 196,
+kills 490); the full pin history (including the interim DEFEAT-at-7591
+steering pin) lives in the acceptance test comment. The pin records
+what the port DOES, never a tuned target.
 
 Run in a browser:
 
@@ -170,20 +169,20 @@ Registration covers both modes.
 | 5 | `start_of_tick` | (port bookkeeping; Unity clears DamageThisTick inside ResolveDamage) | Reset | removes TookDamage (root decision 8) |
 | 6 | `destroy_on_timer` | WorldInit `DestroyGhostOnTimer`/`DestroyEntityAtTick` + FullyPredicted `DestroyGhost` | Reset | timed despawn, children cascade. (Unity's `DestroyOnTimerJob.SimulationTickRate` is never assigned — a latent bug making every positive timer a next-tick destroy; moot, no live producer sets a positive timer on either side) |
 | 7 | `ability_machine` | WorldInit `AbilitySystem` + EffectApplication per-ability systems (Slime/Wolf/LargeCubeAttack, LargeCubeCharge) | Reset | data-driven stage machine; AbilityStateChangeSO toggles (locomotion lock, hitbox collider, charge dash impulse: fuel 3.0 at fuel/active = 7.5 u/s, slow-immune). Ready = cooldown + distance to the caster's KEPT EnemyTarget (AbilitySystem.cs:510-519), never the nearest enemy. One active ability per caster from selection through recovery end; ties go to the first ability child in template order (== Unity's last-in-reversed-LEG-buffer, :626-750) — cube attack beats charge. Stage/cooldown ticks = 1+floor(d*60) (Ticks()); selection precedes windup by exactly one tick |
-| 8 | `weapon_fire` | WorldInit `ProjectileSpawnRequestSystem` | Reset | starts on cooldown; the owner's per-level pierce/bounce REPLACE the projectile's serialized base and hit_limit = pierce + bounce + 1 is recomputed at fire time (ProjectileLifecycleSystem.cs:167-174; creature weapons have no stats: 0/0, budget 1) |
+| 8 | `weapon_fire` | WorldInit `ProjectileSpawnRequestSystem` (weapon + one-shot jobs) | Reset | starts on cooldown; the owner's per-level pierce/bounce REPLACE the projectile's serialized base and hit_limit = pierce + bounce + 1 is recomputed at fire time (ProjectileLifecycleSystem.cs:167-174; creature weapons have no stats: 0/0, budget 1). Also fires recall spawners armed LAST tick (OneShotProjectileSpawnRequestJob, :147-210): homing recall projectile at the owner, fuel = distance at fire time, spawner destroyed — Unity's EffectApplication(T) -> WorldInit(T+1) delay |
 | 9 | `spatial_hash` | WorldSim `SpatialHashingSystem` (no OrderFirst; first via its consumers' `[UpdateAfter]` — effective order identical) | Move | engine spatial.h, cell 0.5, clear+reinsert; i-framed units excluded (SpatialHashingSystem.cs:44-55); rebuilds the shared unit snapshot |
 | 10 | `targeting` | WorldSim `EnemyTargetingSystem` (after hash) | Move | acquire radius 5; the 0.15 switch threshold buffers EVERY sequential comparison (EnemyTargetingSystem.cs:161-190): with no current target the first in-range hero in snapshot order wins unless a later one is >= 0.15 closer (snapshot order is deterministic table-creation order, unlike Unity's hash order) |
 | 11 | `creature_steering` | WorldSim `CreatureMoveDirectionSystem` (before Move) | Move | trace-exact waypoint build (:84-200): follow/flee offset toward the kept target — or the HERO CENTROID when target-less (:112; the whole arena converges) — clamped to min(d - stop, speed/tick), PLUS ally anti-encroachment (1x1 hash query, real-shape narrowphase, mutual own-color filter, normalize(sum(normalize(away))) * speed/tick) competing in the same waypoint; MinDistanceToMove (0.1) * speed/tick gate; integration is always a full speed*dt step in the waypoint direction. Defeated zero their direction; attacking (locomotion-disabled) creatures steer but never move. Flee is dead data: `StartFleeDistance` ships 0, so no creature (wisp included) ever flees in either engine |
 | 12 | `pickup_magnet` | EffectApplication `CollisionResponseSystem.HandlePickup` (claim) + `PickupSystem.PickupTriggeredByJob` move step (author-confirmed placement wart: the port intentionally splits magnet(Move)/collect(Act)) | Move | claim on collider SHAPE overlap (gem trigger r=0.75 vs hero rect; corpses can claim — Unity's hash keeps defeated heroes); UNCAPPED ramp accel * ticks/60 (Pickup.move_speed 5 is dead data), step clamped to land on the claimant; claims survive the claimant's death |
-| 13 | `movement` | WorldSim `MoveSystem` | Move | InputDirection/Velocity * speed * 1/60; StatusSlow multiplies locomotion only — dash impulses integrate separately, fuel-clamped and slow-immune (HandleImpulseJob :135-168); ArenaBounds clamp; ClampHeroToScreen (:205-228): every hero (defeated/OOG included) clamps to x +-5.5, y [-2.5, +3] around the hero centroid — solo inert, co-op tether; projectile flight integrates here too (HandleMoveProjectileJob, MoveSystem.cs:230-328): final step clamped to remaining fuel, MapBounds wall-slide (never bounds-culled), so damage(16) sees post-move projectile positions the same tick |
+| 13 | `movement` | WorldSim `MoveSystem` | Move | InputDirection/Velocity * speed * 1/60; StatusSlow multiplies locomotion only — dash impulses integrate separately, fuel-clamped and slow-immune (HandleImpulseJob :135-168); ArenaBounds clamp; ClampHeroToScreen (:205-228): every hero (defeated/OOG included) clamps to x +-5.5, y [-2.5, +3] around the hero centroid — solo inert, co-op tether; projectile flight integrates here too (HandleMoveProjectileJob, MoveSystem.cs:230-328): final step clamped to remaining fuel, MapBounds wall-slide (never bounds-culled), so damage(16) sees post-move projectile positions the same tick; HomingTarget projectiles (feather recall) re-aim at the tracked entity every tick, fuel clamps DOWN to the target distance and the step never overshoots it (:250-261) |
 | 14 | `child_offset_sync` | WorldSim `GameplayChildOffsetSyncSystem` (after Move) | Move | parent pos + offset; offsets X-FLIP only (offset.x negates when the target is to the child's left, GameplayParentAuthoring.cs:20-29) — never rotate; the aim freezes while the parent's locomotion is disabled (:57-61 — melee aim locks at windup start) while the frozen offset keeps riding the parent |
 | 15 | `collision_push` | — (RETIRED no-op) | Act | Unity has NO unit-unit pushback; separation is the ally anti-encroachment inside creature_steering (slot 11). Kept as a registered no-op only until app.yaml can be regenerated (see generator note) |
 | 16 | `damage_apply` | EffectApplication `CollisionDetection` (trigger path) + `ApplyDamage` + `OnHitEffect` + EffectResolution `ResolveDamage` | Act | faction-filtered; hit-pair reset registry (expiry 1+floor(reset*60)); hero same-tick hits collapse to MAX (ApplyDamageSystem.cs:97-110) then damage_taken_ratio; i-frames 12 ticks from the NEXT tick, only on damage > 0; StatusEffectOnHit application; periodic auras on the 0.25 s clock |
 | 17 | `pickup_collect` | EffectApplication `PickupSystem` | Act | gems -> MatchStats, hearts heal `heart_heal_ratio` of max |
-| 18 | `status_effects` | EffectResolution `StatusEffectSystem` | Act | poison damage on the periodic clock; durations per tick; remove on expiry |
+| 18 | `status_effects` | EffectResolution `StatusEffectSystem` + EffectApplication `HeroEagleProjectileRecallAbilitySystem` (hosted) | Act | poison damage on the periodic clock; durations per tick; remove on expiry — a recall-haste StatusSlow with RecallHaste stacks > 1 drops one stack and re-arms instead. The Eagle FeatherRecall pass runs after the decrement loops (see "Eagle FeatherRecall" under port decisions): stationary tracking, recall state machine, newest-feather arming, haste application |
 | 19 | `defeat` | EffectResolution `DefeatSystem` | Act | HP <= 0 -> Defeated marker |
 | 20 | `iframes` | EffectResolution `IFramesSystem` + `OutOfGameSystem` (expiry) | Act | i-frame and OutOfGame window countdowns; expiry after this tick's damage pass == Unity's Expired(EndTick <= InterpTick) in EffectResolution |
-| 21 | `projectile_lifecycle` | EffectApplication `OnHitEffectSystem` (bounce/spend) + FullyPredicted `ProjectileLifecycleSystem` (spent-spawner/destroy) | Finalize | hit-budget spend, bounce retarget (once per projectile per tick; fuel = max(remaining, range/2) bounds the search; failed bounce forfeits all bounces and keeps flying), spent-spawner, range expiry; flight itself is in movement (slot 13) |
+| 21 | `projectile_lifecycle` | EffectApplication `OnHitEffectSystem` (bounce/spend) + FullyPredicted `ProjectileLifecycleSystem` (spent-spawner/destroy) | Finalize | hit-budget spend, bounce retarget (once per projectile per tick; fuel = max(remaining, range/2) bounds the search; failed bounce forfeits all bounces and keeps flying), spent-spawner (stamped with owner + monotonic SpentProjectileId, ProjectileLifecycleSystem.cs:266-271), range expiry; flight itself is in movement (slot 13) |
 | 22 | `on_defeated` | FullyPredicted `OnDefeatedSystem` (server) | Finalize | pity-pool drops (+0.5 gem / +0.0375 heart per kill, heart rolled first, drop when rand < pool then pool -= 1, OnDefeatedSystem.cs:63-88; position = +-0.25 uniform square, unclamped, :95-102), kills, creature destruction; heroes get RespawnTimer (10 s, DefeatSystem.cs:14) |
 | 23 | `respawn` | FullyPredicted `RespawnSystem` | Finalize | revive in place at HALF max HP (RespawnSystem.cs:61) + 2 s OutOfGame (:17,62-66) |
 | 24 | `spawn_director` | FullyPredicted `EnemySpawnSystem` (server) | Finalize | trace-exact wave/trickle timers over data/waves.yaml + WaveDirector cursor: wave N's warnings begin at (N-1)*5 s; origin = hero-centroid snapshot at each advance (wave 1: baked origin); one warning/tick for wave 1, waves 2+ burst at the advance tick (negative TimeToNextSpawn carry, EnemySpawnSystem.cs:86,110 — shipped behavior) |
@@ -330,9 +329,46 @@ Documented choices where the Unity content or docs do not pin a value:
 - **Weapon colliders stay out of the spatial hash**: they are Unity
   target-acquisition triggers (wisp weapon r=25); acquisition here uses
   the projectile's range.
-- **Eagle FeatherRecall is structured but deferred**: spent feathers spawn
-  `FeatherRecall_Spawner` entities (inert without the recall ability
-  system); the recall projectile/haste-buff loop is not in the slice.
+- **Eagle FeatherRecall is source-pinned, not deferred anymore** (2026-07
+  FeatherRecall batch). The traced mechanic
+  (HeroEagleProjectileRecallAbilitySystem.cs) is NOT a boomerang — no
+  auto-return: spent feathers REST on the ground as `FeatherRecall_Spawner`
+  entities (owner + monotonic id stamped by projectile_lifecycle, Unity
+  ProjectileLifecycleSystem.cs:266-271). The eagle standing still for
+  Ticks(0.1 s) = 7 ticks activates recall (deactivation only after
+  feathers == 0 and moving has held Ticks(0.75 s) = 46 ticks;
+  HeroEagle.prefab:300-303); independently, feathers >=
+  ProjectileRecallLimitStat (= level, HeroEagle_LUHSSO Stat 3)
+  force-recall even while moving. One feather per tick, NEWEST first:
+  the spawner is armed (`SpawnOneShotProjectile`) and next tick fires a
+  homing `FeatherRecall_Projectile` at the eagle with fuel = distance at
+  fire time (ProjectileSpawnRequestSystem.cs:147-210); the projectile
+  re-aims every tick, fuel only shrinks (MoveSystem.cs:250-261), damages
+  creatures en route (Feather variant, IgnoreHitLimit), and simply
+  despawns at the eagle (its SpentProjectilePrefab is null) — collecting
+  IS the despawn, nothing applies on arrival. The +50% MoveSpeed haste
+  applies to the eagle at RECALL-FIRE time when the recall was
+  stationary-activated and feathers on the ground >= SpeedBuffThreshold 2
+  (HeroEagleProjectileRecallAbilitySystem.cs:143-152): magnitude/duration/
+  stack limit come from the spawner's `StatusEffectOnHit` (MovementSpeed
+  MultiplyBuffStrongest +0.5, 1.1 s -> Ticks = 67, StackLimit 8) — stacks
+  extend DURATION only (reapply = stack+1 up to 8, window reset; each
+  expiry drops one stack and re-arms, StatusEffectsSystem.cs:104-131,
+  176-183); the multiplier stays a single strongest +50%. A DEAD eagle
+  keeps recalling (Unity zeroes Defeated MoveDirection -> stationary; the
+  query excludes only OutOfGameTimer/DestroyGhostTag); the 2 s
+  post-respawn OutOfGame window pauses recall entirely. Hosting: the
+  ability pass lives at the end of `status_effects` (Act) and the
+  one-shot fire in `weapon_fire` (Reset) — app.yaml's generator-emitted
+  system_order cannot grow a slot (extraction JSON absent, same
+  constraint as collision_push), and the Unity groups collapse cleanly:
+  EffectApplication decision + EffectResolution application in one Act
+  pass, arming consumed next tick in Reset = Unity's
+  EffectApplication(T) -> WorldInit(T+1) delay. Recall-capable = a hero
+  whose `HeroLevelBonus.recall_limit[0]` > 0 (stand-in for Unity's
+  config-component presence). At recall limit 0 Unity destroys the
+  feather instead of recalling (:137-140) — ported, unreachable for the
+  shipped eagle (limit >= 1 from level 1).
 - **Spawn warnings / intro telegraph beats** are presentation-only and
   await the client.
 
@@ -417,7 +453,16 @@ keeps the last applied offset), `PickupMagnet`, `LocomotionDisabled`,
 OutOfGameTimer), `DropPools` (OnDefeated pity pools — Unity keeps them on
 the MatchStats singleton), `WaveDirector` (spawn-director trickle cursor:
 spawn index, spawn timer, wave-origin snapshot — the UnitSpawnWaveState
-fields the generated WaveState schema does not carry) —
+fields the generated WaveState schema does not carry),
+`SpentProjectileId` (owner + monotonic id on a spent-feather spawner —
+Unity SpentProjectileId + the copied ProjectileState.Owner),
+`SpawnOneShotProjectile` (armed recall spawner; presence == Unity's
+enabled SpawnOneShotProjectileTag), `HomingTarget` (Unity
+ProjectileEntityTracker: the recall projectile's tracked entity),
+`RecallState` (per-eagle HeroEagleProjectileRecallAbilityState:
+stationary-since / deactivation-since ticks + activated),
+`RecallHaste` (haste stack count + window length riding StatusSlow —
+Unity AppliedStatusEffectElement.Stacks) —
 the avk TookDamage pattern: runtime bookkeeping lives in C, the generated
 YAML layer stays extraction-faithful.
 
@@ -488,8 +533,10 @@ Contracts the client depends on:
   are resolved from the spawn prefab (IsA target): HeroEagle 1, HeroFrog 2,
   Slime 3, Wolf 4, Golem 5, Wisp 6, Cube 7, Shuriken 8, Feather 9,
   WispShot 10, Gem 11, Heart 12. `sashimi-sprites.js` KIND_INFO indexes by
-  the same values. Kind 0 (weapons, ability children, spawners) is not
-  exported.
+  the same values. Alias prefabs render as an existing kind:
+  FeatherRecall_Spawner (the resting spent feather) and
+  FeatherRecall_Projectile (the homing recall) both map to Feather 9.
+  Kind 0 (weapons, ability children) is not exported.
 - **Anim flags** -- bit 0 Defeated, bit 1 TookDamage (this tick), bit 2
   protection window (IFramesTimer OR the 2 s post-respawn OutOfGame);
   the client renders these as alpha/flicker, so respawned heroes read
@@ -501,7 +548,10 @@ Contracts the client depends on:
   so attack anims track the engine's real hitbox windows.
 - **Per-tick events** -- systems.c keeps a presentation event ring
   (`SASHIMI_EV_*` in systems.h: weapon fired, hit, hero hurt,
-  creature/hero died, hero respawn, pickup, level-up, wave started);
+  creature/hero died, hero respawn, pickup, level-up, wave started,
+  recall buff — Unity's cue is a jump anim + the spawner's Spawn audio +
+  FeatherRecallBuff FX; no clip is in the extract-audio manifest, so the
+  client leaves it unmapped like wave-started);
   emit_event only reads world state, headless runs never drain it. The
   bridge clears it each `wasm_tick` and exposes
   `wasm_get_event_{count,type,kind,entity,data}` (kind = SW_KIND of the
@@ -533,7 +583,6 @@ Contracts the client depends on:
 
 ## What slice assembly still needs
 
-- Eagle FeatherRecall ability system (see port decisions above).
 - Intro telegraph beats (SlimePosse-style scripted intros; spawn
   warnings and audio landed as client-side presentation, above).
 
@@ -555,11 +604,14 @@ Contracts the client depends on:
   tether, the fuel-based slow-immune charge dash, child-offset
   x-flip/freeze, ability exclusivity/tie-break/trigger-target/tick math,
   targeting tie-break order, pickup overlap-claim + uncapped magnet +
-  corpse completion) and ends with the headless acceptance run:
-  FLECS_SEED=12345 + `headless-verify` must reproduce the pinned outcome
-  — DEFEAT at exactly tick 7591 since the 2026-07
-  steering/movement/abilities batch (see the acceptance test comment for
-  the pin history and the ratio-0.25/0.125 winnability sanity numbers).
+  corpse completion, the Eagle FeatherRecall loop: full
+  fire-spend-recall-collect cycle with haste, fuel = distance + homing
+  never regains fuel, duration-only stacking, dead-vs-OOG recall
+  behavior, en-route creature damage) and ends with the headless
+  acceptance run: FLECS_SEED=12345 + `headless-verify` must reproduce
+  the pinned outcome — VICTORY at tick 10801 (gems 196, kills 490)
+  since the 2026-07 Eagle FeatherRecall batch (see the acceptance test
+  comment for the pin history and the winnability sanity numbers).
   `SASHIMI_DEBUG=1` prints per-interval AI/combat traces.
 
 - `tests/test_wasm.js` (ctest `test_wasm_sashimi` in EMSCRIPTEN builds)
@@ -32382,6 +32434,13 @@ static ecs_entity_t g_players[SW_MAX_PLAYERS + 1] = {0}; /* index by clientId */
 /* Prefab entity -> kind mapping, resolved once per init. */
 static ecs_entity_t g_kind_prefab[SW_KIND_COUNT] = {0};
 
+/* Extra prefabs that render as an existing kind (no dedicated art row):
+ * the resting spent feather (FeatherRecall_Spawner) and the homing recall
+ * projectile (FeatherRecall_Projectile) both draw as the Feather. */
+#define SW_KIND_ALIAS_COUNT 2
+static ecs_entity_t g_alias_prefab[SW_KIND_ALIAS_COUNT] = {0};
+static int g_alias_kind[SW_KIND_ALIAS_COUNT] = {0};
+
 /* Cached component/entity ids. */
 static struct {
     ecs_entity_t position, velocity, input_direction, health, collider;
@@ -32429,12 +32488,24 @@ static void resolve_ids(void) {
     memset(g_kind_prefab, 0, sizeof(g_kind_prefab));
     for (size_t i = 0; i < sizeof(KINDS) / sizeof(KINDS[0]); i++)
         g_kind_prefab[KINDS[i].kind] = ecs_lookup(w, KINDS[i].tmpl);
+
+    static const struct { int kind; const char *tmpl; } ALIASES[] = {
+        { SW_KIND_FEATHER, "FeatherRecall_Spawner" },
+        { SW_KIND_FEATHER, "FeatherRecall_Projectile" },
+    };
+    for (int i = 0; i < SW_KIND_ALIAS_COUNT; i++) {
+        g_alias_prefab[i] = ecs_lookup(w, ALIASES[i].tmpl);
+        g_alias_kind[i] = ALIASES[i].kind;
+    }
 }
 
 static int kind_of_prefab(ecs_entity_t prefab) {
     if (!prefab) return SW_KIND_NONE;
     for (int k = 1; k < SW_KIND_COUNT; k++)
         if (g_kind_prefab[k] == prefab) return k;
+    for (int i = 0; i < SW_KIND_ALIAS_COUNT; i++)
+        if (g_alias_prefab[i] && g_alias_prefab[i] == prefab)
+            return g_alias_kind[i];
     return SW_KIND_NONE;
 }
 
@@ -34621,19 +34692,35 @@ ruling.</p>
 </html>
 # Sashimi headless-AI difficulty baseline
 
-Date: 2026-07-03
+Date: 2026-07-03 (original); re-baselined 2026-07-06 post-fidelity.
 
-> **INVALID for the current build (noted 2026-07-06).** This baseline was
-> measured BEFORE the fidelity remediation batches (combat math `67457b9`,
-> weapons/projectiles `a8bcc88`, waves/drops/respawn `e7d0876`,
-> steering/movement/abilities `f1ec47d` — see
-> `docs/fidelity-audit.md` "Remediation status"). The game is now
-> substantially harder: the seed-12345 acceptance run at
-> `damage_taken_ratio` 0.5 (`headless-verify`) flips from VICTORY to
-> DEFEAT (tick 7591), and the AI wins at ratio 0.25. The ~6.1 threshold
-> below is a historical record of the pre-audit build only; a re-baseline
-> with `tools/difficulty_search.py` is pending. The old data is kept
-> intact below for method reference and before/after comparison.
+## Re-baseline (2026-07-06, post-fidelity build 455377d)
+
+**damage_taken_ratio ~ 0.50** is the new 50% win-rate threshold
+(posterior median 0.500, mean 0.507 +/- 0.013, 95% CI **[0.500,
+0.550]**), from 120 games over 6 evaluations (base seed 20260703,
+converged at CI width 0.05):
+
+    ratio   wins/games  observed
+    0.150      19/20      0.95
+    0.250      17/20      0.85
+    0.400      10/20      0.50
+    0.700       0/20      0.00
+    1.050       1/40      0.03
+
+Run: `python3 sandboxes/sashimi/tools/difficulty_search.py --min-ratio
+0.1 --max-ratio 2.0 --curve 0.15,0.25,0.4,0.7 --state
+build/difficulty-search/state-postfidelity.json`. The fidelity batches
+(see `docs/fidelity-audit.md` "Remediation status") made the game ~12x
+harder for the AI than the pre-audit build; `headless-verify` (0.5) now
+sits at the balance point (its pinned seed 12345 is a winner). Caveat:
+measured BEFORE Eagle FeatherRecall landed; re-verify the 0.4/0.5
+points after (the search is resumable with a fresh --state file).
+
+> The 2026-07-03 baseline below (~6.1) is a historical record of the
+> pre-audit build only, kept for method reference and before/after
+> comparison. Pre-audit coarse rates for context: ~99% at ratio 1.0,
+> ~50% at 6.1.
 
 ## Question
 
@@ -34932,10 +35019,14 @@ in the port (Unity last-write-wins); pickup magnet is uncapped in Unity
 
 Four implementation batches landed against this report: A `67457b9` (combat
 math), B `a8bcc88` (weapons/projectiles), C `e7d0876` (waves/drops/respawn),
-D `f1ec47d` (steering/movement/abilities). Acceptance re-pinned honestly
-after each batch: seed 12345 + `headless-verify` (damage_taken_ratio 0.5) is
-now **DEFEAT at tick 7591** (was VICTORY at 10800 pre-batches); winnability
-verified at ratio 0.25 and 0.125. Per top-10 item:
+D `f1ec47d` (steering/movement/abilities), plus a follow-up level-up fix
+(batch E closeout). Acceptance re-pinned honestly after each change: seed
+12345 + `headless-verify` (damage_taken_ratio 0.5) landed on DEFEAT at tick
+7591 after batch D, then reshuffled to **VICTORY at tick 10801** (gems 150,
+kills 440) after the level-up proportional-rescale fix — that seed is one of
+the ~15% winners at ratio 0.5. Final coarse win rates (20 seeds each, final
+build): ratio 1.0 = 0/20 (pre-audit ~99%), 6.1 = 0/20 (pre-audit ~50%),
+0.5 = 3/20, 0.25 = 19/20. Per top-10 item:
 
 1. Poison 12x — **FIXED (A)**: per-pulse = 2.5, scaled by shooter damage
    mult; generator corrected, but the generated YAML comment strings stay
@@ -34947,10 +35038,10 @@ verified at ratio 0.25 and 0.125. Per top-10 item:
    positions to ArenaBounds (Unity does not) — a pinned port decision.
 4. Creature scaling — **FIXED (A)**: gem-driven leveling removed; 1.4x
    co-op HP at spawn added.
-5. Level-up full heal — **DEFERRED (still open)**: untouched by all four
-   batches; the port still full-heals on level-up (and the systems.c
-   comment still calls it "live behavior") where live Unity rescales
-   current HP by the multiplier ratio.
+5. Level-up full heal — **FIXED (E closeout)**: caught as unremediated by
+   the batch-E doc pass; current HP now rescales proportionally with the
+   max multiplier (HeroLevelUpSystem.cs:143-148; the heal-to-full block at
+   :56-65 is commented out in live Unity). No free heal on level-up.
 6. Respawn — **FIXED (C)**: 10 s wait + half heal + 2 s OutOfGame.
 7. Same-tick hero damage + i-frames — **FIXED (A)**: MAX-of-hits with full
    attacker bookkeeping (author-confirmed intent); i-frames 12 ticks,
@@ -35696,6 +35787,44 @@ typedef struct { float heart_pool, gem_pool; } CDropPools; /* OnDefeated pity
                                      generated MatchStats schema stays
                                      extraction-faithful, so the pools live in
                                      this native component on GameState) */
+typedef struct { char *projectile; } COneShotSpawner; /* generated
+                                     OneShotProjectileSpawner (feather
+                                     recall spawner -> its projectile) */
+typedef struct {                  /* Unity SpentProjectileId + the copied
+                                     ProjectileState.Owner
+                                     (ProjectileLifecycleSystem.cs:22-25,
+                                     257-271): stamped on the spent-feather
+                                     spawner so the recall ability can find
+                                     ITS feathers and pick the NEWEST
+                                     (highest id) first. */
+    ecs_entity_t owner;
+    int32_t id;                   /* monotonic; > 0 once stamped */
+} CSpentProjectileId;
+typedef struct { ecs_entity_t target; } CHomingTarget; /* Unity
+                                     ProjectileEntityTracker
+                                     (MoveSystem.cs:250-261): the recall
+                                     projectile re-aims at this entity
+                                     every tick */
+typedef struct {                  /* Unity HeroEagleProjectileRecallAbility
+                                     State (HeroEagleProjectileRecallAbility
+                                     System.cs:20-26), tick-typed:
+                                     stationary_since -1 == IsStationary
+                                     false / StartStationaryFrame MaxValue;
+                                     deactivation_since 0 == unset. */
+    int32_t stationary_since;
+    int32_t deactivation_since;
+    ecs_bool_t activated;
+} CRecallState;
+typedef struct {                  /* Unity AppliedStatusEffectElement.Stacks
+                                     for the recall haste riding StatusSlow
+                                     (StatusEffectsSystem.cs:104-131,
+                                     176-183): stacks extend DURATION only
+                                     (magnitude stays the strongest single
+                                     +0.5); each expiry drops one stack and
+                                     re-arms duration_ticks. */
+    int32_t stacks;
+    int32_t duration_ticks;
+} CRecallHaste;
 typedef struct {                  /* spawn-director trickle cursor: the
                                      UnitSpawnWaveState fields the generated
                                      WaveState schema does not carry
@@ -35721,12 +35850,14 @@ typedef struct {
                  hero_level_up, hero_level_bonus, move_config;
     ecs_entity_t wave_state, pending_spawn, respawn_timer, iframes_timer,
                  destroy_on_timer, defeated, game_time, match_stats;
-    ecs_entity_t spawn_config;
+    ecs_entity_t spawn_config, one_shot_spawner;
     /* native runtime */
     ecs_entity_t took_damage, enemy_target, weapon_state, projectile_runtime,
                  hit_count, possessed_by, charge_dash, pickup_magnet,
                  locomotion_disabled, ability_initialized, out_of_game,
-                 drop_pools, wave_director, active_ability, offset_flipped;
+                 drop_pools, wave_director, active_ability, offset_flipped,
+                 spent_projectile_id, spawn_one_shot, homing_target,
+                 recall_state, recall_haste;
     /* config entities */
     ecs_entity_t game_config_e, game_state_e;
 } Ids;
@@ -35813,6 +35944,33 @@ static void register_runtime_components(Engine *engine) {
             { .name = "ticks_to_next_spawn", .type = ecs_id(ecs_i32_t) },
             { .name = "origin_x", .type = ecs_id(ecs_f32_t) },
             { .name = "origin_y", .type = ecs_id(ecs_f32_t) }}, 4);
+    /* Eagle FeatherRecall runtime (trace: HeroEagleProjectileRecall
+     * AbilitySystem.cs, ProjectileSpawnRequestSystem.cs:147-210,
+     * MoveSystem.cs:250-261; values in entities/FeatherRecall_*.yaml and
+     * systems.h SASHIMI_RECALL_*). */
+    reg_component(w, "SpentProjectileId", sizeof(CSpentProjectileId),
+        ECS_ALIGNOF(CSpentProjectileId),
+        (ecs_member_t[]){
+            { .name = "owner", .type = ecs_id(ecs_entity_t) },
+            { .name = "id", .type = ecs_id(ecs_i32_t) }}, 2);
+    reg_component(w, "HomingTarget", sizeof(CHomingTarget),
+        ECS_ALIGNOF(CHomingTarget),
+        (ecs_member_t[]){{ .name = "target", .type = ecs_id(ecs_entity_t) }}, 1);
+    reg_component(w, "RecallState", sizeof(CRecallState),
+        ECS_ALIGNOF(CRecallState),
+        (ecs_member_t[]){
+            { .name = "stationary_since", .type = ecs_id(ecs_i32_t) },
+            { .name = "deactivation_since", .type = ecs_id(ecs_i32_t) },
+            { .name = "activated", .type = ecs_id(ecs_bool_t) }}, 3);
+    reg_component(w, "RecallHaste", sizeof(CRecallHaste),
+        ECS_ALIGNOF(CRecallHaste),
+        (ecs_member_t[]){
+            { .name = "stacks", .type = ecs_id(ecs_i32_t) },
+            { .name = "duration_ticks", .type = ecs_id(ecs_i32_t) }}, 2);
+    /* Armed one-shot spawner (Unity's enableable SpawnOneShotProjectileTag;
+     * presence == enabled, remove-don't-set-false per root decision 8):
+     * set by the recall pass, consumed next tick by weapon_fire. */
+    reg_tag(w, "SpawnOneShotProjectile");
     reg_tag(w, "LocomotionDisabled");
     reg_tag(w, "AbilityInitialized");
     /* Child-offset x-mirror state (GameplayParentOffset.Rotate,
@@ -35850,6 +36008,11 @@ static bool ids_resolve(Engine *engine) {
     L(destroy_on_timer, "DestroyOnTimer"); L(defeated, "Defeated");
     L(game_time, "GameTime");           L(match_stats, "MatchStats");
     L(spawn_config, "SpawnConfig");
+    L(one_shot_spawner, "OneShotProjectileSpawner");
+    L(spent_projectile_id, "SpentProjectileId");
+    L(spawn_one_shot, "SpawnOneShotProjectile");
+    L(homing_target, "HomingTarget");   L(recall_state, "RecallState");
+    L(recall_haste, "RecallHaste");
     L(took_damage, "TookDamage");       L(enemy_target, "EnemyTarget");
     L(weapon_state, "WeaponState");     L(projectile_runtime, "ProjectileRuntime");
     L(hit_count, "HitCount");           L(possessed_by, "PossessedBy");
@@ -35924,6 +36087,11 @@ static int g_pair_count = 0;
 typedef struct { ecs_entity_t projectile, victim; } ProjHit;
 static ProjHit g_proj_hits[S_MAX_PROJ_HITS];
 static int g_proj_hit_count = 0;
+
+/* Monotonic spent-projectile counter (Unity's server-side
+ * SpentProjectileCounter, ProjectileLifecycleSystem.cs:34,270): the recall
+ * ability recalls the NEWEST feather first (highest id). */
+static int32_t g_spent_counter = 0;
 
 /* Unit snapshot rebuilt by spatial_hash each tick and reused by targeting,
  * steering, AI and damage. */
@@ -37206,6 +37374,110 @@ static void sashimi_weapon_fire(Engine *engine) {
         ws->cooldown_ticks = cd_ticks;
         ecs_modified_id(engine->world, we, g_ids.weapon_state);
     }
+
+    /* One-shot recall spawners (OneShotProjectileSpawnRequestJob,
+     * ProjectileSpawnRequestSystem.cs:147-210 — the same Unity system as
+     * the weapon job above, WorldInit): a spawner armed by the recall
+     * pass LAST tick (Act) fires its projectile at its owner now — the
+     * next-tick delay Unity gets from EffectApplication(T) ->
+     * WorldInit(T+1). Fuel = distance(spawner, owner) at fire time
+     * (:186); the projectile homes on the owner (ProjectileEntityTracker,
+     * :198-199) and the spawner is destroyed (:200). Unity's zero-LTW
+     * guard (:174) protects against unplaced netcode ghosts and has no
+     * port equivalent (spawners are always placed at spawn). */
+    if (g_ids.spawn_one_shot && g_ids.one_shot_spawner &&
+        g_ids.spent_projectile_id) {
+        static ecs_entity_t armed[256];
+        int na = 0;
+        ecs_query_t *aq = ecs_query(engine->world, {
+            .terms = {
+                { .id = g_ids.spawn_one_shot },
+                { .id = g_ids.one_shot_spawner },
+                { .id = g_ids.spent_projectile_id },
+                { .id = g_ids.position },
+            },
+            .cache_kind = EcsQueryCacheNone });
+        ecs_iter_t ait = ecs_query_iter(engine->world, aq);
+        while (ecs_query_next(&ait))
+            for (int i = 0; i < ait.count && na < 256; i++)
+                armed[na++] = ait.entities[i];
+        ecs_query_fini(aq);
+
+        for (int i = 0; i < na; i++) {
+            ecs_entity_t se = armed[i];
+            const COneShotSpawner *os = ecs_get_id(engine->world, se,
+                                                   g_ids.one_shot_spawner);
+            const CSpentProjectileId *sid =
+                ecs_get_id(engine->world, se, g_ids.spent_projectile_id);
+            const CVec2 *sp = ecs_get_id(engine->world, se, g_ids.position);
+            if (!os || !os->projectile || !os->projectile[0] || !sid || !sp)
+                continue;
+            /* Owner gone: Unity warns and returns, leaving the spawner
+             * armed (:165-169). Heroes are never deleted here, so this is
+             * purely defensive. */
+            ecs_entity_t owner = sid->owner;
+            if (!owner || !ecs_is_alive(engine->world, owner)) continue;
+            const CVec2 *op = ecs_get_id(engine->world, owner, g_ids.position);
+            if (!op) continue;
+
+            ecs_entity_t tmpl = ecs_lookup(engine->world, os->projectile);
+            const CProjectile *pt = tmpl ?
+                ecs_get_id(engine->world, tmpl, g_ids.projectile) : NULL;
+            if (!pt) continue;
+
+            float dx = op->x - sp->x, dy = op->y - sp->y;
+            float fuel = sqrtf(dx * dx + dy * dy);
+            /* normalize-or-(1,0), SpawnProjectileJob:198 */
+            if (fuel < 1e-6f) { dx = 1; dy = 0; }
+            else { dx /= fuel; dy /= fuel; }
+
+            ecs_entity_t proj = engine_entity_spawn(engine, os->projectile,
+                                                    NULL);
+            if (!proj) continue;
+            CVec2 ppos = { sp->x, sp->y };
+            ecs_set_id(engine->world, proj, g_ids.position,
+                       sizeof(ppos), &ppos);
+            CVec2 pvel = { dx * pt->speed, dy * pt->speed };
+            ecs_set_id(engine->world, proj, g_ids.velocity,
+                       sizeof(pvel), &pvel);
+
+            /* Owner per-level stats REPLACE the serialized base, exactly
+             * like the weapon path (ProjectileLifecycleSystem.cs:167-174;
+             * the recall projectile serializes IgnoreHitLimit so the hit
+             * budget is moot anyway). */
+            int pierce = 0, bounce = 0;
+            const CExperience *xp = ecs_get_id(engine->world, owner,
+                                               g_ids.experience);
+            const CHeroLevelBonus *hb = ecs_get_id(engine->world, owner,
+                                                   g_ids.hero_level_bonus);
+            if (xp && hb) {
+                int lvl = xp->level < 1 ? 1 : (xp->level > 20 ? 20 : xp->level);
+                pierce = (int)hb->pierce_limit[lvl - 1];
+                bounce = (int)hb->bounce_limit[lvl - 1];
+            }
+            CProjectileRuntime rt = { owner, 0, pierce, bounce, fuel };
+            ecs_set_id(engine->world, proj, g_ids.projectile_runtime,
+                       sizeof(rt), &rt);
+            CDamageOnHit *pdh = ecs_get_mut_id(engine->world, proj,
+                                               g_ids.damage_on_hit);
+            if (pdh) {
+                pdh->hit_limit = pierce + bounce + 1;
+                ecs_modified_id(engine->world, proj, g_ids.damage_on_hit);
+            }
+
+            CHomingTarget ht = { owner };
+            ecs_set_id(engine->world, proj, g_ids.homing_target,
+                       sizeof(ht), &ht);
+
+            /* Presentation: the projectile's Spawn SFX plays through the
+             * same lifecycle path as weapon projectiles
+             * (ProjectileLifecycleSystem.cs:145-152). */
+            emit_event(engine, SASHIMI_EV_WEAPON_FIRED, proj,
+                       public_id(engine, owner));
+
+            ecs_delete(engine->world, se);
+        }
+    }
 }
 
 /* ── spatial_hash (Move) ────────────────────────────────────────────── */
@@ -37695,10 +37967,46 @@ static void sashimi_movement(Engine *engine) {
                                                g_ids.projectile);
             CProjectileRuntime *rt = ecs_get_mut_id(engine->world, e,
                                                     g_ids.projectile_runtime);
-            const CVec2 *vel = ecs_get_id(engine->world, e, g_ids.velocity);
+            CVec2 *vel = ecs_get_mut_id(engine->world, e, g_ids.velocity);
             CVec2 *pos = ecs_get_mut_id(engine->world, e, g_ids.position);
             if (!pt || !rt || !vel || !pos) continue;
             if (rt->dist_left <= 0) continue; /* spent: lifecycle deletes */
+
+            /* Homing tracker (recall projectiles; Unity
+             * HandleMoveProjectileJob's ProjectileEntityTracker branch,
+             * MoveSystem.cs:250-261): re-aim at the tracked entity every
+             * tick, clamp the fuel DOWN to the target distance (it never
+             * grows back if the target flees), and never overshoot the
+             * target this tick (moveDistance = min(step, targetDistance)).
+             * A dead tracker reads as position (0,0) — Unity's default
+             * LocalToWorld lookup — unreachable here (heroes persist). */
+            float step = pt->speed * g_dt;
+            const CHomingTarget *ht = g_ids.homing_target ?
+                ecs_get_id(engine->world, e, g_ids.homing_target) : NULL;
+            if (ht) {
+                float tx = 0.0f, ty = 0.0f;
+                if (ht->target && ecs_is_alive(engine->world, ht->target)) {
+                    const CVec2 *tp = ecs_get_id(engine->world, ht->target,
+                                                 g_ids.position);
+                    if (tp) { tx = tp->x; ty = tp->y; }
+                }
+                float dx = tx - pos->x, dy = ty - pos->y;
+                float td = sqrtf(dx * dx + dy * dy);
+                if (rt->dist_left > td) rt->dist_left = td;
+                if (td < 1e-6f) {
+                    /* On top of the target: fuel is now 0; the zero
+                     * heading despawns it in projectile_lifecycle
+                     * (MoveSystem.cs:270-277). */
+                    vel->x = 0; vel->y = 0;
+                    ecs_modified_id(engine->world, e, g_ids.velocity);
+                    ecs_modified_id(engine->world, e, g_ids.projectile_runtime);
+                    continue;
+                }
+                vel->x = dx / td * pt->speed;
+                vel->y = dy / td * pt->speed;
+                if (step > td) step = td;
+            }
+
             float len = sqrtf(vel->x * vel->x + vel->y * vel->y);
             if (len < 1e-6f) continue;       /* zero direction: lifecycle
                                                 spends it (MoveSystem.cs:
@@ -37706,7 +38014,6 @@ static void sashimi_movement(Engine *engine) {
             /* Clamp the final step to the remaining fuel; the projectile
              * still moves (and can still hit) this tick, then range
              * expiry spends it in projectile_lifecycle. */
-            float step = pt->speed * g_dt;
             if (step >= rt->dist_left) step = rt->dist_left;
             pos->x += vel->x / len * step;
             pos->y += vel->y / len * step;
@@ -37715,6 +38022,7 @@ static void sashimi_movement(Engine *engine) {
             rt->dist_left -= step;
             ecs_modified_id(engine->world, e, g_ids.position);
             ecs_modified_id(engine->world, e, g_ids.projectile_runtime);
+            if (ht) ecs_modified_id(engine->world, e, g_ids.velocity);
             continue;
         }
         if (is_defeated(engine, e)) continue;
@@ -38356,7 +38664,207 @@ static void sashimi_pickup_collect(Engine *engine) {
 /* ── status_effects (Act) ───────────────────────────────────────────── */
 /* StatusEffectSystem: poison deals its damage on the 0.25 s periodic
  * clock; durations tick down every simulation tick; expired effects are
- * removed (remove, don't set false). */
+ * removed (remove, don't set false). A recall-haste StatusSlow with
+ * RecallHaste stacks > 1 drops one stack and re-arms its window instead
+ * (AppliedStatusEffectElement.Stacks, StatusEffectsSystem.cs:104-131).
+ *
+ * This slot also HOSTS the Eagle FeatherRecall ability pass
+ * (recall_ability_pass below): Unity's HeroEagleProjectileRecallAbility
+ * System runs in EffectApplication and its queued buff is initialized by
+ * StatusEffectSystem in EffectResolution the same tick — the port
+ * collapses decision + application into this Act slot (app.yaml's
+ * generator-emitted system_order cannot grow a new slot; the extraction
+ * JSON is absent, same constraint as collision_push). The pass runs AFTER
+ * the decrement loops so a fresh 67-tick buff first decrements next tick,
+ * matching Unity's buffed-movement window T+1..T+67 exactly (MoveSystem
+ * precedes EffectResolution within a Unity tick). Arming a spawner here
+ * (Act) means weapon_fire (Reset) consumes it NEXT tick — Unity's
+ * EffectApplication(T) -> WorldInit(T+1) delay. */
+
+/* Eagle FeatherRecall (HeroEagleProjectileRecallAbilitySystem.cs — the
+ * traced mechanic; NOT a boomerang, there is no auto-return):
+ *  - Feathers spent on the ground are FeatherRecall_Spawner entities
+ *    (owner + monotonic SpentProjectileId, stamped by
+ *    projectile_lifecycle).
+ *  - Stationary tracking (:68-82): input direction ~0 (Defeated units
+ *    read stationary — Unity zeroes their MoveDirection,
+ *    MoveSystem.cs:117-126); threshold = Ticks(ActivationTime 0.1 s) = 7
+ *    ticks since the transition. Out-of-game eagles are skipped entirely
+ *    (query WithNone<OutOfGameTimer>, :66).
+ *  - Recall activates when feathers > 0 && stationary >= threshold
+ *    (:93,97-101); it deactivates only after feathers == 0 && !stationary
+ *    has held for Ticks(DeactivationTime 0.75 s) = 46 ticks (:94,102-113;
+ *    the deactivation frame is only reset on activation — quirk kept).
+ *  - Feathers >= ProjectileRecallLimitStat (= level, HeroEagle_LUHSSO
+ *    Stat 3) force-recall one per tick even while moving (:88-90,115).
+ *  - One feather per tick, NEWEST first (highest SpentProjectileId,
+ *    :117-128): armed with SpawnOneShotProjectile (recall limit > 0,
+ *    :132-136) or destroyed (limit 0, :137-140).
+ *  - The +50% haste applies to the EAGLE at recall-fire time — never on
+ *    projectile arrival — when the recall is stationary-activated AND
+ *    feathers on the ground >= SpeedBuffThreshold 2 (:143-152,
+ *    HeroEagle.prefab:303). Magnitude/duration/stack limit come from the
+ *    spawner's StatusEffectOnHit (MovementSpeed MultiplyBuffStrongest
+ *    +0.5, 1.1 s, StackLimit 8 — FeatherRecall_Spawner.prefab:177-194):
+ *    reapplication combines stacks up to the limit and resets the window
+ *    (StatusEffectsSystem.cs:176-183); stacks extend DURATION only, the
+ *    multiplier stays the strongest single +50%. */
+static void recall_ability_pass(Engine *engine) {
+    if (!g_ids.hero_level_bonus || !g_ids.spent_projectile_id ||
+        !g_ids.one_shot_spawner || !g_ids.spawn_one_shot ||
+        !g_ids.recall_state || !g_ids.recall_haste)
+        return;
+
+    /* Recall-capable heroes: a nonzero recall_limit table stands in for
+     * Unity's HeroEagleProjectileRecallAbilityConfig presence. */
+    static ecs_entity_t eagles[16];
+    int ne = 0;
+    ecs_query_t *q = ecs_query(engine->world, {
+        .terms = {
+            { .id = g_ids.hero }, { .id = g_ids.hero_level_bonus },
+            { .id = g_ids.input_direction }, { .id = g_ids.position },
+        },
+        .cache_kind = EcsQueryCacheNone });
+    ecs_iter_t it = ecs_query_iter(engine->world, q);
+    while (ecs_query_next(&it))
+        for (int i = 0; i < it.count && ne < 16; i++)
+            eagles[ne++] = it.entities[i];
+    ecs_query_fini(q);
+
+    for (int i = 0; i < ne; i++) {
+        ecs_entity_t e = eagles[i];
+        const CHeroLevelBonus *hb = ecs_get_id(engine->world, e,
+                                               g_ids.hero_level_bonus);
+        if (!hb || hb->recall_limit[0] <= 0) continue;
+        if (is_out_of_game(engine, e)) continue; /* state frozen while OOG */
+
+        CRecallState *st = ecs_get_mut_id(engine->world, e,
+                                          g_ids.recall_state);
+        if (!st) {
+            CRecallState init = { -1, 0, false };
+            ecs_set_id(engine->world, e, g_ids.recall_state,
+                       sizeof(init), &init);
+            st = ecs_get_mut_id(engine->world, e, g_ids.recall_state);
+            if (!st) continue;
+        }
+
+        /* Stationary tracking. */
+        bool stationary = true;
+        if (!is_defeated(engine, e)) {
+            const CVec2 *in = ecs_get_id(engine->world, e,
+                                         g_ids.input_direction);
+            stationary = !in ||
+                sqrtf(in->x * in->x + in->y * in->y) < 1e-4f;
+        }
+        if (stationary) {
+            if (st->stationary_since < 0)
+                st->stationary_since = (int32_t)g_tick;
+        } else {
+            st->stationary_since = -1;
+        }
+        bool at_threshold = st->stationary_since >= 0 &&
+            g_tick >= (int64_t)st->stationary_since +
+                      SASHIMI_RECALL_ACTIVATION_TICKS;
+
+        /* My resting feathers (armed ones no longer count: Unity's query
+         * is WithNone<SpawnOneShotProjectileTag>, :51-52). */
+        int n_feathers = 0;
+        ecs_entity_t newest = 0;
+        int32_t newest_id = 0;
+        ecs_query_t *fq = ecs_query(engine->world, {
+            .terms = {
+                { .id = g_ids.spent_projectile_id },
+                { .id = g_ids.one_shot_spawner },
+            },
+            .cache_kind = EcsQueryCacheNone });
+        ecs_iter_t fit = ecs_query_iter(engine->world, fq);
+        while (ecs_query_next(&fit)) {
+            for (int f = 0; f < fit.count; f++) {
+                ecs_entity_t fe = fit.entities[f];
+                if (ecs_has_id(engine->world, fe, g_ids.spawn_one_shot))
+                    continue;
+                const CSpentProjectileId *sid =
+                    ecs_get_id(engine->world, fe, g_ids.spent_projectile_id);
+                if (!sid || sid->owner != e || sid->id <= 0) continue;
+                n_feathers++;
+                if (sid->id > newest_id) { newest_id = sid->id; newest = fe; }
+            }
+        }
+        ecs_query_fini(fq);
+
+        int lvl = 1;
+        const CExperience *xp = ecs_get_id(engine->world, e,
+                                           g_ids.experience);
+        if (xp) lvl = xp->level < 1 ? 1 : (xp->level > 20 ? 20 : xp->level);
+        int limit = (int)hb->recall_limit[lvl - 1];
+
+        bool too_many = n_feathers >= limit;
+        bool activate_cond = n_feathers > 0 && at_threshold;
+        bool deactivate_cond = n_feathers == 0 && !at_threshold;
+
+        if (!st->activated && activate_cond) {
+            st->activated = true;
+            st->deactivation_since = 0;
+        } else if (st->activated && deactivate_cond) {
+            if (st->deactivation_since == 0)
+                st->deactivation_since = (int32_t)g_tick;
+            if (g_tick >= (int64_t)st->deactivation_since +
+                          SASHIMI_RECALL_DEACTIVATION_TICKS)
+                st->activated = false;
+        }
+        ecs_modified_id(engine->world, e, g_ids.recall_state);
+
+        if (!newest || !(too_many || st->activated)) continue;
+
+        /* Read the spawner's buff BEFORE the recall decision consumes the
+         * entity (Unity's ECB defers both). */
+        CStatusEffectOnHit fx;
+        bool has_fx = false;
+        const CStatusEffectOnHit *fxp = ecs_get_id(engine->world, newest,
+                                                   g_ids.status_on_hit);
+        if (fxp) { fx = *fxp; has_fx = true; }
+
+        bool recalled = false;
+        if (limit > 0) {
+            ecs_add_id(engine->world, newest, g_ids.spawn_one_shot);
+            recalled = true;
+        } else {
+            ecs_delete(engine->world, newest); /* :137-140 */
+        }
+
+        if (recalled && has_fx && activate_cond &&
+            n_feathers >= SASHIMI_RECALL_BUFF_THRESHOLD &&
+            fx.stat_type == 1 && fx.magnitude != 0) {
+            /* Ticks(1.1 s) = 67 (GameTimeSystem_FixedStep.cs:77-84). */
+            int dur = 1 + (int)floorf(fx.duration * (float)g_tick_rate);
+            int cap = fx.stack_limit > 0 ? fx.stack_limit : 1;
+            CStatusSlow *slow = ecs_get_mut_id(engine->world, e,
+                                               g_ids.status_slow);
+            CRecallHaste *rh = ecs_get_mut_id(engine->world, e,
+                                              g_ids.recall_haste);
+            int stacks = 1;
+            if (slow && rh) {
+                stacks = rh->stacks + 1 > cap ? cap : rh->stacks + 1;
+                rh->stacks = stacks;
+                rh->duration_ticks = dur;
+                slow->ticks_remaining = dur;
+                slow->magnitude = fx.magnitude;
+                ecs_modified_id(engine->world, e, g_ids.recall_haste);
+                ecs_modified_id(engine->world, e, g_ids.status_slow);
+            } else {
+                CStatusSlow ns = { dur, fx.magnitude };
+                ecs_set_id(engine->world, e, g_ids.status_slow,
+                           sizeof(ns), &ns);
+                CRecallHaste nh = { 1, dur };
+                ecs_set_id(engine->world, e, g_ids.recall_haste,
+                           sizeof(nh), &nh);
+            }
+            /* Presentation: jump anim + the spawner's Spawn audio + the
+             * FeatherRecallBuff FX (:147-166). */
+            emit_event(engine, SASHIMI_EV_RECALL_BUFF, e, stacks);
+        }
+    }
+}
 
 static void sashimi_status_effects(Engine *engine) {
     if (is_simulation_paused(engine)) return;
@@ -38424,12 +38932,37 @@ static void sashimi_status_effects(Engine *engine) {
                                             g_ids.status_slow);
             if (!s) continue;
             s->ticks_remaining--;
-            if (s->ticks_remaining <= 0)
-                ecs_remove_id(engine->world, ents[i], g_ids.status_slow);
-            else
+            if (s->ticks_remaining <= 0) {
+                /* Recall haste with stacks left: drop ONE stack and re-arm
+                 * the window instead of removing (Unity decrements
+                 * AppliedStatusEffectElement.Stacks and resets
+                 * ExpirationTick, StatusEffectsSystem.cs:104-131). */
+                CRecallHaste *rh = g_ids.recall_haste ?
+                    ecs_get_mut_id(engine->world, ents[i],
+                                   g_ids.recall_haste) : NULL;
+                if (rh && s->magnitude > 0 && rh->stacks > 1) {
+                    rh->stacks--;
+                    s->ticks_remaining = rh->duration_ticks;
+                    ecs_modified_id(engine->world, ents[i],
+                                    g_ids.recall_haste);
+                    ecs_modified_id(engine->world, ents[i],
+                                    g_ids.status_slow);
+                } else {
+                    ecs_remove_id(engine->world, ents[i], g_ids.status_slow);
+                    if (rh)
+                        ecs_remove_id(engine->world, ents[i],
+                                      g_ids.recall_haste);
+                }
+            } else {
                 ecs_modified_id(engine->world, ents[i], g_ids.status_slow);
+            }
         }
     }
+
+    /* Eagle FeatherRecall (hosted here; see the header comment above and
+     * the trace block at recall_ability_pass). Runs after the decrement
+     * loops so a buff applied this tick keeps its full window. */
+    recall_ability_pass(engine);
 }
 
 /* ── defeat (Act) ───────────────────────────────────────────────────── */
@@ -38647,6 +39180,18 @@ static void sashimi_projectile_lifecycle(Engine *engine) {
                     CVec2 p2 = { pos->x, pos->y };
                     ecs_set_id(engine->world, spawner, g_ids.position,
                                sizeof(p2), &p2);
+                    /* Unity copies the ProjectileState (Owner) onto the
+                     * spent spawner and stamps a monotonic
+                     * SpentProjectileId (ProjectileLifecycleSystem.cs:
+                     * 266-271); the recall ability matches feathers by
+                     * owner and recalls the newest id first. */
+                    if (g_ids.spent_projectile_id) {
+                        CSpentProjectileId sid = { rt->shooter,
+                                                   ++g_spent_counter };
+                        ecs_set_id(engine->world, spawner,
+                                   g_ids.spent_projectile_id,
+                                   sizeof(sid), &sid);
+                    }
                 }
             }
             ecs_delete(engine->world, e);
@@ -39160,6 +39705,7 @@ void sashimi_register_native_systems(Engine *engine) {
     memset(&g_ids, 0, sizeof(g_ids)); /* re-resolve against this world */
     pairs_reset();
     g_proj_hit_count = 0;
+    g_spent_counter = 0;
     g_unit_count = 0;
     g_event_count = 0;
     g_matrix_loaded = false;
@@ -39340,6 +39886,11 @@ enum {
     SASHIMI_EV_PICKUP        = 7, /* subject: pickup; data: effect (1|2)  */
     SASHIMI_EV_LEVEL_UP      = 8, /* subject: hero; data: new level       */
     SASHIMI_EV_WAVE_STARTED  = 9, /* data: wave number released           */
+    SASHIMI_EV_RECALL_BUFF   = 10,/* subject: hero; data: haste stacks.
+                                     Unity cue: jump anim + the spawner's
+                                     Spawn audio + FeatherRecallBuff FX
+                                     (HeroEagleProjectileRecallAbility
+                                     System.cs:147-166) */
 };
 
 #define SASHIMI_EVENT_CAP 256
@@ -39371,6 +39922,19 @@ int  sashimi_event_data(int i);
 #define SASHIMI_RESPAWN_TICKS         600  /* 10 s hero respawn timer */
 #define SASHIMI_RESPAWN_OOG_TICKS     120  /* 2 s out-of-game after respawn */
 #define SASHIMI_CHARGE_DISTANCE       3.0f /* LargeCubeCharge dash fuel, units */
+
+/* Eagle FeatherRecall ability constants — source-pinned from the
+ * HeroEagle.prefab authoring override (HeroEagle.prefab:300-303:
+ * ActivationTime 0.1, DeactivationTime 0.75, SpeedBuffThreshold 2 — the
+ * HeroEagleAuthoring.cs code defaults 0.1/0/4 are overridden by the
+ * prefab). Tick conversion is Unity's Ticks(d) = 1 + floor(d * 60)
+ * (GameTimeSystem_FixedStep.cs:77-84). The buff itself
+ * (MovementSpeed MultiplyBuffStrongest +0.5, 1.1 s, StackLimit 8) is NOT
+ * a constant here: it is read at recall time from the spawner's generated
+ * StatusEffectOnHit (entities/FeatherRecall_Spawner.yaml). */
+#define SASHIMI_RECALL_ACTIVATION_TICKS   7  /* Ticks(0.1 s) stationary */
+#define SASHIMI_RECALL_DEACTIVATION_TICKS 46 /* Ticks(0.75 s) sustained */
+#define SASHIMI_RECALL_BUFF_THRESHOLD     2  /* feathers on ground for haste */
 
 #endif
 /* Sashimi sandbox content validation.
@@ -41821,6 +42385,343 @@ TEST(pickup_magnet_overlap_claim_uncapped_corpse_completion) {
     teardown();
 }
 
+/* --- Eagle FeatherRecall ------------------------------------------------- */
+/* Traced mechanic (HeroEagleProjectileRecallAbilitySystem.cs; NOT a
+ * boomerang): spent feathers rest on the ground as FeatherRecall_Spawner
+ * entities stamped with the owner and a monotonic SpentProjectileId
+ * (ProjectileLifecycleSystem.cs:257-271). The eagle standing still for
+ * ActivationTime 0.1 s (HeroEagle.prefab:301) activates recall — or
+ * feathers >= ProjectileRecallLimitStat (= level, HeroEagle_LUHSSO Stat 3)
+ * force-recalls even while moving (:88-93). One feather per tick, newest
+ * first (:115-135): the spawner is armed (SpawnOneShotProjectileTag) and
+ * fires next tick (ProjectileSpawnRequestSystem.cs:147-210) a homing
+ * FeatherRecall_Projectile at the eagle with Fuel = distance at fire time
+ * (:186). The +50% speed applies to the EAGLE'S MoveSpeed at recall-fire
+ * time — not on projectile arrival — when the recall was stationary-
+ * activated and feathers-on-ground >= SpeedBuffThreshold 2
+ * (HeroEagleProjectileRecallAbilitySystem.cs:143-152, HeroEagle.prefab:
+ * 303): the spawner's buff (MovementSpeed MultiplyBuffStrongest 0.5,
+ * duration 1.1 s, StackLimit 8 — FeatherRecall_Spawner.prefab:177-194)
+ * stacks by duration only. The projectile damages creatures en route
+ * (Feather_Projectile variant, IgnoreHitLimit 1) and simply despawns at
+ * the eagle (SpentProjectilePrefab null): "collecting" is the despawn. */
+
+struct TSid { ecs_entity_t owner; int32_t id; };
+struct THaste { int32_t stacks, duration_ticks; };
+
+static void possess(ecs_entity_t hero, int slot) {
+    int32_t s = slot;
+    ecs_set_id(engine->world, hero, comp("PossessedBy"), sizeof(s), &s);
+}
+static void set_input(ecs_entity_t hero, float x, float y) {
+    float *in = (float *)get_mut(hero, "InputDirection");
+    if (in) { in[0] = x; in[1] = y; }
+}
+static void set_level(ecs_entity_t hero, int level) {
+    int32_t *xp = (int32_t *)get_mut(hero, "Experience");
+    xp[1] = level; /* level is the 2nd i32 slot */
+}
+static ecs_entity_t spawn_feather_spawner(ecs_entity_t owner, int id,
+                                          float x, float y) {
+    ecs_entity_t sp = spawn_at("FeatherRecall_Spawner", x, y);
+    struct TSid sid = { owner, id };
+    ecs_set_id(engine->world, sp, comp("SpentProjectileId"),
+               sizeof(sid), &sid);
+    return sp;
+}
+
+/* Full loop, eagle-driven: feathers fired and spent, stationary recall,
+ * homing recall projectile, haste on recall-fire, collection = despawn,
+ * buff expiry. */
+TEST(feather_recall_full_loop_with_haste) {
+    setup();
+    clear_spawned();
+
+    /* Full ticks drive the spawn director; park the wave script so wave-1
+       slimes (origin (0,0)) cannot maul the stationary eagle mid-test. */
+    {
+        int32_t *ws = (int32_t *)get_mut(ecs_lookup(engine->world,
+                                                    "GameState"), "WaveState");
+        ws[0] = 0; /* next_wave < 1: director idles */
+    }
+
+    ecs_entity_t eagle = spawn_at("HeroEagle", 0, 0);
+    possess(eagle, 1);          /* hero_ai yields; the test scripts input */
+    set_level(eagle, 3);        /* recall limit 3: 2 feathers can rest */
+
+    /* A tanky, frozen golem inside feather range keeps the weapon firing
+       but can never close to melee (attack max range < 2.5). */
+    ecs_entity_t golem = spawn_at("CreatureRockGolem", 2.5f, 0);
+    float *gh = (float *)get_mut(golem, "Health");
+    gh[0] = gh[1] = 10000.0f;
+    ecs_add_id(engine->world, golem, comp("LocomotionDisabled"));
+
+    /* Oscillate input (never stationary) until two feathers lie spent. */
+    int t = 0;
+    while (count_named_prefix("FeatherRecall_Spawner_") < 2 && t < 400) {
+        set_input(eagle, (t & 1) ? 1.0f : -1.0f, 0);
+        tick();
+        t++;
+    }
+    ASSERT_EQ(count_named_prefix("FeatherRecall_Spawner_"), 2);
+    ASSERT(!has(eagle, "StatusSlow")); /* moving: recall never activated */
+
+    /* Spawners carry the owner and increasing spent ids. */
+    {
+        EntityList list = engine_entity_list(engine);
+        int seen = 0, last_id = 0;
+        for (int i = 0; i < list.count; i++) {
+            const char *n = list.items[i].name;
+            if (!n || strncmp(n, "FeatherRecall_Spawner_", 22) != 0) continue;
+            const struct TSid *sid = (const struct TSid *)
+                get(list.items[i].id, "SpentProjectileId");
+            ASSERT_NOT_NULL(sid);
+            ASSERT(sid->owner == eagle);
+            ASSERT(sid->id > last_id);
+            last_id = sid->id;
+            seen++;
+        }
+        engine_entity_list_free(&list);
+        ASSERT_EQ(seen, 2);
+    }
+
+    /* Stop the weapon and clear any feather still in flight so exactly
+       two spent feathers take part in the recall. */
+    ecs_delete(engine->world, golem);
+    {
+        EntityList list = engine_entity_list(engine);
+        for (int i = 0; i < list.count; i++)
+            if (list.items[i].name &&
+                strncmp(list.items[i].name, "Feather_Projectile_", 19) == 0)
+                ecs_delete(engine->world, list.items[i].id);
+        engine_entity_list_free(&list);
+    }
+
+    /* Stand still: activation after Ticks(0.1 s) = 7 stationary ticks,
+       newest feather armed, projectile fired the tick after. */
+    set_input(eagle, 0, 0);
+    ecs_entity_t proj = 0;
+    for (t = 0; t < 12 && !proj; t++) {
+        tick();
+        proj = find_first_named("FeatherRecall_Projectile_");
+    }
+    ASSERT(proj != 0);
+
+    /* Homing at the eagle. */
+    const ecs_entity_t *ht = (const ecs_entity_t *)get(proj, "HomingTarget");
+    ASSERT_NOT_NULL(ht);
+    ASSERT(ht[0] == eagle);
+
+    /* Haste applied at recall-fire time (2 feathers >= threshold 2,
+       stationary-activated): +50%, Ticks(1.1 s) = 67, one stack. */
+    const float *slow = (const float *)get(eagle, "StatusSlow");
+    ASSERT_NOT_NULL(slow);
+    ASSERT_EQ(slow[1], 0.5f);
+    const struct THaste *hs = (const struct THaste *)get(eagle, "RecallHaste");
+    ASSERT_NOT_NULL(hs);
+    ASSERT_EQ(hs->stacks, 1);
+    ASSERT_EQ(hs->duration_ticks, 67);
+
+    /* Collection: both recall projectiles despawn at the eagle; no spawner
+       remains; the eagle takes no damage from its own feathers. */
+    for (t = 0; t < 40 &&
+         (count_named_prefix("FeatherRecall_Projectile_") > 0 ||
+          count_named_prefix("FeatherRecall_Spawner_") > 0); t++)
+        tick();
+    ASSERT_EQ(count_named_prefix("FeatherRecall_Projectile_"), 0);
+    ASSERT_EQ(count_named_prefix("FeatherRecall_Spawner_"), 0);
+    const float *eh = (const float *)get(eagle, "Health");
+    ASSERT_EQ(eh[0], eh[1]);
+
+    /* Buffed locomotion: MoveSpeed 2 * (1 + 0.5) = 3 u/s while the buff
+       holds (applied ~42 ticks ago, 67-tick duration). */
+    ASSERT(has(eagle, "StatusSlow"));
+    float y0 = ((const float *)get(eagle, "Position"))[1];
+    for (t = 0; t < 10; t++) { set_input(eagle, 0, 1.0f); tick(); }
+    float dy_buffed = ((const float *)get(eagle, "Position"))[1] - y0;
+    ASSERT(fabsf(dy_buffed - 10.0f * 3.0f / 60.0f) < 1e-3f);
+
+    /* Expiry: the buff and its stack tracker are removed together. */
+    for (t = 0; t < 40; t++) { set_input(eagle, 0, 0); tick(); }
+    ASSERT(!has(eagle, "StatusSlow"));
+    ASSERT(!has(eagle, "RecallHaste"));
+    y0 = ((const float *)get(eagle, "Position"))[1];
+    for (t = 0; t < 10; t++) { set_input(eagle, 0, 1.0f); tick(); }
+    float dy_plain = ((const float *)get(eagle, "Position"))[1] - y0;
+    ASSERT(fabsf(dy_plain - 10.0f * 2.0f / 60.0f) < 1e-3f);
+    teardown();
+}
+
+/* Fuel = distance(spawner, eagle) at fire time; the tracker re-aims every
+ * tick, fuel only ever shrinks (min(fuel, target distance),
+ * MoveSystem.cs:259), and a recall projectile that runs dry short of a
+ * fleeing eagle despawns WITHOUT leaving a new spawner (its
+ * SpentProjectilePrefab is null). */
+TEST(recall_fuel_equals_distance_and_homing_never_regains_fuel) {
+    setup();
+    clear_spawned();
+
+    ecs_entity_t eagle = spawn_at("HeroEagle", 0, 0);
+    possess(eagle, 1);
+    set_input(eagle, 1.0f, 0); /* moving: only the too-many path recalls */
+    /* level 1 -> recall limit 1: one resting feather force-recalls. */
+    ecs_entity_t sp = spawn_feather_spawner(eagle, 1, 3.0f, 4.0f);
+
+    run("game_time");
+    run("status_effects"); /* recall pass: arms the spawner (too many) */
+    ASSERT(has(sp, "SpawnOneShotProjectile"));
+    ASSERT(!has(eagle, "StatusSlow")); /* not stationary: no haste */
+    set_input(eagle, 0, 0); /* park the eagle for exact-position asserts */
+
+    run("game_time");
+    run("weapon_fire");    /* one-shot fire next tick */
+    ASSERT(!ecs_is_alive(engine->world, sp)); /* spawner consumed */
+    ecs_entity_t proj = find_first_named("FeatherRecall_Projectile_");
+    ASSERT(proj != 0);
+
+    struct TRt *rt = (struct TRt *)get_mut(proj, "ProjectileRuntime");
+    ASSERT_NOT_NULL(rt);
+    ASSERT(rt->shooter == eagle);
+    ASSERT(fabsf(rt->dist - 5.0f) < 1e-4f); /* fuel = distance(3,4 -> 0,0) */
+    const float *v = (const float *)get(proj, "Velocity");
+    ASSERT(fabsf(v[0] - (-6.0f)) < 1e-3f);  /* speed 10 toward the eagle */
+    ASSERT(fabsf(v[1] - (-8.0f)) < 1e-3f);
+
+    /* Re-aim: eagle teleports to (3,0), 4 away — fuel clamps DOWN to 4. */
+    set_pos(eagle, 3.0f, 0);
+    run("game_time");
+    run("movement");
+    rt = (struct TRt *)get_mut(proj, "ProjectileRuntime");
+    ASSERT(fabsf(rt->dist - (4.0f - 10.0f / 60.0f)) < 1e-3f);
+    const float *pp = (const float *)get(proj, "Position");
+    ASSERT(fabsf(pp[0] - 3.0f) < 1e-3f); /* heading straight down at it */
+
+    /* Eagle flees out of fuel range: the projectile runs dry mid-chase,
+       despawns, and leaves NO new spawner behind. */
+    set_pos(eagle, 3.0f, -6.0f);
+    for (int t = 0; t < 30; t++) {
+        run("game_time"); run("movement"); run("projectile_lifecycle");
+    }
+    ASSERT(!ecs_is_alive(engine->world, proj));
+    ASSERT_EQ(count_named_prefix("FeatherRecall_Spawner_"), 0);
+    teardown();
+}
+
+/* Stationary-activated recalls with feathers >= SpeedBuffThreshold stack
+ * the haste BY DURATION only (StackLimit 8): reapplication combines stacks
+ * and resets the window (StatusEffectsSystem.cs:176-183); each expiry
+ * drops one stack and re-arms the timer (:104-131); magnitude stays +50%
+ * (MultiplyBuffStrongest — strongest wins, never cumulative). */
+TEST(recall_haste_stacks_extend_duration_only) {
+    setup();
+    clear_spawned();
+
+    ecs_entity_t eagle = spawn_at("HeroEagle", 0, 0);
+    possess(eagle, 1);
+    set_input(eagle, 0, 0);
+    set_level(eagle, 5); /* recall limit 5: 4 feathers rest freely */
+    for (int i = 1; i <= 4; i++)
+        spawn_feather_spawner(eagle, i, (float)i, 3.0f);
+
+    /* Stationary since tick 1; threshold at tick 8 arms feather #4 and
+       applies stack 1 (4 feathers >= 2). Ticks 9 and 10 recall #3 and #2
+       with 3 and 2 feathers on the ground: stacks 2 and 3. */
+    for (int t = 0; t < 10; t++) { run("game_time"); run("status_effects"); }
+    const struct THaste *hs = (const struct THaste *)get(eagle, "RecallHaste");
+    ASSERT_NOT_NULL(hs);
+    ASSERT_EQ(hs->stacks, 3);
+    const int32_t *st = (const int32_t *)get(eagle, "StatusSlow");
+    ASSERT_EQ(st[0], 67); /* window reset by the latest application */
+    const float *sf = (const float *)get(eagle, "StatusSlow");
+    ASSERT_EQ(sf[1], 0.5f); /* strongest, not cumulative */
+
+    /* Tick 11 recalls the last feather with only 1 on the ground: below
+       the threshold, no fourth stack. */
+    run("game_time"); run("status_effects");
+    hs = (const struct THaste *)get(eagle, "RecallHaste");
+    ASSERT_EQ(hs->stacks, 3);
+
+    /* Expiry drops one stack and re-arms the 67-tick window (the third
+       application landed on tick 10; decrements run ticks 12..77). */
+    for (int t = 0; t < 66; t++) { run("game_time"); run("status_effects"); }
+    hs = (const struct THaste *)get(eagle, "RecallHaste");
+    ASSERT_NOT_NULL(hs);
+    ASSERT_EQ(hs->stacks, 2);
+    st = (const int32_t *)get(eagle, "StatusSlow");
+    ASSERT_EQ(st[0], 67);
+
+    /* Two more windows: gone entirely. */
+    for (int t = 0; t < 134; t++) { run("game_time"); run("status_effects"); }
+    ASSERT(!has(eagle, "StatusSlow"));
+    ASSERT(!has(eagle, "RecallHaste"));
+    teardown();
+}
+
+/* A DEAD eagle keeps recalling: Unity zeroes MoveDirection for Defeated
+ * units (MoveSystem.cs:117-126) and the recall query excludes only
+ * OutOfGameTimer/DestroyGhostTag — so the corpse counts as stationary.
+ * The post-respawn 2 s OutOfGame window pauses recall entirely. */
+TEST(recall_runs_while_dead_pauses_while_out_of_game) {
+    setup();
+    clear_spawned();
+
+    ecs_entity_t eagle = spawn_at("HeroEagle", 0, 0);
+    possess(eagle, 1);
+    set_input(eagle, 1.0f, 0);   /* alive input says "moving"... */
+    set_level(eagle, 5);
+    ecs_entity_t sp = spawn_feather_spawner(eagle, 1, 2.0f, 0);
+    ecs_add_id(engine->world, eagle, comp("Defeated")); /* ...but dead */
+
+    /* Defeated => stationary: activation at start+7, armed on tick 8. */
+    for (int t = 0; t < 8; t++) { run("game_time"); run("status_effects"); }
+    ASSERT(has(sp, "SpawnOneShotProjectile"));
+    /* 1 feather < threshold 2: recall fires, no haste. */
+    ASSERT(!has(eagle, "StatusSlow"));
+
+    /* Out of game (the respawn window): recall is fully paused. */
+    ecs_entity_t sp2 = spawn_feather_spawner(eagle, 2, -2.0f, 0);
+    struct { int32_t ticks; } oog = { 120 };
+    ecs_set_id(engine->world, eagle, comp("OutOfGame"), sizeof(oog), &oog);
+    ecs_remove_id(engine->world, eagle, comp("Defeated"));
+    set_input(eagle, 0, 0);
+    for (int t = 0; t < 20; t++) { run("game_time"); run("status_effects"); }
+    ASSERT(!has(sp2, "SpawnOneShotProjectile"));
+
+    /* Back in game: the stationary clock starts fresh and recalls. */
+    ecs_remove_id(engine->world, eagle, comp("OutOfGame"));
+    for (int t = 0; t < 8; t++) { run("game_time"); run("status_effects"); }
+    ASSERT(has(sp2, "SpawnOneShotProjectile"));
+    teardown();
+}
+
+/* The recall projectile is a live Feather variant: it damages creatures it
+ * passes through (DamageOnHit 12, IgnoreHitLimit) but despawns at its
+ * owner without hurting heroes (faction filter). */
+TEST(recall_projectile_damages_creatures_en_route) {
+    setup();
+    clear_spawned();
+
+    ecs_entity_t eagle = spawn_at("HeroEagle", 0, 0);
+    possess(eagle, 1);
+    set_input(eagle, 0, 0);
+    /* Slime parked on the flight path, out of the eagle's weapon range
+       (3.5 > 3) so no feathers muddy the ledger. */
+    ecs_entity_t slime = spawn_at("CreatureSlimeOrange", 3.5f, 0);
+    float *sh = (float *)get_mut(slime, "Health");
+    sh[0] = sh[1] = 1000.0f;
+    ecs_add_id(engine->world, slime, comp("LocomotionDisabled"));
+
+    spawn_feather_spawner(eagle, 1, 7.0f, 0); /* limit 1 at level 1 */
+    for (int t = 0; t < 60; t++) tick();
+
+    ASSERT_EQ(count_named_prefix("FeatherRecall_Projectile_"), 0); /* arrived */
+    const float *hp = (const float *)get(slime, "Health");
+    ASSERT_EQ(hp[0], 988.0f); /* one 12-damage hit, never re-hit */
+    const float *eh = (const float *)get(eagle, "Health");
+    ASSERT_EQ(eh[0], eh[1]);  /* the owner is never a victim */
+    teardown();
+}
+
 /* --- game over ------------------------------------------------------------ */
 
 /* Unity ends the game when InterpTick strictly EXCEEDS VictoryTick
@@ -41907,11 +42808,17 @@ TEST(headless_full_game_to_completion) {
      *    difficulty, same seed/build: damage_taken_ratio 0.25 ->
      *    VICTORY at 10801 (gems 136, kills 469); ratio 0.125 ->
      *    VICTORY at 10801 (gems 140, kills 465).
-     *  - 2026-07 level-up proportional-rescale fix (this pin): removing
-     *    the port-only full heal on level-up (HeroLevelUpSystem.cs:56-65
+     *  - 2026-07 level-up proportional-rescale fix: removing the
+     *    port-only full heal on level-up (HeroLevelUpSystem.cs:56-65
      *    commented out in live Unity; current HP rescales by the max
      *    multiplier, :143-148) reshuffles the deterministic run back to
      *    VICTORY at 10801, gems 102 -> 150, kills 265 -> 440. Observed
+     *    and re-pinned, never tuned.
+     *  - 2026-07 Eagle FeatherRecall batch (this pin): the recall loop
+     *    lands (spent feathers recalled as homing projectiles that
+     *    damage creatures en route, +50% stationary-recall haste), so
+     *    the AI eagle's feathers now recycle instead of resting inert.
+     *    VICTORY at 10801, gems 150 -> 196, kills 440 -> 490. Observed
      *    and re-pinned, never tuned. */
     ASSERT(strncmp(engine->game_over_message, "Victory", 7) == 0);
     ASSERT_EQ(ticks, 10801);
@@ -41960,6 +42867,11 @@ int main(void) {
     RUN(ability_stage_ticks_one_plus_floor);
     RUN(targeting_first_in_order_wins_within_threshold);
     RUN(pickup_magnet_overlap_claim_uncapped_corpse_completion);
+    RUN(feather_recall_full_loop_with_haste);
+    RUN(recall_fuel_equals_distance_and_homing_never_regains_fuel);
+    RUN(recall_haste_stacks_extend_duration_only);
+    RUN(recall_runs_while_dead_pauses_while_out_of_game);
+    RUN(recall_projectile_damages_creatures_en_route);
     RUN(victory_requires_strictly_past_victory_tick);
     RUN(headless_full_game_to_completion);
     TEST_RESULTS();
