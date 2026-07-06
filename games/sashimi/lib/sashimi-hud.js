@@ -1,8 +1,9 @@
 /**
  * SashimiHUD — DOM HUD layer for the sashimi client: status panel (HP,
- * XP/level, wave, survival timer, perf counters), join/pause banner, and the
- * game-over / victory overlay. Pure presentation: every number displayed is
- * read from the engine through the WASM bridge.
+ * XP/level, wave, survival timer, perf counters) and the join/pause banner.
+ * Pure presentation: every number displayed is read from the engine through
+ * the WASM bridge. The game-over overlay this module used to own is now the
+ * results screen (sashimi-screens.js, the Unity VictoryVT/DefeatVT port).
  */
 var SashimiHUD = (function() {
     function pad2(n) { return n < 10 ? '0' + n : '' + n; }
@@ -19,7 +20,7 @@ var SashimiHUD = (function() {
     }
 
     function init(els) {
-        var hudEl = els.hud, bannerEl = els.banner, overlayEl = els.overlay;
+        var hudEl = els.hud, bannerEl = els.banner;
 
         function update(d) {
             var hpPct = d.maxHp > 0 ? d.hp / d.maxHp : 0;
@@ -47,46 +48,9 @@ var SashimiHUD = (function() {
 
         function setBanner(text) { bannerEl.textContent = text; }
 
-        function showGameOver(d) {
-            overlayEl.innerHTML = '';
-            var h1 = document.createElement('div');
-            h1.className = 'go-title ' + (d.victory ? 'go-victory' : 'go-defeat');
-            h1.textContent = d.victory ? 'VICTORY' : 'DEFEAT';
-            var msg = document.createElement('div');
-            msg.className = 'go-msg';
-            msg.textContent = d.message;
-            var stats = document.createElement('div');
-            stats.className = 'go-stats';
-            stats.textContent =
-                'survived  ' + mmss(d.timeSec) +
-                '\nwave      ' + d.wave + '/' + d.waveCount +
-                '\nlevel     ' + d.level +
-                '\ngems      ' + d.gems +
-                '\nkills     ' + d.kills;
-            overlayEl.appendChild(h1);
-            overlayEl.appendChild(msg);
-            overlayEl.appendChild(stats);
-            if (d.onRestart) {
-                var btn = document.createElement('button');
-                btn.className = 'go-restart';
-                btn.textContent = 'PLAY AGAIN';
-                btn.addEventListener('click', d.onRestart);
-                overlayEl.appendChild(btn);
-            }
-            var hint = document.createElement('div');
-            hint.className = 'go-hint';
-            hint.textContent = d.onRestart ? 'or press R' : 'Press R to play again';
-            overlayEl.appendChild(hint);
-            overlayEl.style.display = 'flex';
-        }
-
-        function hideGameOver() { overlayEl.style.display = 'none'; }
-
         return {
             update: update,
             setBanner: setBanner,
-            showGameOver: showGameOver,
-            hideGameOver: hideGameOver,
         };
     }
 

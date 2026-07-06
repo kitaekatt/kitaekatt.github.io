@@ -4,7 +4,7 @@
  * AudioEventSO / pickup / projectile / MusicController data.
  * Regenerate: see the extractor's module docstring. */
 var SashimiAudioData = {
-  "version": "8b9d5ec37a",
+  "version": "eeca4afefd",
   "clips": {
     "cube-active-1": {
       "file": "assets/audio/largecube-active01-967e48.m4a",
@@ -464,6 +464,10 @@ var SashimiAudioData = {
     },
     "defeat": {
       "file": "assets/audio/zane-little-hush-hamlet-loop-8a8d4d.m4a",
+      "loop": true
+    },
+    "start": {
+      "file": "assets/audio/zane-little-digital-cocktail-08-electronic-outlaw-47bcdb.m4a",
       "loop": true
     },
     "victory": {

@@ -242,6 +242,8 @@ var SashimiAudio = (function() {
                 setMusic(victory ? 'victory' : 'defeat');
             },
             startMusic: function() { setMusic('adventure'); },
+            /* Unity MusicList.Start: title screen + character select */
+            menuMusic: function() { setMusic('start'); },
             setMuted: setMuted,
             setVolume: setVolume,
             /* verification hooks (test/CDP): decode + context state */

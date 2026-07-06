@@ -58,33 +58,145 @@ canvas { display: block; touch-action: none; }
     writing-mode: vertical-lr; direction: rtl;
     accent-color: #9fe8a0;
 }
-#overlay {
-    position: fixed; inset: 0; z-index: 10; display: none;
-    flex-direction: column; align-items: center; justify-content: center;
-    gap: 14px; background: rgba(8, 8, 18, 0.82);
-    color: #ddd; font-family: monospace; text-align: center;
-}
-#overlay .go-title { font-size: 52px; letter-spacing: 8px; font-weight: bold; }
-#overlay .go-victory { color: #8fe89a; text-shadow: 0 0 24px rgba(90, 230, 120, 0.5); }
-#overlay .go-defeat { color: #e86a6a; text-shadow: 0 0 24px rgba(230, 80, 80, 0.5); }
-#overlay .go-msg { font-size: 13px; color: #999; }
-#overlay .go-stats { font-size: 15px; line-height: 1.7; white-space: pre; text-align: left; }
-#overlay .go-restart {
-    margin-top: 8px; padding: 12px 32px; min-height: 44px;
-    background: rgba(30, 40, 60, 0.9); border: 1px solid #8ab6e8;
-    border-radius: 8px; color: #8ab6e8;
-    font: bold 15px monospace; letter-spacing: 2px; cursor: pointer;
-}
-#overlay .go-restart:active { background: rgba(50, 70, 100, 0.95); }
-#overlay .go-hint { font-size: 13px; color: #8ab6e8; }
 #version { position: fixed; bottom: 2px; right: 6px; color: #444; font: 10px monospace; z-index: 5; }
+
+/* ── UI screens (SashimiScreens: title / hero select / results) ──
+   Layout and type transcribed from the Unity UI documents:
+   Assets/UI/*.uxml + GlobalUIStyle.uss over the shipped 1920x1080
+   StaticScreens art (extracted by clients/tools/extract-ui.py).
+   Each screen letterboxes the art on the art's own backdrop cyan
+   (.fullscreen: background-size contain, centered); children position
+   in percentages of the 16:9 stage. --su = 1% of stage width, so
+   calc(var(--su) * N) == N/19.2 px of the 1920px Unity design. */
+@font-face {
+    font-family: 'Kenvector Future';   /* .uss .menu-button font */
+    src: url('assets/fonts/kenvector_future.ttf?v=6') format('truetype');
+}
+@font-face {
+    font-family: 'Boogaloo';           /* .uss victory/leaderboard font */
+    src: url('assets/fonts/boogaloo.ttf?v=6') format('truetype');
+}
+#screens { position: fixed; inset: 0; z-index: 5; display: none; }
+.screen {
+    position: absolute; inset: 0; display: none;
+    background: #6fe5ff;               /* the art's backdrop cyan */
+    align-items: center; justify-content: center;
+}
+.screen.active { display: flex; }
+.stage {
+    position: relative; aspect-ratio: 16 / 9;
+    width: min(100vw, 177.78vh);
+    background-size: 100% 100%; background-repeat: no-repeat;
+    --su: min(1vw, 1.7778vh);
+}
+/* GlobalUIStyle.uss .menu-button: kenvector, 40px @1920, focus = bold;
+   chrome follows the art's card language (light fill, blue border). */
+.menu-group {
+    position: absolute; left: 3%; top: 4%;
+    display: flex; flex-direction: column; align-items: flex-start;
+    gap: calc(var(--su) * 1.2);
+}
+.menu-button {
+    font-family: 'Kenvector Future', monospace;
+    font-size: max(15px, calc(var(--su) * 2.08));
+    color: #696969;                    /* uss --color-text-dark */
+    background: #eee;                  /* the art's card fill */
+    border: max(2px, calc(var(--su) * 0.16)) solid #1e90ff; /* --color-primary */
+    border-radius: calc(var(--su) * 0.6);
+    padding: calc(var(--su) * 0.5) calc(var(--su) * 1.4);
+    min-height: 44px; cursor: pointer;
+}
+.menu-button.focused, .menu-button:hover {
+    font-weight: bold; border-color: #00bfff; background: #fff;
+}
+.menu-button:disabled { opacity: 0.45; cursor: default; }
+/* Hero select: transparent hotspots aligned to the art's baked cards */
+.hero-card {
+    position: absolute; background: transparent; border: none;
+    border-radius: calc(var(--su) * 1.2); cursor: pointer;
+}
+.hero-card.focused {
+    box-shadow: 0 0 0 max(3px, calc(var(--su) * 0.3)) #ff1497,
+                0 0 calc(var(--su) * 1.5) rgba(255, 20, 151, 0.6);
+}
+.pick-badge {
+    position: absolute; top: calc(var(--su) * -1.1);
+    right: calc(var(--su) * -0.7);
+    background: #ff1497; color: #fff;  /* the art's title pink */
+    font-family: 'Boogaloo', sans-serif;
+    font-size: max(13px, calc(var(--su) * 1.56));
+    padding: calc(var(--su) * 0.15) calc(var(--su) * 0.8);
+    border-radius: calc(var(--su) * 0.6); display: none;
+}
+.pick-status {
+    position: absolute; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: calc(var(--su) * 0.5);
+    font-family: 'Boogaloo', sans-serif; color: #696969;
+    text-align: center;
+}
+.pick-line { font-size: max(12px, calc(var(--su) * 1.35)); }
+.pick-hint {
+    font-size: max(11px, calc(var(--su) * 1.05));
+    color: #a9a9a9;                    /* uss --color-text-medium */
+}
+.pick-reset {
+    background: none; border: none; cursor: pointer;
+    color: #1e90ff; text-decoration: underline;
+    font-family: 'Boogaloo', sans-serif;
+    font-size: max(11px, calc(var(--su) * 1.05));
+}
+.start-button { position: absolute; left: 50%; top: 62%;
+                transform: translateX(-50%); }
+/* Results: VictoryVT score line (.uss score-title-group at 756,510;
+   victory-title 50px dimgray, bold value dodgerblue) */
+.victory-score { position: absolute; left: 39.38%; top: 47.22%;
+                 white-space: nowrap; }
+.victory-title {
+    font-family: 'Boogaloo', sans-serif;
+    font-size: calc(var(--su) * 2.6); color: #696969;
+}
+.victory-title-bold {
+    font-family: 'Boogaloo', sans-serif;
+    font-size: calc(var(--su) * 2.6); color: #1e90ff; font-weight: bold;
+}
+/* Results: match stats in the victory art's leaderboard slots
+   (.uss leaderboard-entry: Boogaloo, whitesmoke) */
+.leaderboard-entry {
+    position: absolute; display: flex; align-items: center;
+    justify-content: space-between;
+    padding: 0 calc(var(--su) * 1);
+    font-family: 'Boogaloo', sans-serif;
+    font-size: calc(var(--su) * 1.7);
+    color: #f5f5f5;                    /* uss --color-text-light */
+}
+.lb-label { text-transform: uppercase; letter-spacing: 0.05em; }
+/* Results: defeat stats card (port-added; the defeat art has no panel) */
+.defeat-stats {
+    position: absolute; left: 3%; bottom: 6%;
+    background: #eee;
+    border: max(2px, calc(var(--su) * 0.16)) solid #1e90ff;
+    border-radius: calc(var(--su) * 1);
+    padding: calc(var(--su) * 0.8) calc(var(--su) * 1.4);
+    font-family: 'Boogaloo', sans-serif; color: #696969;
+    font-size: max(12px, calc(var(--su) * 1.5));
+    min-width: calc(var(--su) * 16);
+}
+.defeat-stat-line {
+    display: flex; justify-content: space-between;
+    gap: calc(var(--su) * 2);
+}
+.defeat-stats .lb-value { color: #533cc0; }  /* the art's DEFEAT purple */
+.result-msg {
+    font-family: 'Boogaloo', sans-serif;
+    font-size: max(10px, calc(var(--su) * 1.1)); color: #696969;
+    max-width: calc(var(--su) * 24);
+}
 
 /* Phone-size HUD: smaller type, tighter panel, wrap the banner */
 @media (max-width: 600px), (max-height: 500px) {
     #hud { font-size: 10px; line-height: 1.4; padding: 5px 8px; }
     #banner { font-size: 11px; white-space: normal; text-align: center; }
-    #overlay .go-title { font-size: 32px; letter-spacing: 5px; }
-    #overlay .go-stats { font-size: 13px; }
 }
 </style>
 </head>
@@ -92,13 +204,13 @@ canvas { display: block; touch-action: none; }
 
 <canvas id="canvas"></canvas>
 <div id="hud">loading…</div>
-<div id="banner">Touch, WASD/arrows, or a gamepad stick to join (2-player co-op possession) — P / ❚❚ pauses</div>
+<div id="banner">loading the engine…</div>
 <button id="pausebtn" aria-label="pause">❚❚</button>
 <button id="mutebtn" aria-label="mute">🔊</button>
 <input id="volume" type="range" min="0" max="1" step="0.05" value="1"
        aria-label="volume">
-<div id="overlay"></div>
-<div id="version">vdev (0e2e268)</div>
+<div id="screens"></div>
+<div id="version">vdev (84fe48b)</div>
 
 <!-- Thin client per the Browser Client Rendering Policy: DOM shell +
      WASM-export transport + bootstrap. Loop/render/input/view logic is the
@@ -106,19 +218,20 @@ canvas { display: block; touch-action: none; }
      sashimi-specific sprites/HUD/bootstrap live in the sandbox lib
      (lib/sashimi-*.js, source: sandboxes/sashimi/clients/lib/).
      ?v=N cache-busts GitHub Pages (root CLAUDE.md decision 22). -->
-<script src="flecs-ecs.js?v=5"></script>
-<script src="lib/rt-loop.js?v=5"></script>
-<script src="lib/rt-input.js?v=5"></script>
-<script src="lib/rt-view.js?v=5"></script>
-<script src="lib/rt-sprites.js?v=5"></script>
-<script src="lib/rt-render.js?v=5"></script>
-<script src="lib/sashimi-art-data.js?v=5"></script>
-<script src="lib/sashimi-audio-data.js?v=5"></script>
-<script src="lib/sashimi-sprites.js?v=5"></script>
-<script src="lib/sashimi-audio.js?v=5"></script>
-<script src="lib/sashimi-fx.js?v=5"></script>
-<script src="lib/sashimi-hud.js?v=5"></script>
-<script src="lib/sashimi-client.js?v=5"></script>
+<script src="flecs-ecs.js?v=6"></script>
+<script src="lib/rt-loop.js?v=6"></script>
+<script src="lib/rt-input.js?v=6"></script>
+<script src="lib/rt-view.js?v=6"></script>
+<script src="lib/rt-sprites.js?v=6"></script>
+<script src="lib/rt-render.js?v=6"></script>
+<script src="lib/sashimi-art-data.js?v=6"></script>
+<script src="lib/sashimi-audio-data.js?v=6"></script>
+<script src="lib/sashimi-sprites.js?v=6"></script>
+<script src="lib/sashimi-audio.js?v=6"></script>
+<script src="lib/sashimi-fx.js?v=6"></script>
+<script src="lib/sashimi-hud.js?v=6"></script>
+<script src="lib/sashimi-screens.js?v=6"></script>
+<script src="lib/sashimi-client.js?v=6"></script>
 <script>
 FlecsECS().then(function(M) {
     /* window.__sashimi: debug/test handle (loop, engine, restart, audio) */
@@ -127,7 +240,7 @@ FlecsECS().then(function(M) {
         canvas: document.getElementById('canvas'),
         hud: document.getElementById('hud'),
         banner: document.getElementById('banner'),
-        overlay: document.getElementById('overlay'),
+        screens: document.getElementById('screens'),
         pauseBtn: document.getElementById('pausebtn'),
         muteBtn: document.getElementById('mutebtn'),
         volSlider: document.getElementById('volume'),

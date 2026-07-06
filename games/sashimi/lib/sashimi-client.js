@@ -24,14 +24,28 @@
  *           spawn telegraphs (underlayFor + materialize fade), hit/death
  *           FX (effectsOver), HUD
  *
+ * Screen flow (SashimiScreens; the Unity UIManager/AdventureUIController
+ * sequence): TITLE -> HERO SELECT -> PLAYING -> RESULTS, with PLAY AGAIN
+ * returning to HERO SELECT and TITLE returning to the title screen. The
+ * engine world exists from bootstrap but wasm_tick is only called while
+ * PLAYING (Unity's title/select do not run the match) — menus tick
+ * nothing, they only poll menu input. Start music plays on the menus,
+ * the adventure loop in-game, victory/defeat loops on results (the
+ * MusicController fade targets).
+ *
  * Join = possession: both heroes exist from app start; a device's first
- * input claims clientId 1..2 and wasm_join adds PossessedBy so hero_ai
- * hands the hero over. Touch joins like any device: the first joystick
- * touch claims a slot (rt-input.js). P or the pause button pauses (the
- * engine only advances when we call wasm_tick, so a client-side gate is a
- * real pause). R or the overlay button restarts after game over. No game
- * parameter lives here (root CLAUDE.md decision 13) — arena bounds,
- * timers, XP tables, waves all come from the engine.
+ * input claims clientId 1..2 (rt-input.js) and wasm_join_hero adds
+ * PossessedBy so hero_ai hands the hero over — preferring the hero kind
+ * the player picked on the select screen (picks are per-slot
+ * preferences; 0 = no preference = first free hero). Devices that join
+ * on a menu are possessed when the game starts; devices that join
+ * mid-game are possessed immediately. Touch joins like any device: the
+ * first joystick touch claims a slot. P or the pause button pauses (the
+ * engine only advances when we call wasm_tick, so a client-side gate is
+ * a real pause). R or the results screen's PLAY AGAIN re-inits the
+ * module and returns to hero select, re-possessing joined devices on
+ * the next start. No game parameter lives here (root CLAUDE.md decision
+ * 13) — arena bounds, timers, XP tables, waves all come from the engine.
  *
  * Coordinates: the sim is origin-centered and y-up (Unity convention);
  * screen space is y-down. The reader flips the projection
@@ -46,7 +60,7 @@ var SashimiClient = (function() {
     function start(M, opts) {
         var CONFIG = opts.config || 'default';
         var hud = SashimiHUD.init({
-            hud: opts.hud, banner: opts.banner, overlay: opts.overlay,
+            hud: opts.hud, banner: opts.banner,
         });
 
         /* ── Transport: WASM exports via cwrap (scalar accessors) ── */
@@ -54,6 +68,8 @@ var SashimiClient = (function() {
             init: M.cwrap('wasm_init_with_config', 'number', ['string']),
             tick: M.cwrap('wasm_tick', 'number', []),
             join: M.cwrap('wasm_join', 'number', ['number']),
+            joinHero: M.cwrap('wasm_join_hero', 'number',
+                              ['number', 'number']),
             setInput: M.cwrap('wasm_set_input', null, ['number', 'number', 'number']),
             playerEntityId: M.cwrap('wasm_player_entity_id', 'number', ['number']),
             count: M.cwrap('wasm_get_unit_count', 'number', []),
@@ -137,20 +153,39 @@ var SashimiClient = (function() {
             muteBtn: opts.muteBtn,
             volSlider: opts.volSlider,
         });
-        audio.startMusic();   /* starts on the unlock gesture */
+        audio.menuMusic();   /* Start loop; plays on the unlock gesture */
         var view = RTView.init();
-        var input = RTInput.init({
-            maxPlayers: 2,   /* two heroes exist: co-op = possession */
-            onJoin: function(clientId, label) {
-                var eid = engine.join(clientId);
-                if (eid) {
-                    var hu = view.find(eid);
-                    audio.select(hu ? hu.kind : clientId); /* Select VO */
-                }
+
+        /* ── Screen state machine ──
+           'title' | 'select' | 'playing' | 'results'. The engine only
+           ticks while 'playing'; menus poll their own focus input. */
+        var screen = 'title';
+
+        /* Possess a hero for a joined device, honoring its select-screen
+           pick (0 = no preference -> first free hero). */
+        function possess(clientId, label) {
+            var kind = screens.picks()[clientId] || 0;
+            var eid = engine.joinHero(clientId, kind);
+            if (eid) {
+                var hu = view.find(eid);
+                audio.select(hu ? hu.kind : clientId); /* Select VO */
+            }
+            if (label) {
                 hud.setBanner(eid
                     ? label + ' joined as P' + clientId +
                       ' — a second device joins on its first input'
                     : label + ': no free hero to possess');
+            }
+            return eid;
+        }
+
+        var input = RTInput.init({
+            maxPlayers: 2,   /* two heroes exist: co-op = possession */
+            onJoin: function(clientId, label) {
+                /* Mid-game joins possess immediately; menu-time joins
+                   wait for game start (their pick may not exist yet). */
+                if (screen === 'playing') possess(clientId, label);
+                else hud.setBanner(label + ' joined as P' + clientId);
             },
         });
         /* Animation state machine over the per-tick flags + ability stage,
@@ -380,7 +415,9 @@ var SashimiClient = (function() {
             gameOverShown = true;
             var hero = firstHero();
             audio.gameOver(engine.isVictory() === 1, hero ? hero.kind : 1);
-            hud.showGameOver({
+            screen = 'results';
+            setPauseVisible(false);
+            screens.show('results', {
                 victory: engine.isVictory() === 1,
                 message: engine.gameOverMessage(),
                 timeSec: engine.gameTick() / engine.tickRate(),
@@ -389,14 +426,16 @@ var SashimiClient = (function() {
                 level: engine.heroLevel(),
                 gems: engine.gems(),
                 kills: engine.kills(),
-                onRestart: restart,   /* overlay button (touch); R also works */
             });
+            hud.setBanner('PLAY AGAIN or R — hero picks are kept');
         }
 
-        function restart() {
+        /* Fresh world for the next run (PLAY AGAIN / TITLE): re-init the
+           module; possession is re-established at the next startGame. */
+        function reinitWorld() {
             if (!engine.init(CONFIG)) {
                 hud.setBanner('engine re-init failed');
-                return;
+                return false;
             }
             view = RTView.init();
             units = [];
@@ -405,12 +444,42 @@ var SashimiClient = (function() {
             fx.reset();
             gameOverShown = false;
             setPaused(false);
-            hud.hideGameOver();
-            audio.startMusic();   /* back to the adventure loop */
-            /* Re-possess heroes for already-joined devices. */
+            setPauseVisible(false);  /* back to a menu; startGame reshows */
+            return true;
+        }
+
+        /* SELECT -> PLAYING: possess a hero per joined device (honoring
+           picks); later joins possess on their first input (onJoin). */
+        function startGame() {
+            screen = 'playing';
+            screens.hide();
+            setPauseVisible(true);
             var players = input.players();
             for (var i = 0; i < players.length; i++)
-                engine.join(players[i].clientId);
+                possess(players[i].clientId, null);
+            audio.startMusic();   /* the adventure loop */
+            hud.setBanner(players.length
+                ? players.map(function(p) {
+                      return 'P' + p.clientId;
+                  }).join(' ') + ' in — a second device joins on its ' +
+                  'first input'
+                : 'First input joins as P1 (keyboard, gamepad, or touch)');
+        }
+
+        function playAgain() {
+            if (!reinitWorld()) return;
+            screen = 'select';
+            audio.menuMusic();
+            screens.show('select');
+            hud.setBanner('Pick heroes, then START');
+        }
+
+        function toTitle() {
+            if (!reinitWorld()) return;
+            screen = 'title';
+            audio.menuMusic();
+            screens.show('title');
+            hud.setBanner('');
         }
 
         function setPaused(p) {
@@ -419,13 +488,35 @@ var SashimiClient = (function() {
                 opts.pauseBtn.textContent = paused ? '▶' : '❚❚';
         }
 
+        function setPauseVisible(v) {
+            if (opts.pauseBtn)
+                opts.pauseBtn.style.display = v ? 'block' : 'none';
+        }
+
+        var screens = SashimiScreens.init({
+            root: opts.screens,
+            onPlay: function() {
+                screen = 'select';
+                screens.show('select');
+                hud.setBanner('Pick heroes, then START — a second ' +
+                              'device can join on its first input');
+            },
+            onStart: startGame,
+            onPlayAgain: playAgain,
+            onTitle: toTitle,
+        });
+
         document.addEventListener('keydown', function(e) {
-            if (e.code === 'KeyP' && !engine.isGameOver()) setPaused(!paused);
-            if (e.code === 'KeyR' && engine.isGameOver()) restart();
+            if (e.code === 'KeyP' && screen === 'playing' &&
+                !engine.isGameOver()) {
+                setPaused(!paused);
+            }
+            if (e.code === 'KeyR' && screen === 'results') playAgain();
         });
         if (opts.pauseBtn) {
             opts.pauseBtn.addEventListener('click', function() {
-                if (!engine.isGameOver()) setPaused(!paused);
+                if (screen === 'playing' && !engine.isGameOver())
+                    setPaused(!paused);
                 opts.pauseBtn.blur();  /* Space must not re-toggle */
             });
         }
@@ -434,6 +525,15 @@ var SashimiClient = (function() {
             tickHz: 60,
             maxCatchUp: 5,
             tick: function() {
+                if (screen !== 'playing') {
+                    /* Menus/results: the engine does not tick (a real
+                       hold, like pause). Poll menu focus input and keep
+                       sampling devices so gamepads can claim a slot. */
+                    screens.poll();
+                    input.sample();
+                    freeze();
+                    return;
+                }
                 if (engine.isGameOver()) {
                     if (!gameOverShown) showGameOver();
                     freeze();
@@ -458,6 +558,7 @@ var SashimiClient = (function() {
                 render.frame(units, alpha, frameDt, firstHero());
             },
             onStats: function(s) {
+                if (screen !== 'playing') return;  /* HUD is covered */
                 var hero = firstHero();
                 var tickRate = engine.tickRate();
                 hud.update({
@@ -487,9 +588,16 @@ var SashimiClient = (function() {
             statsEvery: 250,
         });
 
+        /* Boot on the title screen; the engine world is ready but holds
+           until startGame ticks it. Title interaction doubles as the
+           audio unlock gesture. */
+        setPauseVisible(false);
+        screens.show('title');
+        hud.setBanner('');
+
         loop.start();
-        return { loop: loop, engine: engine, restart: restart,
-                 audio: audio };
+        return { loop: loop, engine: engine, screens: screens,
+                 start: startGame, restart: playAgain, audio: audio };
     }
 
     return { start: start };
