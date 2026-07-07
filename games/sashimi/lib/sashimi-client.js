@@ -650,6 +650,10 @@ var SashimiClient = (function() {
                         engineMs: +engineMs.toFixed(3),
                         renderMs: +s.renderMs.toFixed(3),
                         droppedMs: Math.round(s.droppedMs),
+                        frames: s.totalFrames,
+                        slow20: s.slow20,
+                        slow33: s.slow33,
+                        worstMs: +s.winWorstMs.toFixed(1),
                     },
                     visibility: document.visibilityState,
                 };
