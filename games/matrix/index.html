@@ -7,9 +7,9 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #000000; color: #e0e0e0; font-family: monospace; overflow: hidden; }
 #ui { position: fixed; top: 8px; left: 8px; z-index: 10; font-size: 13px; }
-#ui button { margin: 0 4px; padding: 4px 12px; background: #333; color: #e0e0e0;
-    border: 1px solid #555; cursor: pointer; font-family: monospace; }
-#ui button:hover { background: #444; }
+#ui button, #ui select { margin: 0 4px; padding: 4px 12px; background: #333; color: #e0e0e0;
+    border: 1px solid #555; cursor: pointer; font-family: monospace; font-size: 13px; }
+#ui button:hover, #ui select:hover { background: #444; }
 #ui button.active { background: #2a6; color: #fff; }
 #info { position: fixed; top: 8px; right: 8px; z-index: 10; font-size: 12px;
     text-align: right; opacity: 0.7; }
@@ -26,7 +26,13 @@ canvas { display: block; }
     <button id="btnSpawn">+ Unit</button>
     <button id="btnStep">Step</button>
     <button id="btnPlay">Play</button>
-    <button id="btnFast">Fast</button>
+    <select id="speedSelect" title="Play rate">
+        <option value="1">1x</option>
+        <option value="2">2x</option>
+        <option value="4">4x</option>
+        <option value="8">8x</option>
+        <option value="16">16x</option>
+    </select>
     <button id="btnReset">Reset</button>
     <span id="turnLabel">Turn: 0</span>
 </div>
@@ -35,7 +41,7 @@ canvas { display: block; }
     <div id="transformCount"></div>
 </div>
 <canvas id="c"></canvas>
-<div id="version">v (14928ea)</div>
+<div id="version">v (93392e3)</div>
 
 <!-- Shared render code (CLAUDE.md "Browser Client Rendering Policy") -->
 <script src="lib/render.js"></script>
@@ -44,13 +50,10 @@ canvas { display: block; }
 <script>
 // CLIENT-PARITY: ignore updateViewUnits  — reads WASM cwrap exports, no REST equivalent
 // CLIENT-PARITY: ignore updatePendingSpawns  — reads WASM cwrap exports
-// CLIENT-PARITY: ignore applyDefaultSpawns  — uses WASM cwrap; REST queues via WS
 // CLIENT-PARITY: ignore refreshSpawnButton  — local helper (REST sets button inline)
 // ── Config ──────────────────────────────────────────────────────────
 const TARGET_TURN_MS = 1600;
-const FAST_TURN_MS = 100;
 const CELL_MIN = 4;
-const DEFAULT_INITIAL_SPAWNS = 40;
 
 // Phase diagram matches the REST client so the same drawUnit animations work.
 const TIMELINE = {
@@ -71,7 +74,6 @@ let CELL = 32;
 let viewUnits = {};
 let pendingSpawns = [];
 let playing = false;
-let fastMode = false;
 let animating = false;
 let animStartTime = 0;
 let animDurationMs = TARGET_TURN_MS;
@@ -203,23 +205,18 @@ function startTurn() {
     updateViewUnits();
     updatePendingSpawns();
 
-    animDurationMs = fastMode ? FAST_TURN_MS : TARGET_TURN_MS;
+    animDurationMs = TARGET_TURN_MS / getPlayRate();
     animStartTime = performance.now();
     animating = true;
 }
 
 // ── Controls ────────────────────────────────────────────────────────
-function updateButtons() {
-    document.getElementById('btnPlay').classList.toggle('active', playing && !fastMode);
-    document.getElementById('btnFast').classList.toggle('active', fastMode && playing);
+function getPlayRate() {
+    return parseInt(document.getElementById('speedSelect').value, 10) || 1;
 }
 
-function applyDefaultSpawns() {
-    // No scenario loaded → queue DEFAULT_INITIAL_SPAWNS pending spawns so the
-    // game opens with `+ Unit (40)` and 40 green markers on the grid.
-    for (let i = 0; i < DEFAULT_INITIAL_SPAWNS; i++) engine.spawn_unit();
-    updatePendingSpawns();
-    refreshSpawnButton();
+function updateButtons() {
+    document.getElementById('btnPlay').classList.toggle('active', playing);
 }
 
 document.getElementById('btnReset').onclick = () => {
@@ -234,7 +231,8 @@ document.getElementById('btnReset').onclick = () => {
     mapH = engine.get_map_y();
     viewUnits = {};
     updateViewUnits();
-    applyDefaultSpawns();
+    updatePendingSpawns();
+    refreshSpawnButton();
 };
 
 function refreshSpawnButton() {
@@ -259,21 +257,12 @@ document.getElementById('btnUnspawn').onclick = () => {
 
 document.getElementById('btnStep').onclick = () => {
     playing = false;
-    fastMode = false;
     updateButtons();
     if (!animating) startTurn();
 };
 
 document.getElementById('btnPlay').onclick = () => {
-    if (playing && !fastMode) { playing = false; }
-    else { playing = true; fastMode = false; }
-    updateButtons();
-    if (playing && !animating) startTurn();
-};
-
-document.getElementById('btnFast').onclick = () => {
-    if (playing && fastMode) { playing = false; }
-    else { playing = true; fastMode = true; }
+    playing = !playing;
     updateButtons();
     if (playing && !animating) startTurn();
 };
@@ -336,11 +325,9 @@ async function init() {
 
     CELL = resizeCanvas(canvas, mapW, mapH, CELL_MIN);
 
-    // Don't run the first turn yet — leaving SpawnRequests pending so the user
-    // sees "+ Unit (40)" and 40 green markers on load. The first Step turn
-    // materializes them.
     updateViewUnits();
-    applyDefaultSpawns();
+    updatePendingSpawns();
+    refreshSpawnButton();
 
     requestAnimationFrame(render);
 }
