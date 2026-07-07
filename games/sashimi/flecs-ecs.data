@@ -516,7 +516,24 @@ Policy:
   `hitFx` kind map + `ground` manifest key, and a port-invented
   heart-bob idle row -- Unity pickups are motionless; amplitude/period
   documented at UNITS[12]),
-  `sashimi-hud.js` (HP/XP/wave/timer/perf HUD, game-over overlay),
+  `sashimi-hud.js` (HP/XP/wave/timer/perf HUD, banner),
+  `sashimi-screens.js` (DOM screen flow TITLE -> HERO SELECT -> PLAYING
+  -> RESULTS over the shipped 1920x1080 StaticScreens art +
+  kenvector/Boogaloo fonts, extracted by `clients/tools/extract-ui.py`
+  into `clients/wasm/assets/ui/` + `assets/fonts/`; layout/type
+  transcribed from Assets/UI/*.uxml + GlobalUIStyle.uss. TITLE and
+  RESULTS are Unity-pinned (TitleVT/VictoryVT/DefeatVT; Options/Quit
+  dropped; victory stats fill the art's leaderboard slots since the
+  port has no Steam leaderboard; the defeat stats card is port-added);
+  HERO SELECT is port-designed -- Unity ships only a static,
+  non-interactive select image (Adventure.unity _characterSelectPanel)
+  -- overlaying that art's baked Ninja/Plumamancer cards with pick
+  hotspots and a START button. Focus model mirrors Unity's ButtonGroup:
+  pointer, arrows/WASD + Enter/Space, and gamepad dpad/stick + face
+  buttons all navigate. The engine does NOT tick while a screen is up
+  (menus hold wasm_tick exactly like pause); menu music is the Unity
+  Start loop, extracted by adding StartMusic to extract-audio.py's
+  MUSIC_TRACKS),
   `sashimi-audio.js` (WebAudio SFX/music over the event exports; below),
   `sashimi-fx.js` (presentation effects: Unity-pinned projectile trails
   -- per-tick position buffer, TrailDuration 0.375 s, widths
@@ -595,15 +612,37 @@ Contracts the client depends on:
   recorded IsA prefab). The client turns events into audio + hero
   attack/respawn anim latches.
 - **Join = possession** -- both heroes exist from app start; a device's
-  first input claims clientId 1..2 and `wasm_join` sets `PossessedBy`
-  {slot} on the first un-possessed hero (hero_ai yields; the client then
-  writes InputDirection via `wasm_set_input` -> `sashimi_input_snap`).
-  There is no third hero: `wasm_join(3)` returns 0. Local co-op is
-  keyboard + gamepad (rt-input.js join flow).
-- **Pause is client-side** -- the engine only advances on `wasm_tick`, so
-  the client gating the tick call (P key or the ❚❚ button) is a real
-  pause; R or the overlay's PLAY AGAIN button re-inits the module after
-  game over and re-possesses joined devices.
+  first input claims clientId 1..2 and `wasm_join_hero(clientId, kind)`
+  sets `PossessedBy` {slot} on an un-possessed hero, preferring the hero
+  whose spawn prefab kind matches the player's hero-select pick
+  (SW_KIND_HERO_EAGLE / SW_KIND_HERO_FROG; 0 = no preference) and
+  falling back to the first free hero when that kind is taken -- two
+  players may pick the same hero, the second gets the other one.
+  `wasm_join(clientId)` remains as the unpreferenced back-compat form
+  (== `wasm_join_hero(clientId, 0)`). Picks are client-side per-slot
+  preferences (sashimi-screens.js); devices joined on a menu are
+  possessed at game start, mid-game joins possess immediately (hero_ai
+  yields; the client then writes InputDirection via `wasm_set_input`).
+  There is no third hero: join returns 0. Local co-op is keyboard +
+  gamepad + touch (rt-input.js join flow).
+- **CLI control channel** -- when served by `tools/localhost.sh sashimi
+  --client wasm` (i.e. `tools/serve-client.py`), the client registers
+  `RTControl` handlers so `tools/client.py` can query state and drive
+  the UI from the command line: `screen`/`state`/`actions` report the
+  current screen, pressable buttons, picks, game + perf counters;
+  `press <name>` activates a control through the SAME path as a
+  pointer click (`screens.press`) or toggles pause while playing.
+  Stable button names (`data-control`): `play` (title); `pick-frog`,
+  `pick-eagle`, `start`, `reset-picks` (select); `play-again`, `title`
+  (results); `pause`/`resume` (playing). Inert on published pages
+  (rt-control.js is localhost-gated).
+- **Pause is client-side; so is the whole screen flow** -- the engine
+  only advances on `wasm_tick`, so the client gating the tick call is a
+  real hold: P / the pause button while playing, and every menu screen
+  (title, hero select, results). R or the results screen's PLAY AGAIN
+  re-inits the module and returns to HERO SELECT with picks kept
+  (possession is re-established per pick at the next START); the TITLE
+  button re-inits back to the title screen.
 - **Coordinates** -- the sim is origin-centered (ArenaBounds) and y-up
   (Unity convention); screen space is y-down. The client's reader flips
   the projection (`screenY = maxY - simY`, dirY negated) and negates the
@@ -653,7 +692,9 @@ Contracts the client depends on:
 
 - `tests/test_wasm.js` (ctest `test_wasm_sashimi` in EMSCRIPTEN builds)
   verifies the WASM bridge headless in Node after
-  `./tools/build-wasm.sh sashimi`: possession join flow, input control of
+  `./tools/build-wasm.sh sashimi`: kind-targeted possession
+  (`wasm_join_hero`: pick match, same-kind fallback, idempotence, no
+  third hero) plus the untargeted back-compat join flow, input control of
   a possessed hero, wave-1 spawns, kind/flag/game-state accessors,
   ability-stage export + the presentation event ring (drives P1 into
   melee to force a windup), engine tick-ms stats.
@@ -4652,6 +4693,7 @@ var SashimiClient = (function() {
             fx.reset();
             gameOverShown = false;
             setPaused(false);
+            setPauseVisible(false);  /* back to a menu; startGame reshows */
             return true;
         }
 
@@ -4781,7 +4823,9 @@ var SashimiClient = (function() {
                     timeSec: engine.gameTick() / tickRate,
                     victorySec: engine.victoryTicks() / tickRate,
                     kills: engine.kills(),
-                    fps: s.fps,
+                    rafFps: s.rafFps,
+                    simHz: s.simHz,
+                    simTarget: tickRate,
                     tickMs: s.tickMs,
                     engineMs: engineMs,
                     drawMs: s.renderMs,
@@ -4795,6 +4839,74 @@ var SashimiClient = (function() {
             statsEvery: 250,
         });
 
+        /* CLI control channel (rt-control.js -> tools/serve-client.py
+           relay -> tools/client.py): state mirrors what the player
+           sees; press routes through the same activation paths as
+           pointer/keyboard (screens.press / setPaused). Inert unless
+           served by serve-client.py on localhost. */
+        var control = RTControl.init({
+            state: function() {
+                var hero = firstHero();
+                var s = loop.stats;
+                var actions = screen === 'playing'
+                    ? [{ name: paused ? 'resume' : 'pause',
+                         label: paused ? 'resume (P)' : 'pause (P)',
+                         disabled: engine.isGameOver() === 1,
+                         focused: false }]
+                    : screens.state().buttons;
+                return {
+                    sandbox: 'sashimi',
+                    screen: screen,
+                    paused: paused,
+                    gameOver: engine.isGameOver() === 1,
+                    actions: actions,
+                    ui: screen === 'playing' ? null : screens.state(),
+                    game: {
+                        tick: engine.gameTick(),
+                        timeSec: +(engine.gameTick() /
+                                   engine.tickRate()).toFixed(1),
+                        wave: engine.wave(),
+                        waveCount: engine.waveCount(),
+                        gems: engine.gems(),
+                        kills: engine.kills(),
+                        level: engine.heroLevel(),
+                        heroHp: hero ? +hero.health.toFixed(1) : 0,
+                        heroMaxHp: hero ? hero.maxHealth : 0,
+                        units: units.length,
+                        players: input.players().map(function(p) {
+                            return 'P' + p.clientId;
+                        }),
+                    },
+                    perf: {
+                        rafFps: +s.rafFps.toFixed(1),
+                        simHz: +s.simHz.toFixed(1),
+                        tickMs: +s.tickMs.toFixed(3),
+                        engineMs: +engineMs.toFixed(3),
+                        renderMs: +s.renderMs.toFixed(3),
+                        droppedMs: Math.round(s.droppedMs),
+                    },
+                    visibility: document.visibilityState,
+                };
+            },
+            commands: {
+                press: function(args) {
+                    var name = String(args.button || '').toLowerCase();
+                    if (screen === 'playing') {
+                        if (name === 'pause' || name === 'resume') {
+                            if (engine.isGameOver() === 1)
+                                throw new Error('game is over');
+                            setPaused(name === 'pause');
+                            return { pressed: name, paused: paused };
+                        }
+                        throw new Error("no button '" + name +
+                            "' while playing (available: " +
+                            (paused ? 'resume' : 'pause') + ')');
+                    }
+                    return screens.press(name);
+                },
+            },
+        });
+
         /* Boot on the title screen; the engine world is ready but holds
            until startGame ticks it. Title interaction doubles as the
            audio unlock gesture. */
@@ -4804,7 +4916,8 @@ var SashimiClient = (function() {
 
         loop.start();
         return { loop: loop, engine: engine, screens: screens,
-                 start: startGame, restart: playAgain, audio: audio };
+                 start: startGame, restart: playAgain, audio: audio,
+                 control: control };
     }
 
     return { start: start };
@@ -5047,7 +5160,11 @@ var SashimiHUD = (function() {
                 '\ntime  ' + mmss(d.timeSec) + ' / ' + mmss(d.victorySec) +
                 '\nkills ' + d.kills + '   gems ' + d.gems +
                 '\n' +
-                '\nfps      ' + d.fps.toFixed(0) +
+                '\nrender   ' + d.rafFps.toFixed(0) + ' fps' +
+                '\nsim      ' + d.simHz.toFixed(0) + '/' + d.simTarget +
+                    ' Hz' + (d.simHz < d.simTarget - 2
+                        ? ' (SLOW x' + (d.simHz / d.simTarget).toFixed(2) + ')'
+                        : '') +
                 '\ntick ms  ' + d.tickMs.toFixed(2) +
                     ' (engine ' + d.engineMs.toFixed(2) + ')' +
                 '\ndraw ms  ' + d.drawMs.toFixed(2) +
@@ -5165,18 +5282,35 @@ var SashimiScreens = (function() {
         function activateFocused() {
             if (focusables[focusIndex]) focusables[focusIndex].activate();
         }
+        function focusIndexOf(node) {
+            for (var f = 0; f < focusables.length; f++)
+                if (focusables[f].el === node) return f;
+            return -1;
+        }
         function bindFocusable(node, activate) {
-            var entry = { el: node, activate: activate };
-            focusables.push(entry);
-            node.addEventListener('click', function(e) {
-                e.preventDefault();
-                setFocus(focusables.indexOf(entry));
-                activate();
-            });
-            node.addEventListener('pointerenter', function() {
-                setFocus(focusables.indexOf(entry));
-            });
-            return entry;
+            focusables.push({ el: node, activate: activate });
+            if (!node.dataset.control) node.dataset.control =
+                (node.textContent || '').trim().toLowerCase()
+                    .replace(/\s+/g, '-');
+            /* Screens re-register their focusables on every show;
+               DOM listeners attach once and dispatch through the
+               CURRENT registration (duplicate listeners double-fired
+               activations — one card click picked both P1 and P2). */
+            node.__activate = activate;
+            if (!node.__focusBound) {
+                node.__focusBound = true;
+                node.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    var i = focusIndexOf(node);
+                    if (i < 0) return;
+                    setFocus(i);
+                    node.__activate();
+                });
+                node.addEventListener('pointerenter', function() {
+                    var i = focusIndexOf(node);
+                    if (i >= 0) setFocus(i);
+                });
+            }
         }
 
         document.addEventListener('keydown', function(e) {
@@ -5240,8 +5374,10 @@ var SashimiScreens = (function() {
         var select = makeScreen('select', 'select.png');
         var frogCard = el('button', 'hero-card', select.stage);
         frogCard.style.cssText = pct(CARD_FROG);
+        frogCard.dataset.control = 'pick-frog';   /* cards have no text */
         var eagleCard = el('button', 'hero-card', select.stage);
         eagleCard.style.cssText = pct(CARD_EAGLE);
+        eagleCard.dataset.control = 'pick-eagle';
         var frogBadge = el('div', 'pick-badge', frogCard);
         var eagleBadge = el('div', 'pick-badge', eagleCard);
         var middle = el('div', 'pick-status', select.stage);
@@ -5288,12 +5424,17 @@ var SashimiScreens = (function() {
             refreshSelect();
         }
 
-        resetBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
+        function resetPicks() {
             pick[1] = 0;
             pick[2] = 0;
             refreshSelect();
+        }
+
+        resetBtn.dataset.control = 'reset-picks';
+        resetBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            resetPicks();
         });
 
         /* ── RESULTS (VictoryVT/DefeatVT over the shipped art) ────── */
@@ -5400,12 +5541,59 @@ var SashimiScreens = (function() {
 
         hide();
 
+        /* ── CLI control surface (rt-control.js / tools/client.py) ──
+           state() reports what a player could see; press() activates
+           a control through the SAME path as a pointer click. */
+        function state() {
+            return {
+                screen: current,
+                picks: { p1: pick[1], p2: pick[2] },
+                buttons: focusables.map(function(f, i) {
+                    return {
+                        name: f.el.dataset.control,
+                        label: (f.el.textContent || '').trim(),
+                        disabled: !!f.el.disabled,
+                        focused: i === focusIndex,
+                    };
+                }).concat(current === 'select' && pick[1] ? [{
+                    name: 'reset-picks',
+                    label: 'reset picks',
+                    disabled: false,
+                    focused: false,
+                }] : []),
+            };
+        }
+
+        function press(name) {
+            var want = String(name || '').toLowerCase();
+            for (var i = 0; i < focusables.length; i++) {
+                var f = focusables[i];
+                var label = (f.el.textContent || '').trim().toLowerCase();
+                if (f.el.dataset.control !== want && label !== want)
+                    continue;
+                if (f.el.disabled)
+                    throw new Error("button '" + name + "' is disabled");
+                setFocus(i);
+                f.activate();
+                return { pressed: f.el.dataset.control, screen: current };
+            }
+            /* reset-picks is pointer-only (not in the focus ring) */
+            if (want === 'reset-picks' && current === 'select') {
+                resetPicks();
+                return { pressed: 'reset-picks', screen: current };
+            }
+            throw new Error("no button '" + name + "' on screen '" +
+                            current + "'");
+        }
+
         return {
             show: show,
             hide: hide,
             poll: poll,
             current: function() { return current; },
             picks: function() { return pick; },
+            state: state,
+            press: press,
         };
     }
 
@@ -50017,11 +50205,11 @@ canvas { display: block; touch-action: none; }
    calc(var(--su) * N) == N/19.2 px of the 1920px Unity design. */
 @font-face {
     font-family: 'Kenvector Future';   /* .uss .menu-button font */
-    src: url('assets/fonts/kenvector_future.ttf?v=6') format('truetype');
+    src: url('assets/fonts/kenvector_future.ttf?v=7') format('truetype');
 }
 @font-face {
     font-family: 'Boogaloo';           /* .uss victory/leaderboard font */
-    src: url('assets/fonts/boogaloo.ttf?v=6') format('truetype');
+    src: url('assets/fonts/boogaloo.ttf?v=7') format('truetype');
 }
 #screens { position: fixed; inset: 0; z-index: 5; display: none; }
 .screen {
@@ -50165,20 +50353,21 @@ canvas { display: block; touch-action: none; }
      sashimi-specific sprites/HUD/bootstrap live in the sandbox lib
      (lib/sashimi-*.js, source: sandboxes/sashimi/clients/lib/).
      ?v=N cache-busts GitHub Pages (root CLAUDE.md decision 22). -->
-<script src="flecs-ecs.js?v=6"></script>
-<script src="lib/rt-loop.js?v=6"></script>
-<script src="lib/rt-input.js?v=6"></script>
-<script src="lib/rt-view.js?v=6"></script>
-<script src="lib/rt-sprites.js?v=6"></script>
-<script src="lib/rt-render.js?v=6"></script>
-<script src="lib/sashimi-art-data.js?v=6"></script>
-<script src="lib/sashimi-audio-data.js?v=6"></script>
-<script src="lib/sashimi-sprites.js?v=6"></script>
-<script src="lib/sashimi-audio.js?v=6"></script>
-<script src="lib/sashimi-fx.js?v=6"></script>
-<script src="lib/sashimi-hud.js?v=6"></script>
-<script src="lib/sashimi-screens.js?v=6"></script>
-<script src="lib/sashimi-client.js?v=6"></script>
+<script src="flecs-ecs.js?v=7"></script>
+<script src="lib/rt-loop.js?v=7"></script>
+<script src="lib/rt-control.js?v=7"></script>
+<script src="lib/rt-input.js?v=7"></script>
+<script src="lib/rt-view.js?v=7"></script>
+<script src="lib/rt-sprites.js?v=7"></script>
+<script src="lib/rt-render.js?v=7"></script>
+<script src="lib/sashimi-art-data.js?v=7"></script>
+<script src="lib/sashimi-audio-data.js?v=7"></script>
+<script src="lib/sashimi-sprites.js?v=7"></script>
+<script src="lib/sashimi-audio.js?v=7"></script>
+<script src="lib/sashimi-fx.js?v=7"></script>
+<script src="lib/sashimi-hud.js?v=7"></script>
+<script src="lib/sashimi-screens.js?v=7"></script>
+<script src="lib/sashimi-client.js?v=7"></script>
 <script>
 FlecsECS().then(function(M) {
     /* window.__sashimi: debug/test handle (loop, engine, restart, audio) */
@@ -50256,6 +50445,12 @@ typedef struct {
     float damage[20];
     float health[20];
 } CLevelTable;                    /* HeroLevelUp */
+typedef struct {
+    char *template_name;
+    float x, y;
+    int32_t ticks_remaining;
+} CPendingSpawn;
+typedef struct { float spawn_delay; int32_t spawn_max; float spawn_growth; } CSpawnConfig;
 
 /* ── Static state ──────────────────────────────────────────────────── */
 
@@ -50315,6 +50510,18 @@ static SwUnit g_units[SW_MAX_UNITS];
 static int g_unit_count = 0;
 static double g_tick_ms = 0;
 
+/* Pre-spawn telegraph snapshot (Unity SpawnWarning presentation): every
+ * PendingSpawn warning with its materialization countdown. CLIENT
+ * presentation only — the hero-AI observability contract keeps
+ * PendingSpawn invisible to AI queries/snapshots (component-bare in the
+ * sim); a human player sees Unity's warnings, so the bridge may export
+ * them to the renderer. Capacity = all 509 wave entries pending at once
+ * (waves 2+ burst their warnings in one tick; decision 17). */
+#define SW_MAX_PENDING 512
+typedef struct { float x, y; int32_t kind, ticks_left; } SwPending;
+static SwPending g_pending[SW_MAX_PENDING];
+static int g_pending_count = 0;
+
 static ecs_entity_t g_players[SW_MAX_PLAYERS + 1] = {0}; /* index by clientId */
 
 /* Prefab entity -> kind mapping, resolved once per init. */
@@ -50335,6 +50542,7 @@ static struct {
     ecs_entity_t game_time, match_stats, wave_state;
     ecs_entity_t game_time_config, game_over_config, arena_bounds,
                  hero_level_up;
+    ecs_entity_t pending_spawn, spawn_config;
     ecs_entity_t game_config_e, game_state_e;
 } g_ids;
 
@@ -50353,6 +50561,7 @@ static void resolve_ids(void) {
     L(game_time_config, "GameTimeConfig");
     L(game_over_config, "GameOverConfig");
     L(arena_bounds, "ArenaBounds");      L(hero_level_up, "HeroLevelUp");
+    L(pending_spawn, "PendingSpawn");    L(spawn_config, "SpawnConfig");
 #undef L
     g_ids.game_config_e = ecs_lookup(w, "GameConfig");
     g_ids.game_state_e = ecs_lookup(w, "GameState");
@@ -50509,6 +50718,39 @@ static void collect_units(void) {
     g_unit_count = count;
 }
 
+/* Pre-spawn telegraphs: snapshot every PendingSpawn warning. The kind
+ * comes from the pending template name (the same prefab the creature
+ * will spawn as), so the client can size/shape the indicator. */
+static void collect_pending(void) {
+    ecs_world_t *w = g_engine->world;
+    g_pending_count = 0;
+    if (!g_ids.pending_spawn) return;
+
+    ecs_query_t *q = ecs_query(w, {
+        .terms = {{ .id = g_ids.pending_spawn }},
+        .cache_kind = EcsQueryCacheNone
+    });
+
+    int count = 0;
+    ecs_iter_t it = ecs_query_iter(w, q);
+    while (ecs_query_next(&it)) {
+        for (int i = 0; i < it.count && count < SW_MAX_PENDING; i++) {
+            const CPendingSpawn *ps = ecs_get_id(w, it.entities[i],
+                                                 g_ids.pending_spawn);
+            if (!ps || !ps->template_name || ps->ticks_remaining <= 0)
+                continue;
+            SwPending *p = &g_pending[count];
+            p->x = ps->x;
+            p->y = ps->y;
+            p->ticks_left = ps->ticks_remaining;
+            p->kind = kind_of_prefab(ecs_lookup(w, ps->template_name));
+            count++;
+        }
+    }
+    ecs_query_fini(q);
+    g_pending_count = count;
+}
+
 /* ── Lifecycle ─────────────────────────────────────────────────────── */
 
 EMSCRIPTEN_KEEPALIVE
@@ -50540,6 +50782,7 @@ int wasm_init_with_config(const char *config_name) {
 
     resolve_ids();
     collect_units();
+    collect_pending();
     return 1;
 }
 
@@ -50554,6 +50797,7 @@ int wasm_tick(void) {
         engine_turn_result_free(&tr);
     }
     collect_units();
+    collect_pending();
     g_tick_ms = emscripten_get_now() - t0;
     return g_engine->turn_counter;
 }
@@ -50727,6 +50971,42 @@ int wasm_get_tick_rate(void) {
                                            g_ids.game_config_e,
                                            g_ids.game_time_config);
     return (tc && tc->tick_rate > 0) ? tc->tick_rate : 60;
+}
+
+/* ── Pre-spawn telegraph exports (client presentation only) ────────── */
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_get_pending_count(void) { return g_pending_count; }
+EMSCRIPTEN_KEEPALIVE
+float wasm_get_pending_x(int i) {
+    return (i >= 0 && i < g_pending_count) ? g_pending[i].x : 0.0f;
+}
+EMSCRIPTEN_KEEPALIVE
+float wasm_get_pending_y(int i) {
+    return (i >= 0 && i < g_pending_count) ? g_pending[i].y : 0.0f;
+}
+EMSCRIPTEN_KEEPALIVE
+int wasm_get_pending_kind(int i) {
+    return (i >= 0 && i < g_pending_count) ? g_pending[i].kind : 0;
+}
+EMSCRIPTEN_KEEPALIVE
+int wasm_get_pending_ticks(int i) {
+    return (i >= 0 && i < g_pending_count) ? g_pending[i].ticks_left : 0;
+}
+
+/* Full telegraph window in ticks: SpawnConfig.spawn_delay * tick rate,
+ * +1 matching spawn_warning()'s initial ticks_remaining (systems.c) —
+ * so pending_ticks/telegraph_ticks is a clean 1 -> 0 progress ratio. */
+EMSCRIPTEN_KEEPALIVE
+int wasm_get_telegraph_ticks(void) {
+    float delay = 1.25f;
+    if (g_engine && g_ids.game_config_e && g_ids.spawn_config) {
+        const CSpawnConfig *sc = ecs_get_id(g_engine->world,
+                                            g_ids.game_config_e,
+                                            g_ids.spawn_config);
+        if (sc && sc->spawn_delay > 0) delay = sc->spawn_delay;
+    }
+    return (int)(delay * wasm_get_tick_rate() + 0.5f) + 1;
 }
 
 EMSCRIPTEN_KEEPALIVE
@@ -61071,6 +61351,12 @@ async function run() {
         victoryTicks: M.cwrap('wasm_get_victory_ticks', 'number', []),
         wave: M.cwrap('wasm_get_wave', 'number', []),
         waveCount: M.cwrap('wasm_get_wave_count', 'number', []),
+        pendingCount: M.cwrap('wasm_get_pending_count', 'number', []),
+        pendingX: M.cwrap('wasm_get_pending_x', 'number', ['number']),
+        pendingY: M.cwrap('wasm_get_pending_y', 'number', ['number']),
+        pendingKind: M.cwrap('wasm_get_pending_kind', 'number', ['number']),
+        pendingTicks: M.cwrap('wasm_get_pending_ticks', 'number', ['number']),
+        telegraphTicks: M.cwrap('wasm_get_telegraph_ticks', 'number', []),
         gems: M.cwrap('wasm_get_gems', 'number', []),
         kills: M.cwrap('wasm_get_kills', 'number', []),
         heroLevel: M.cwrap('wasm_get_hero_level', 'number', []),
@@ -61188,16 +61474,40 @@ async function run() {
             if (s > 0) stageSeen++;
         }
     }
+    /* Pre-spawn telegraph exports: warnings visible during the 1.25s
+     * window BEFORE materialization (client presentation only; the
+     * hero-AI observability contract keeps PendingSpawn component-bare
+     * and invisible to AI queries — these are dedicated bridge reads). */
+    let pendMax = 0, pendOk = true, pendTicksMax = 0;
+    function scanPendings() {
+        const n = e.pendingCount();
+        if (n > pendMax) pendMax = n;
+        for (let i = 0; i < n; i++) {
+            const k = e.pendingKind(i), tl = e.pendingTicks(i);
+            if (k < 3 || k > 7) pendOk = false;
+            if (tl < 1 || tl > e.telegraphTicks()) pendOk = false;
+            if (tl > pendTicksMax) pendTicksMax = tl;
+            if (!isFinite(e.pendingX(i)) || !isFinite(e.pendingY(i)))
+                pendOk = false;
+        }
+    }
     let sumMs = 0, maxMs = 0, ticks = 0;
     while (e.gameTick() < 400 && !e.isGameOver()) {
         e.setInput(1, 0, 0);
         e.tick();
         drainEvents();
         scanStages();
+        scanPendings();
         const ms = e.getTickMs();
         sumMs += ms; if (ms > maxMs) maxMs = ms; ticks++;
     }
     assert('wave 1 released', e.wave() >= 1);
+    assert('telegraph window export = 76 ticks (1.25s * 60 + 1)',
+        e.telegraphTicks() === 76);
+    assert(`pending warnings observed pre-spawn (max ${pendMax})`,
+        pendMax >= 1);
+    assert(`pending entries valid (kind 3..7, 1..window ticks, finite pos; ` +
+        `deepest ${pendTicksMax})`, pendOk && pendTicksMax > 60);
     assert('WAVE_STARTED event observed', (evSeen[EV.WAVE_STARTED] || 0) >= 1);
     assert('WEAPON_FIRED events observed (heroes auto-fire)',
         (evSeen[EV.WEAPON_FIRED] || 0) >= 1);

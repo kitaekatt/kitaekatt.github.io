@@ -13,16 +13,16 @@
  *     │     └── processTick()   event ring -> SashimiAudio (SFX) + hero
  *     │           attack/respawn anim latches + SashimiFX (hit/death FX
  *     │           entries, trail points, white hit-flash latch); stage
- *     │           edges -> windup audio; first-seen creatures -> spawn
- *     │           telegraph window
+ *     │           edges -> windup audio; pending exports -> pre-spawn
+ *     │           telegraph markers (fx.setPendings); first-seen
+ *     │           creatures -> Spawn row + quick fade-in
  *     └── RTRender.frame(units, alpha)  camera follows P1's hero,
  *           the real Adventure ground (cfg.ground; assets/ground.png),
- *           projectile trails (effectsUnder), y-sort, per-kind real
- *           Unity sprites (assets/*.png + lib/sashimi-art-data.js
- *           manifests; ?art=proc falls back to the procedural
- *           placeholders), white hit-flash silhouettes (overlayFor),
- *           spawn telegraphs (underlayFor + materialize fade), hit/death
- *           FX (effectsOver), HUD
+ *           pre-spawn telegraphs + projectile trails (effectsUnder),
+ *           y-sort, per-kind real Unity sprites (assets/*.png +
+ *           lib/sashimi-art-data.js manifests; ?art=proc falls back to
+ *           the procedural placeholders), white hit-flash silhouettes
+ *           (overlayFor), hit/death FX (effectsOver), HUD
  *
  * Screen flow (SashimiScreens; the Unity UIManager/AdventureUIController
  * sequence): TITLE -> HERO SELECT -> PLAYING -> RESULTS, with PLAY AGAIN
@@ -109,6 +109,12 @@ var SashimiClient = (function() {
             arenaMinY: M.cwrap('wasm_get_arena_min_y', 'number', []),
             arenaMaxX: M.cwrap('wasm_get_arena_max_x', 'number', []),
             arenaMaxY: M.cwrap('wasm_get_arena_max_y', 'number', []),
+            pendingCount: M.cwrap('wasm_get_pending_count', 'number', []),
+            pendingX: M.cwrap('wasm_get_pending_x', 'number', ['number']),
+            pendingY: M.cwrap('wasm_get_pending_y', 'number', ['number']),
+            pendingKind: M.cwrap('wasm_get_pending_kind', 'number', ['number']),
+            pendingTicks: M.cwrap('wasm_get_pending_ticks', 'number', ['number']),
+            telegraphTicks: M.cwrap('wasm_get_telegraph_ticks', 'number', []),
         };
 
         if (!engine.init(CONFIG)) {
@@ -211,7 +217,6 @@ var SashimiClient = (function() {
             var want;
             if (u.flags & FLAG_DEFEATED) want = 'defeat';
             else if (u.flags & FLAG_HIT) want = 'damage';
-            else if (u.warnUntil && t < u.warnUntil) want = 'spawn';
             else if (STAGE_STATE[u.stage]) want = STAGE_STATE[u.stage];
             else want = u.moving ? 'walk' : 'idle';
             if (want !== 'damage' && want !== 'defeat') {
@@ -240,6 +245,10 @@ var SashimiClient = (function() {
            FLASH_SECONDS, replacing the earlier port-invented alpha dip
            on TookDamage. */
         var FLASH_SECONDS = 0.15, FLASH_ALPHA = 0.75;
+        /* Materialization fade-in after the true pre-spawn telegraph
+           (the old client held creatures invisible for 35% of a
+           post-hoc 1.25 s window; the warning now precedes the spawn) */
+        var FADE_IN_SECONDS = 0.25;
 
         var render = RTRender.init({
             canvas: opts.canvas,
@@ -251,7 +260,7 @@ var SashimiClient = (function() {
             unitDefs: sprites.defs,
             ground: sprites.ground,   /* real Adventure tilemap (null ->
                                          rt-render's procedural ground) */
-            effectsUnder: fx.drawTrails,
+            effectsUnder: fx.drawUnder,
             effectsOver: fx.drawFx,
             defFor: function(u) { return sprites.defName(u.kind); },
             sizeFor: function(u, tilePx) {
@@ -265,29 +274,14 @@ var SashimiClient = (function() {
             barFor: function(u, tilePx) {
                 return sprites.barFor(u.kind, tilePx);
             },
-            /* Spawn telegraph (Unity: SpawnWarning entity lives
-               spawnConfig.SpawnDelay before the creature materializes;
-               here the window is client-side from first sight — see
-               extract-art.py provenance note): indicator under the unit,
-               fading out while the creature fades in. */
-            underlayFor: function(u, tilePx, t) {
-                if (!sprites.warn || !u.warnUntil || t >= u.warnUntil)
-                    return null;
-                var left = (u.warnUntil - t) / sprites.warn.seconds;
-                return {
-                    def: sprites.warn.def,
-                    sizePx: tilePx * sprites.warn.size,
-                    /* full strength for 60% of the window, then fade */
-                    alpha: Math.min(1, left / 0.4),
-                };
-            },
+            /* Spawn telegraphs are TRUE pre-spawn now: the warning
+               indicator draws at the warning position during the whole
+               1.25 s PendingSpawn window (pending exports -> fx pass in
+               effectsUnder, Unity's SpawnWarning entity), and the
+               creature fades in quickly at materialization. */
             alphaFor: function(u, t) {
-                if (sprites.warn && u.warnUntil && t < u.warnUntil) {
-                    /* materialize: invisible during the telegraph's first
-                       35%, then fade in under the fading indicator */
-                    var frac = 1 - (u.warnUntil - t) / sprites.warn.seconds;
-                    return frac < 0.35 ? 0 : (frac - 0.35) / 0.65;
-                }
+                if (u.fadeInUntil && t < u.fadeInUntil)
+                    return 1 - (u.fadeInUntil - t) / FADE_IN_SECONDS;
                 if (u.flags & FLAG_DEFEATED) return 0.55;
                 if (u.flags & FLAG_IFRAMES)
                     return 0.45 + 0.35 * Math.sin(t * 24);
@@ -338,8 +332,13 @@ var SashimiClient = (function() {
                 var u = units[i];
                 if (!u.seen) {
                     u.seen = true;
-                    if (tickIndex > 1 && isCreature(u.kind) && sprites.warn)
-                        u.warnUntil = now + sprites.warn.seconds;
+                    if (tickIndex > 1 && isCreature(u.kind)) {
+                        /* materialization: play-once Spawn row + quick
+                           fade-in (the warning already telegraphed it) */
+                        u.animState = 'spawn';
+                        u.animStart = now;
+                        u.fadeInUntil = now + FADE_IN_SECONDS;
+                    }
                 }
                 if (u.flags & FLAG_HIT)
                     u.flashUntil = now + FLASH_SECONDS;
@@ -350,6 +349,22 @@ var SashimiClient = (function() {
                     u.prevStage = u.stage;
                 }
             }
+            /* True pre-spawn telegraphs: project the pending exports
+               (same arena shift + y-flip as the reader); frac runs
+               1 -> 0 across the warning window. */
+            var pendCount = engine.pendingCount();
+            var pends = [];
+            if (pendCount > 0) {
+                var teleTicks = engine.telegraphTicks();
+                for (var pi = 0; pi < pendCount; pi++) {
+                    pends.push({
+                        x: engine.pendingX(pi) - arena.minX,
+                        y: arena.maxY - engine.pendingY(pi),
+                        frac: engine.pendingTicks(pi) / teleTicks,
+                    });
+                }
+            }
+            fx.setPendings(pends);
             fx.tick(units, now);
             var n = engine.eventCount();
             for (var e = 0; e < n; e++) {

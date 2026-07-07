@@ -120,7 +120,38 @@ var SashimiFX = (function() {
                     seconds, 0.75, now);
         }
 
+        /* ── Pre-spawn telegraphs: {x, y, frac} per pending warning
+              (frac 1 -> 0 across the window), replaced wholesale each
+              tick by the client (setPendings). Drawn as the Unity
+              SpawnWarning indicator looping at the warning position. ── */
+        var pendings = [];
+        function setPendings(list) { pendings = list || []; }
+
+        function drawPendings(ctx, view, t) {
+            var warn = sprites.warn;
+            if (!pendings.length || !warn || !sprites.defs[warn.def])
+                return;
+            var def = sprites.defs[warn.def];
+            var sizePx = warn.size * view.tilePx;
+            for (var i = 0; i < pendings.length; i++) {
+                var p = pendings[i];
+                /* quick ramp-in when the warning appears, then hold */
+                var a = Math.min(1, (1 - p.frac) * 8) * 0.9;
+                if (a <= 0) continue;
+                ctx.globalAlpha = a;
+                RTSprites.draw(ctx, def, 'idle', 'S', t,
+                               view.toX(p.x), view.toY(p.y), sizePx, 0);
+            }
+            ctx.globalAlpha = 1;
+        }
+
         /* ── Draw passes (called from rt-render's hooks only) ───────── */
+
+        /* effectsUnder: telegraphs under the trails, both under units */
+        function drawUnder(ctx, view, t) {
+            drawPendings(ctx, view, t);
+            drawTrails(ctx, view, t);
+        }
 
         function drawTrails(ctx, view, t) {
             ctx.lineCap = 'round';
@@ -183,6 +214,7 @@ var SashimiFX = (function() {
         function reset() {
             trails = {};
             fx.length = 0;
+            pendings = [];
         }
 
         return {
@@ -190,6 +222,8 @@ var SashimiFX = (function() {
             reset: reset,
             spawnHit: spawnHit,
             spawnDeath: spawnDeath,
+            setPendings: setPendings,
+            drawUnder: drawUnder,
             drawTrails: drawTrails,
             drawFx: drawFx,
         };
