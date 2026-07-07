@@ -56,14 +56,16 @@ var RTSprites = (function() {
         return null;
     }
 
-    /* Draw one unit sprite. (cx, cy) is the screen-space anchor (the
-       def's pivot point), sizePx the on-screen frame *height* (width
-       follows the frame aspect), tSec a monotonic animation clock —
-       state-relative for `once` rows to make sense. angleRad (optional)
-       rotates about the anchor. Image sheets that have not finished
-       loading draw nothing (drawImage no-ops), so art pops in when
+    /* Draw one unit sprite through the backend-neutral Gfx surface.
+       (cx, cy) is the screen-space anchor (the def's pivot point), sizePx
+       the on-screen frame *height* (width follows the frame aspect), tSec a
+       monotonic animation clock — state-relative for `once` rows to make
+       sense. angleRad (optional) rotates about the anchor. alpha (optional,
+       default 1) is the draw opacity — it replaces the caller's old
+       globalAlpha. Image sheets that have not finished loading draw nothing
+       (Gfx.sprite skips sources with naturalWidth===0), so art pops in when
        ready. */
-    function draw(ctx, def, state, dir, tSec, cx, cy, sizePx, angleRad) {
+    function draw(gfx, def, state, dir, tSec, cx, cy, sizePx, angleRad, alpha) {
         var a = resolve(def.table, state + '_' + dir);
         if (!a) a = resolve(def.table, 'idle_S');
         if (!a) return;
@@ -78,17 +80,9 @@ var RTSprites = (function() {
         var w = sizePx * fw / fh;
         var ax = def.anchorX !== undefined ? def.anchorX : 0.5;
         var ay = def.anchorY !== undefined ? def.anchorY : 0.85;
-        if (a.mirror || angleRad) {
-            ctx.save();
-            ctx.translate(cx, cy);
-            if (angleRad) ctx.rotate(angleRad);
-            if (a.mirror) ctx.scale(-1, 1);
-            ctx.drawImage(def.sheet, sx, sy, fw, fh, -w * ax, -h * ay, w, h);
-            ctx.restore();
-        } else {
-            ctx.drawImage(def.sheet, sx, sy, fw, fh,
-                          cx - w * ax, cy - h * ay, w, h);
-        }
+        gfx.sprite(def.sheet, sx, sy, fw, fh, cx, cy, w, h, ax, ay,
+                   !!a.mirror, angleRad || 0, 1, 1, 1,
+                   alpha === undefined ? 1 : alpha);
     }
 
     /* ── Placeholder sheet generation ─────────────────────────────────

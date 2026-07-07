@@ -222,7 +222,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <option value="wasm_38x" class="debug-only" hidden>608×342</option>
     </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
-    <div id="version">v0.1.0 (bfa0c76)</div>
+    <div id="version">v0.1.0 (6c37b9d)</div>
 </div>
 
 <script>
@@ -243,12 +243,21 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 <script src="/lib/controls.js"></script>
 <script src="/lib/layout.js"></script>
 <script src="/lib/debug.js"></script>
+<script src="/lib/rt-render.js"></script>
 <script>
 (function() {
     const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
     const statusEl = document.getElementById('status');
     const gameOverEl = document.getElementById('game-over-msg');
+    /* Rendering goes through the shared WebGL Gfx surface (surface-only path;
+       the instant client keeps its own turn-based immediate render — full
+       redraw after each turn, no animation). No 2D fallback: WebGL-unavailable
+       fails loudly and aborts bootstrap (root CLAUDE.md decision 12). */
+    const gfx = RTRender.createSurface({
+        canvas: canvas,
+        onUnsupported: function(msg) { statusEl.textContent = msg; gameOverEl.textContent = ''; },
+    });
+    if (!gfx) return;
     const btnPlay = document.getElementById('btn-play');
     const btnStep = document.getElementById('btn-step');
     const btnRewind = document.getElementById('btn-rewind');
@@ -262,14 +271,17 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     const frameTimes = [];
     let lastFrameTime = 0;
 
-    /* Colors */
-    const BG_COLOR = '#0f0f23';
-    const GRID_COLOR = '#1a1a30';
-    const ARCHER_COLOR = '#ff6b6b';
-    const KNIGHT_COLOR = '#4dabf7';
-    const ARCHER_HIT = 'hsl(0, 100%, 90%)';
-    const KNIGHT_HIT = 'hsl(213, 90%, 90%)';
-    const BORDER_COLOR = '#333355';
+    /* Colors as 0..1 rgb float triples (Gfx surface takes floats, not CSS
+       strings). Originals: BG #0f0f23, grid #1a1a30, border #333355,
+       archer #ff6b6b, knight #4dabf7, archer-hit hsl(0,100%,90%)=(255,204,204),
+       knight-hit hsl(213,90%,90%)=(207,227,252). */
+    const BG_COLOR = [15/255, 15/255, 35/255];
+    const GRID_COLOR = [26/255, 26/255, 48/255];
+    const ARCHER_COLOR = [1, 107/255, 107/255];
+    const KNIGHT_COLOR = [77/255, 171/255, 247/255];
+    const ARCHER_HIT = [1.0, 0.8, 0.8];
+    const KNIGHT_HIT = [0.81, 0.891, 0.99];
+    const BORDER_COLOR = [51/255, 51/255, 85/255];
 
     var gameLayout = GameLayout.init({
         canvas: canvas,
@@ -292,30 +304,32 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         const turn = engine.getTurn();
         const gameOver = engine.isGameOver();
 
-        /* Clear */
-        ctx.fillStyle = BG_COLOR;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        /* Begin the per-frame Gfx bracket (viewport + ortho for the fixed
+           internal-resolution canvas); flush after the unit pass. */
+        gfx.begin(canvas.width, canvas.height);
 
-        /* Grid lines (subtle) */
-        ctx.strokeStyle = GRID_COLOR;
-        ctx.lineWidth = 0.5;
+        /* Clear */
+        gfx.clear(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2]);
+
+        /* Grid lines (subtle) — lineWidth 0.5 as before */
         for (let x = 0; x <= mapW; x += 10) {
-            ctx.beginPath();
-            ctx.moveTo(x * CELL_W, 0);
-            ctx.lineTo(x * CELL_W, canvas.height);
-            ctx.stroke();
+            gfx.line(x * CELL_W, 0, x * CELL_W, canvas.height, 0.5, false,
+                     GRID_COLOR[0], GRID_COLOR[1], GRID_COLOR[2], 1);
         }
         for (let y = 0; y <= mapH; y += 10) {
-            ctx.beginPath();
-            ctx.moveTo(0, y * CELL_H);
-            ctx.lineTo(canvas.width, y * CELL_H);
-            ctx.stroke();
+            gfx.line(0, y * CELL_H, canvas.width, y * CELL_H, 0.5, false,
+                     GRID_COLOR[0], GRID_COLOR[1], GRID_COLOR[2], 1);
         }
 
-        /* Border */
-        ctx.strokeStyle = BORDER_COLOR;
-        ctx.lineWidth = 2;
-        ctx.strokeRect(0, 0, canvas.width, canvas.height);
+        /* Border — strokeRect(0,0,w,h) lineWidth 2 as four centered edges
+           (Gfx has no rect-stroke; four gfx.line calls are the exact
+           equivalent — each 2px line is centered on its edge path just as
+           canvas strokeRect centers its stroke). */
+        const bw = canvas.width, bh = canvas.height;
+        gfx.line(0, 0, bw, 0, 2, false, BORDER_COLOR[0], BORDER_COLOR[1], BORDER_COLOR[2], 1);
+        gfx.line(bw, 0, bw, bh, 2, false, BORDER_COLOR[0], BORDER_COLOR[1], BORDER_COLOR[2], 1);
+        gfx.line(0, bh, bw, bh, 2, false, BORDER_COLOR[0], BORDER_COLOR[1], BORDER_COLOR[2], 1);
+        gfx.line(0, 0, 0, bh, 2, false, BORDER_COLOR[0], BORDER_COLOR[1], BORDER_COLOR[2], 1);
 
         /* Draw units */
         let archerCount = 0, knightCount = 0;
@@ -329,14 +343,18 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             if (faction === 0) archerCount++;
             else if (faction === 1) knightCount++;
 
+            let c;
             if (faction === 0) {
-                ctx.fillStyle = tookDamage ? ARCHER_HIT : ARCHER_COLOR;
+                c = tookDamage ? ARCHER_HIT : ARCHER_COLOR;
             } else {
-                ctx.fillStyle = tookDamage ? KNIGHT_HIT : KNIGHT_COLOR;
+                c = tookDamage ? KNIGHT_HIT : KNIGHT_COLOR;
             }
 
-            ctx.fillRect((x - 1) * CELL_W + 1, (y - 1) * CELL_H + 1, CELL_W - 1, CELL_H - 1);
+            gfx.rect((x - 1) * CELL_W + 1, (y - 1) * CELL_H + 1, CELL_W - 1, CELL_H - 1,
+                     c[0], c[1], c[2], 1);
         }
+
+        gfx.flush();
 
         /* FPS */
         const now = performance.now();
