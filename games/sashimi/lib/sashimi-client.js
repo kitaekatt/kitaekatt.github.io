@@ -173,8 +173,16 @@ var SashimiClient = (function() {
             var kind = screens.picks()[clientId] || 0;
             var eid = engine.joinHero(clientId, kind);
             if (eid) {
-                var hu = view.find(eid);
-                audio.select(hu ? hu.kind : clientId); /* Select VO */
+                /* Resolve the possessed hero's kind straight from the
+                   bridge — the view is empty at game start (it only
+                   updates inside the playing tick), so view.find(eid)
+                   was always null there and the clientId fell through
+                   as a fake kind (P1 always got the eagle VO). */
+                var hk = 0;
+                for (var i = 0; i < engine.count(); i++) {
+                    if (engine.id(i) === eid) { hk = engine.kind(i); break; }
+                }
+                audio.select(hk || kind || 1); /* Select VO */
             }
             if (label) {
                 hud.setBanner(eid

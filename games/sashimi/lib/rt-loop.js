@@ -85,8 +85,10 @@ var RTLoop = (function() {
             }
             if (acc >= tickMs) {
                 /* Still behind after maxCatchUp steps: drop the debt so the
-                   loop recovers instead of spiraling. */
-                stats.droppedMs += acc;
+                   loop recovers instead of spiraling. Only the whole ticks
+                   actually discarded count as dropped — the sub-tick
+                   remainder is retained in the accumulator. */
+                stats.droppedMs += acc - (acc % tickMs);
                 acc = acc % tickMs;
             }
             var t1 = performance.now();

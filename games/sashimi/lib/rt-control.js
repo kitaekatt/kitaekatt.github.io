@@ -37,6 +37,7 @@ var RTControl = (function() {
         var pollMs = cfg.pollMs || 250;
         var timer = null;
         var busy = false;
+        var busySince = 0;
         var api = { active: false, stop: stop };
 
         function stop() {
@@ -72,13 +73,13 @@ var RTControl = (function() {
             /* Built-in: 'close' closes the tab (works for single-entry
                windows, e.g. one opened by `open -na Google Chrome
                --new-window <url>` for a headless-driven session). The
-               result posts first; close fires after a beat. */
+               result posts first; close fires after a beat. Polling is
+               NOT stopped preemptively: browsers refuse window.close()
+               on user-navigated tabs, and a refused close must leave
+               the channel alive (a closed one takes it down anyway). */
             if (!handler && c.cmd === 'close') {
                 handler = function() {
-                    setTimeout(function() {
-                        stop();
-                        window.close();
-                    }, 150);
+                    setTimeout(function() { window.close(); }, 400);
                     return { closing: true };
                 };
             }
@@ -99,8 +100,16 @@ var RTControl = (function() {
         }
 
         function poll() {
-            if (busy) return;        /* skip if the last poll is in flight */
+            /* Skip while the last poll is in flight — but a fetch that
+               never settles (wedged socket across a laptop sleep) must
+               not deadlock the channel forever: force-release after
+               10s and poll anew. */
+            if (busy) {
+                if (Date.now() - busySince < 10000) return;
+                busy = false;
+            }
             busy = true;
+            busySince = Date.now();
             var snapshot = null;
             try { snapshot = cfg.state ? cfg.state() : null; }
             catch (e) { snapshot = { stateError: String(e) }; }
@@ -110,7 +119,10 @@ var RTControl = (function() {
                     var chain = Promise.resolve();
                     cmds.forEach(function(c) {
                         chain = chain.then(function() {
-                            return runCommand(c);
+                            /* Isolate per command: one failed result
+                               POST must not drop the commands behind
+                               it in the queue. */
+                            return runCommand(c).catch(function() {});
                         });
                     });
                     return chain;

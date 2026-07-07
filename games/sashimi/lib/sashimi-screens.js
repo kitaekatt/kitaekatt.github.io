@@ -342,6 +342,11 @@ var SashimiScreens = (function() {
                 screens[k].classList.toggle('active', k === name);
             }
             current = name;
+            /* Re-arm gamepad edge detection: a face button still held
+               from gameplay (mashing as defeat lands) must not
+               insta-activate this screen's focused button — poll()'s
+               {act: true} default requires a release first. */
+            padPrev = {};
             if (name === 'select') refreshSelect();
             if (name === 'results' && data) fillResults(data);
             rebuildFocus(name);

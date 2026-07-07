@@ -82,6 +82,30 @@ kills 490); the full pin history (including the interim DEFEAT-at-7591
 steering pin) lives in the acceptance test comment. The pin records
 what the port DOES, never a tuned target.
 
+**Determinism is per-platform, not cross-platform** (found 2026-07-06):
+the sim rolls with libc `srand()`/`rand()`, and Darwin's and
+emscripten/musl's sequences differ for the same seed — so a native run
+and a WASM run of seed 12345 are two different (each fully
+deterministic) games. The acceptance pin above is NATIVE-scoped; the
+difficulty baseline and WASM tooling are WASM-scoped (same seed 12345 +
+headless-verify is a Defeat at ~8996 in WASM). Do not compare outcomes
+across the two, and do not "fix" this by swapping the PRNG — that
+changes every outcome on both sides.
+
+Performance profiling (all full-game):
+- native per-system: `./build/local/profile_game --sandbox sashimi
+  --config headless-verify --seed 12345` (mirrors engine_sim_turn's
+  legacy loop; reproduces the native pin)
+- WASM throughput: `node sandboxes/sashimi/tools/profile_runner.js`
+  (flat-out ticks/sec vs the 240 Hz budget, per-phase with unit counts)
+- in-browser consistency: `tools/client.py perf` (rt-loop frame-hitch
+  counters -> consistent-60 PASS/FAIL verdict)
+2026-07-06 baselines (M-series Mac): WASM 6704 ticks/s (27.9x the
+240 Hz target, p99 0.31 ms/tick); browser full game consistent-60 PASS
+(1 hitch in 11,999 frames, 0 dropped sim ms, 98 units late-game at
+~2.3 ms/frame JS). Top native costs: movement 18.8%, spatial_hash
+16.5%, creature_steering 12.2%.
+
 Run in a browser:
 
 ```bash
@@ -566,15 +590,18 @@ Policy:
   the manifest): wave started, hits by slime/wolf, creature spawn.
 - **Spawn telegraphs**: Unity's EnemySpawnSystem shows SpawnWarning at
   each spawn point and materializes the creature
-  `spawnConfig.SpawnDelay` (Adventure: 1.25 s) later. The SIMULATION
-  side of this landed in the 2026-07 spawning batch: `delayed_spawn`
-  now materializes each warning 1.25 s after `spawn_director` emits it.
-  The visual indicator remains client-side and still draws at
-  first-seen materialization (rt-render `underlayFor` for
-  `spawnWarnSeconds` while the creature fades in) — PendingSpawn
-  warnings are component-bare (no Position export), so surfacing the
-  true pre-spawn window in the client would need a dedicated export;
-  deferred.
+  `spawnConfig.SpawnDelay` (Adventure: 1.25 s) later. Both sides are
+  live: `delayed_spawn` materializes each warning 1.25 s after
+  `spawn_director` emits it, and the client draws the SpawnWarning
+  indicator across the TRUE pre-spawn window from the dedicated
+  pending exports (`wasm_get_pending_{count,x,y,kind,ticks}` +
+  `wasm_get_telegraph_ticks`; drawn by sashimi-fx's telegraph pass in
+  `effectsUnder`, with a quick creature fade-in + play-once Spawn row
+  at materialization). Presentation only: PendingSpawn stays
+  component-bare in the sim — no AI query, unit snapshot, or spatial
+  hash can see it (observability contract; the bridge reads the
+  PendingSpawn component directly, mirroring what a human player sees
+  in Unity).
 
 Contracts the client depends on:
 
@@ -600,6 +627,12 @@ Contracts the client depends on:
   (ACTIVE > WINDUP > RECOVERY when a unit owns several, e.g. the cube).
   The client plays the manifests' windup/active/recovery rows off this,
   so attack anims track the engine's real hitbox windows.
+- **Pending-spawn exports** -- `wasm_get_pending_count/x/y/kind/ticks(i)`
+  snapshot every live PendingSpawn warning after each tick (kind
+  resolved from the pending template name; ticks = countdown to
+  materialization), and `wasm_get_telegraph_ticks()` is the full window
+  (SpawnConfig.spawn_delay * tick rate + 1, matching the sim's initial
+  countdown) so ticks/window is a clean 1 -> 0 progress ratio.
 - **Per-tick events** -- systems.c keeps a presentation event ring
   (`SASHIMI_EV_*` in systems.h: weapon fired, hit, hero hurt,
   creature/hero died, hero respawn, pickup, level-up, wave started,
@@ -4262,16 +4295,16 @@ var SashimiAudio = (function() {
  *     │     └── processTick()   event ring -> SashimiAudio (SFX) + hero
  *     │           attack/respawn anim latches + SashimiFX (hit/death FX
  *     │           entries, trail points, white hit-flash latch); stage
- *     │           edges -> windup audio; first-seen creatures -> spawn
- *     │           telegraph window
+ *     │           edges -> windup audio; pending exports -> pre-spawn
+ *     │           telegraph markers (fx.setPendings); first-seen
+ *     │           creatures -> Spawn row + quick fade-in
  *     └── RTRender.frame(units, alpha)  camera follows P1's hero,
  *           the real Adventure ground (cfg.ground; assets/ground.png),
- *           projectile trails (effectsUnder), y-sort, per-kind real
- *           Unity sprites (assets/*.png + lib/sashimi-art-data.js
- *           manifests; ?art=proc falls back to the procedural
- *           placeholders), white hit-flash silhouettes (overlayFor),
- *           spawn telegraphs (underlayFor + materialize fade), hit/death
- *           FX (effectsOver), HUD
+ *           pre-spawn telegraphs + projectile trails (effectsUnder),
+ *           y-sort, per-kind real Unity sprites (assets/*.png +
+ *           lib/sashimi-art-data.js manifests; ?art=proc falls back to
+ *           the procedural placeholders), white hit-flash silhouettes
+ *           (overlayFor), hit/death FX (effectsOver), HUD
  *
  * Screen flow (SashimiScreens; the Unity UIManager/AdventureUIController
  * sequence): TITLE -> HERO SELECT -> PLAYING -> RESULTS, with PLAY AGAIN
@@ -4358,6 +4391,12 @@ var SashimiClient = (function() {
             arenaMinY: M.cwrap('wasm_get_arena_min_y', 'number', []),
             arenaMaxX: M.cwrap('wasm_get_arena_max_x', 'number', []),
             arenaMaxY: M.cwrap('wasm_get_arena_max_y', 'number', []),
+            pendingCount: M.cwrap('wasm_get_pending_count', 'number', []),
+            pendingX: M.cwrap('wasm_get_pending_x', 'number', ['number']),
+            pendingY: M.cwrap('wasm_get_pending_y', 'number', ['number']),
+            pendingKind: M.cwrap('wasm_get_pending_kind', 'number', ['number']),
+            pendingTicks: M.cwrap('wasm_get_pending_ticks', 'number', ['number']),
+            telegraphTicks: M.cwrap('wasm_get_telegraph_ticks', 'number', []),
         };
 
         if (!engine.init(CONFIG)) {
@@ -4416,8 +4455,16 @@ var SashimiClient = (function() {
             var kind = screens.picks()[clientId] || 0;
             var eid = engine.joinHero(clientId, kind);
             if (eid) {
-                var hu = view.find(eid);
-                audio.select(hu ? hu.kind : clientId); /* Select VO */
+                /* Resolve the possessed hero's kind straight from the
+                   bridge — the view is empty at game start (it only
+                   updates inside the playing tick), so view.find(eid)
+                   was always null there and the clientId fell through
+                   as a fake kind (P1 always got the eagle VO). */
+                var hk = 0;
+                for (var i = 0; i < engine.count(); i++) {
+                    if (engine.id(i) === eid) { hk = engine.kind(i); break; }
+                }
+                audio.select(hk || kind || 1); /* Select VO */
             }
             if (label) {
                 hud.setBanner(eid
@@ -4460,7 +4507,6 @@ var SashimiClient = (function() {
             var want;
             if (u.flags & FLAG_DEFEATED) want = 'defeat';
             else if (u.flags & FLAG_HIT) want = 'damage';
-            else if (u.warnUntil && t < u.warnUntil) want = 'spawn';
             else if (STAGE_STATE[u.stage]) want = STAGE_STATE[u.stage];
             else want = u.moving ? 'walk' : 'idle';
             if (want !== 'damage' && want !== 'defeat') {
@@ -4489,6 +4535,10 @@ var SashimiClient = (function() {
            FLASH_SECONDS, replacing the earlier port-invented alpha dip
            on TookDamage. */
         var FLASH_SECONDS = 0.15, FLASH_ALPHA = 0.75;
+        /* Materialization fade-in after the true pre-spawn telegraph
+           (the old client held creatures invisible for 35% of a
+           post-hoc 1.25 s window; the warning now precedes the spawn) */
+        var FADE_IN_SECONDS = 0.25;
 
         var render = RTRender.init({
             canvas: opts.canvas,
@@ -4500,7 +4550,7 @@ var SashimiClient = (function() {
             unitDefs: sprites.defs,
             ground: sprites.ground,   /* real Adventure tilemap (null ->
                                          rt-render's procedural ground) */
-            effectsUnder: fx.drawTrails,
+            effectsUnder: fx.drawUnder,
             effectsOver: fx.drawFx,
             defFor: function(u) { return sprites.defName(u.kind); },
             sizeFor: function(u, tilePx) {
@@ -4514,29 +4564,14 @@ var SashimiClient = (function() {
             barFor: function(u, tilePx) {
                 return sprites.barFor(u.kind, tilePx);
             },
-            /* Spawn telegraph (Unity: SpawnWarning entity lives
-               spawnConfig.SpawnDelay before the creature materializes;
-               here the window is client-side from first sight — see
-               extract-art.py provenance note): indicator under the unit,
-               fading out while the creature fades in. */
-            underlayFor: function(u, tilePx, t) {
-                if (!sprites.warn || !u.warnUntil || t >= u.warnUntil)
-                    return null;
-                var left = (u.warnUntil - t) / sprites.warn.seconds;
-                return {
-                    def: sprites.warn.def,
-                    sizePx: tilePx * sprites.warn.size,
-                    /* full strength for 60% of the window, then fade */
-                    alpha: Math.min(1, left / 0.4),
-                };
-            },
+            /* Spawn telegraphs are TRUE pre-spawn now: the warning
+               indicator draws at the warning position during the whole
+               1.25 s PendingSpawn window (pending exports -> fx pass in
+               effectsUnder, Unity's SpawnWarning entity), and the
+               creature fades in quickly at materialization. */
             alphaFor: function(u, t) {
-                if (sprites.warn && u.warnUntil && t < u.warnUntil) {
-                    /* materialize: invisible during the telegraph's first
-                       35%, then fade in under the fading indicator */
-                    var frac = 1 - (u.warnUntil - t) / sprites.warn.seconds;
-                    return frac < 0.35 ? 0 : (frac - 0.35) / 0.65;
-                }
+                if (u.fadeInUntil && t < u.fadeInUntil)
+                    return 1 - (u.fadeInUntil - t) / FADE_IN_SECONDS;
                 if (u.flags & FLAG_DEFEATED) return 0.55;
                 if (u.flags & FLAG_IFRAMES)
                     return 0.45 + 0.35 * Math.sin(t * 24);
@@ -4587,8 +4622,13 @@ var SashimiClient = (function() {
                 var u = units[i];
                 if (!u.seen) {
                     u.seen = true;
-                    if (tickIndex > 1 && isCreature(u.kind) && sprites.warn)
-                        u.warnUntil = now + sprites.warn.seconds;
+                    if (tickIndex > 1 && isCreature(u.kind)) {
+                        /* materialization: play-once Spawn row + quick
+                           fade-in (the warning already telegraphed it) */
+                        u.animState = 'spawn';
+                        u.animStart = now;
+                        u.fadeInUntil = now + FADE_IN_SECONDS;
+                    }
                 }
                 if (u.flags & FLAG_HIT)
                     u.flashUntil = now + FLASH_SECONDS;
@@ -4599,6 +4639,22 @@ var SashimiClient = (function() {
                     u.prevStage = u.stage;
                 }
             }
+            /* True pre-spawn telegraphs: project the pending exports
+               (same arena shift + y-flip as the reader); frac runs
+               1 -> 0 across the warning window. */
+            var pendCount = engine.pendingCount();
+            var pends = [];
+            if (pendCount > 0) {
+                var teleTicks = engine.telegraphTicks();
+                for (var pi = 0; pi < pendCount; pi++) {
+                    pends.push({
+                        x: engine.pendingX(pi) - arena.minX,
+                        y: arena.maxY - engine.pendingY(pi),
+                        frac: engine.pendingTicks(pi) / teleTicks,
+                    });
+                }
+            }
+            fx.setPendings(pends);
             fx.tick(units, now);
             var n = engine.eventCount();
             for (var e = 0; e < n; e++) {
@@ -4884,6 +4940,10 @@ var SashimiClient = (function() {
                         engineMs: +engineMs.toFixed(3),
                         renderMs: +s.renderMs.toFixed(3),
                         droppedMs: Math.round(s.droppedMs),
+                        frames: s.totalFrames,
+                        slow20: s.slow20,
+                        slow33: s.slow33,
+                        worstMs: +s.winWorstMs.toFixed(1),
                     },
                     visibility: document.visibilityState,
                 };
@@ -5044,7 +5104,38 @@ var SashimiFX = (function() {
                     seconds, 0.75, now);
         }
 
+        /* ── Pre-spawn telegraphs: {x, y, frac} per pending warning
+              (frac 1 -> 0 across the window), replaced wholesale each
+              tick by the client (setPendings). Drawn as the Unity
+              SpawnWarning indicator looping at the warning position. ── */
+        var pendings = [];
+        function setPendings(list) { pendings = list || []; }
+
+        function drawPendings(ctx, view, t) {
+            var warn = sprites.warn;
+            if (!pendings.length || !warn || !sprites.defs[warn.def])
+                return;
+            var def = sprites.defs[warn.def];
+            var sizePx = warn.size * view.tilePx;
+            for (var i = 0; i < pendings.length; i++) {
+                var p = pendings[i];
+                /* quick ramp-in when the warning appears, then hold */
+                var a = Math.min(1, (1 - p.frac) * 8) * 0.9;
+                if (a <= 0) continue;
+                ctx.globalAlpha = a;
+                RTSprites.draw(ctx, def, 'idle', 'S', t,
+                               view.toX(p.x), view.toY(p.y), sizePx, 0);
+            }
+            ctx.globalAlpha = 1;
+        }
+
         /* ── Draw passes (called from rt-render's hooks only) ───────── */
+
+        /* effectsUnder: telegraphs under the trails, both under units */
+        function drawUnder(ctx, view, t) {
+            drawPendings(ctx, view, t);
+            drawTrails(ctx, view, t);
+        }
 
         function drawTrails(ctx, view, t) {
             ctx.lineCap = 'round';
@@ -5107,6 +5198,7 @@ var SashimiFX = (function() {
         function reset() {
             trails = {};
             fx.length = 0;
+            pendings = [];
         }
 
         return {
@@ -5114,6 +5206,8 @@ var SashimiFX = (function() {
             reset: reset,
             spawnHit: spawnHit,
             spawnDeath: spawnDeath,
+            setPendings: setPendings,
+            drawUnder: drawUnder,
             drawTrails: drawTrails,
             drawFx: drawFx,
         };
@@ -5527,6 +5621,11 @@ var SashimiScreens = (function() {
                 screens[k].classList.toggle('active', k === name);
             }
             current = name;
+            /* Re-arm gamepad edge detection: a face button still held
+               from gameplay (mashing as defeat lands) must not
+               insta-activate this screen's focused button — poll()'s
+               {act: true} default requires a release first. */
+            padPrev = {};
             if (name === 'select') refreshSelect();
             if (name === 'results' && data) fillResults(data);
             rebuildFocus(name);
@@ -50205,11 +50304,11 @@ canvas { display: block; touch-action: none; }
    calc(var(--su) * N) == N/19.2 px of the 1920px Unity design. */
 @font-face {
     font-family: 'Kenvector Future';   /* .uss .menu-button font */
-    src: url('assets/fonts/kenvector_future.ttf?v=7') format('truetype');
+    src: url('assets/fonts/kenvector_future.ttf?v=10') format('truetype');
 }
 @font-face {
     font-family: 'Boogaloo';           /* .uss victory/leaderboard font */
-    src: url('assets/fonts/boogaloo.ttf?v=7') format('truetype');
+    src: url('assets/fonts/boogaloo.ttf?v=10') format('truetype');
 }
 #screens { position: fixed; inset: 0; z-index: 5; display: none; }
 .screen {
@@ -50353,21 +50452,21 @@ canvas { display: block; touch-action: none; }
      sashimi-specific sprites/HUD/bootstrap live in the sandbox lib
      (lib/sashimi-*.js, source: sandboxes/sashimi/clients/lib/).
      ?v=N cache-busts GitHub Pages (root CLAUDE.md decision 22). -->
-<script src="flecs-ecs.js?v=7"></script>
-<script src="lib/rt-loop.js?v=7"></script>
-<script src="lib/rt-control.js?v=7"></script>
-<script src="lib/rt-input.js?v=7"></script>
-<script src="lib/rt-view.js?v=7"></script>
-<script src="lib/rt-sprites.js?v=7"></script>
-<script src="lib/rt-render.js?v=7"></script>
-<script src="lib/sashimi-art-data.js?v=7"></script>
-<script src="lib/sashimi-audio-data.js?v=7"></script>
-<script src="lib/sashimi-sprites.js?v=7"></script>
-<script src="lib/sashimi-audio.js?v=7"></script>
-<script src="lib/sashimi-fx.js?v=7"></script>
-<script src="lib/sashimi-hud.js?v=7"></script>
-<script src="lib/sashimi-screens.js?v=7"></script>
-<script src="lib/sashimi-client.js?v=7"></script>
+<script src="flecs-ecs.js?v=10"></script>
+<script src="lib/rt-loop.js?v=10"></script>
+<script src="lib/rt-control.js?v=10"></script>
+<script src="lib/rt-input.js?v=10"></script>
+<script src="lib/rt-view.js?v=10"></script>
+<script src="lib/rt-sprites.js?v=10"></script>
+<script src="lib/rt-render.js?v=10"></script>
+<script src="lib/sashimi-art-data.js?v=10"></script>
+<script src="lib/sashimi-audio-data.js?v=10"></script>
+<script src="lib/sashimi-sprites.js?v=10"></script>
+<script src="lib/sashimi-audio.js?v=10"></script>
+<script src="lib/sashimi-fx.js?v=10"></script>
+<script src="lib/sashimi-hud.js?v=10"></script>
+<script src="lib/sashimi-screens.js?v=10"></script>
+<script src="lib/sashimi-client.js?v=10"></script>
 <script>
 FlecsECS().then(function(M) {
     /* window.__sashimi: debug/test handle (loop, engine, restart, audio) */
@@ -50515,8 +50614,10 @@ static double g_tick_ms = 0;
  * presentation only — the hero-AI observability contract keeps
  * PendingSpawn invisible to AI queries/snapshots (component-bare in the
  * sim); a human player sees Unity's warnings, so the bridge may export
- * them to the renderer. Capacity = all 509 wave entries pending at once
- * (waves 2+ burst their warnings in one tick; decision 17). */
+ * them to the renderer. Worst-case coexisting pendings = one wave's
+ * full burst (largest wave = 26 entries; the 75-tick telegraph is far
+ * shorter than the 300-tick wave interval, so bursts never overlap) —
+ * 512 is a deliberately deep decision-17 margin, not the worst case. */
 #define SW_MAX_PENDING 512
 typedef struct { float x, y; int32_t kind, ticks_left; } SwPending;
 static SwPending g_pending[SW_MAX_PENDING];
@@ -53135,10 +53236,31 @@ AI eagle. Coarse probes, same 20 seeds (101-120):
     1.500       1/20        (   - )
 
 The 50% win-rate threshold is now ~0.7 (up from ~0.50); the shipped
-default ratio 1.0 sits at ~10%. A full Bayesian re-baseline is worth
-running once the remaining gameplay-affecting work (presentation polish
-is client-only; UI screens are client-only) is confirmed closed — until
-then treat ~0.7 as the working figure.
+default ratio 1.0 sits at ~10%. Superseded by the full re-baseline
+below.
+
+## Full post-recall re-baseline (2026-07-06, build e7d0714) — CURRENT
+
+**damage_taken_ratio ~ 0.74** is the 50% win-rate threshold (posterior
+median 0.739, mean 0.742 +/- 0.035, 95% CI **[0.680, 0.819]**), from
+120 games over 6 evaluations (base seed 20260703, converged at CI
+width 0.139):
+
+    ratio   wins/games  observed   posterior p_win (95% band)
+    0.400      19/20      0.95        0.96  [0.88, 1.00]
+    0.500      19/20      0.95        0.90  [0.80, 0.97]
+    0.690      14/20      0.70        0.60  [0.48, 0.71]
+    0.700       8/20      0.40        0.58  [0.46, 0.69]
+    0.740      11/20      0.55        0.50  [0.37, 0.62]
+    1.000       3/20      0.15        0.20  [0.08, 0.36]
+
+Run: `python3 sandboxes/sashimi/tools/difficulty_search.py --min-ratio
+0.1 --max-ratio 2.0 --curve 0.4,0.5,0.7,1.0 --state
+build/difficulty-search/state-postrecall.json`. Ratio-decision
+context (headless-verify gate): 0.5 is no longer the balance point —
+post-recall it is a ~90% comfortable-win setting; the exact balance
+point is ~0.74; the shipped default 1.0 is a ~20% stretch goal for
+the AI.
 
 > The 2026-07-03 baseline below (~6.1) is a historical record of the
 > pre-audit build only, kept for method reference and before/after
@@ -53482,9 +53604,13 @@ Burst-materialization — FIXED (C) as trace-exact, and this CORRECTS the
 audit's own trickle claim above: Unity's one-warning-per-tick pacing holds
 for wave 1 only; waves 2+ burst on their advance tick
 (`EnemySpawnSystem.cs:86,110`), which the port now reproduces. The 1.25 s
-telegraph is sim-side (C) but the CLIENT still draws it at materialization,
-not the true pre-spawn window — DEFERRED (PendingSpawn is component-bare;
-needs a dedicated export). collision_push substitution — FIXED (D): ally
+telegraph is sim-side (C) and the CLIENT draws the true pre-spawn window —
+FIXED (2026-07-06): dedicated bridge exports (`wasm_get_pending_*`,
+`wasm_get_telegraph_ticks`) surface each PendingSpawn warning's
+position/kind/countdown to the renderer (presentation only; PendingSpawn
+stays component-bare and invisible to the hero AI per the observability
+contract), and the client draws the SpawnWarning indicator across the
+whole 1.25 s window with a quick creature fade-in at materialization. collision_push substitution — FIXED (D): ally
 anti-encroachment steering ported into creature_steering; collision_push
 itself remains a registered no-op stub until `app.yaml` can be regenerated
 (extraction JSON absent on this machine). Heal-before-damage ordering —
@@ -54800,7 +54926,15 @@ static bool load_waves(Engine *engine) {
         if (sscanf(line, "tick_rate: %d", &tick_rate) == 1) continue;
         if (sscanf(line, "wave_delay_seconds: %f", &wave_delay_s) == 1) continue;
         if (sscanf(line, "  - wave: %d", &wnum) == 1) {
-            if (g_wave_count >= S_MAX_WAVES) break;
+            if (g_wave_count >= S_MAX_WAVES) {
+                /* Loud, not silent (root decision 17): a regenerated
+                   waves.yaml exceeding the cap must not quietly drop
+                   late waves. */
+                fprintf(stderr, "sashimi: waves.yaml exceeds S_MAX_WAVES "
+                        "(%d) — wave %d and later DROPPED; raise the "
+                        "cap\n", S_MAX_WAVES, wnum);
+                break;
+            }
             g_waves[g_wave_count].first_entry = entry_count;
             g_waves[g_wave_count].entry_count = 0;
             g_wave_count++;
@@ -54808,7 +54942,13 @@ static bool load_waves(Engine *engine) {
         }
         if (sscanf(line, "      - { template: %63[^,], x: %f, y: %f, delay_ticks: %d",
                    tname, &fx, &fy, &dticks) == 4) {
-            if (g_wave_count == 0 || entry_count >= S_MAX_WAVE_ENTRIES) continue;
+            if (g_wave_count == 0) continue;
+            if (entry_count >= S_MAX_WAVE_ENTRIES) {
+                fprintf(stderr, "sashimi: waves.yaml exceeds "
+                        "S_MAX_WAVE_ENTRIES (%d) — entry '%s' DROPPED; "
+                        "raise the cap\n", S_MAX_WAVE_ENTRIES, tname);
+                continue;
+            }
             WaveEntry *we = &g_wave_entries[entry_count];
             snprintf(we->template_name, S_TMPL_NAME, "%s", tname);
             we->x = fx; we->y = fy; we->delay_ticks = dticks;
@@ -57169,6 +57309,11 @@ static void recall_ability_pass(Engine *engine) {
                        sizeof(init), &init);
             st = ecs_get_mut_id(engine->world, e, g_ids.recall_state);
             if (!st) continue;
+            /* ecs_set_id moved the eagle to a new archetype — the hb
+               pointer captured above now points at the vacated table
+               row. Re-fetch before any later read. */
+            hb = ecs_get_id(engine->world, e, g_ids.hero_level_bonus);
+            if (!hb) continue;
         }
 
         /* Stationary tracking. */
@@ -57935,18 +58080,22 @@ static void sashimi_spawn_director(Engine *engine) {
  * spawn time multiplies creature HP by 1.4. The CreatureLevelUp table
  * stays loaded (data-faithful, unused at runtime). */
 
-/* Living (non-defeated) heroes currently on the field. */
-static int count_living_heroes(Engine *engine) {
-    int living = 0;
+/* Hero ENTITIES on the field — defeated included. Unity's gate is a
+ * plain entity count (UnitInitializationSystem.cs:27 WithAll<HeroId>,
+ * :55 CalculateEntityCount() > 1) and defeated heroes are never
+ * destroyed (they respawn in place), so a downed hero still counts.
+ * The old living-only filter under-scaled creatures that spawned
+ * during a hero-down window (fixed 2026-07-07, re-pinned). */
+static int count_hero_entities(Engine *engine) {
+    int heroes = 0;
     ecs_query_t *q = ecs_query(engine->world, {
         .terms = {{ .id = g_ids.hero }, { .id = g_ids.health }},
         .cache_kind = EcsQueryCacheNone });
     ecs_iter_t it = ecs_query_iter(engine->world, q);
     while (ecs_query_next(&it))
-        for (int i = 0; i < it.count; i++)
-            if (!is_defeated(engine, it.entities[i])) living++;
+        heroes += it.count;
     ecs_query_fini(q);
-    return living;
+    return heroes;
 }
 
 static void sashimi_delayed_spawn(Engine *engine) {
@@ -57979,7 +58128,7 @@ static void sashimi_delayed_spawn(Engine *engine) {
     }
     ecs_query_fini(q);
 
-    int living_heroes = n > 0 ? count_living_heroes(engine) : 0;
+    int hero_entities = n > 0 ? count_hero_entities(engine) : 0;
 
     for (int i = 0; i < n; i++) {
         ecs_entity_t spawned = engine_entity_spawn(engine, due[i].tmpl, NULL);
@@ -57988,7 +58137,7 @@ static void sashimi_delayed_spawn(Engine *engine) {
             ecs_set_id(engine->world, spawned, g_ids.position, sizeof(p), &p);
             /* Co-op difficulty at spawn time
              * (UnitInitializationSystem.cs:55-58). */
-            if (living_heroes > 1 &&
+            if (hero_entities > 1 &&
                 ecs_has_id(engine->world, spawned, g_ids.ai_steering)) {
                 CHealth *h = ecs_get_mut_id(engine->world, spawned, g_ids.health);
                 if (h) {
@@ -58004,10 +58153,11 @@ static void sashimi_delayed_spawn(Engine *engine) {
 
 /* ── level_up (Finalize) ────────────────────────────────────────────── */
 /* HeroLevelUpSystem: MatchStats.gems vs HeroLevelUp thresholds. On level
- * up: health multiplier rescales max HP, hero heals to full (live
- * behavior); damage multiplier applies at hit time; the per-level
- * pierce/bounce stats apply at fire time (weapon_fire REPLACES the
- * projectile's serialized base with them). */
+ * up: the health multiplier rescales max HP and current HP
+ * PROPORTIONALLY — no free heal (remediation #5; the old "heals to
+ * full" reading was a summary-doc error); damage multiplier applies at
+ * hit time; the per-level pierce/bounce stats apply at fire time
+ * (weapon_fire REPLACES the projectile's serialized base with them). */
 
 static void sashimi_level_up(Engine *engine) {
     if (is_simulation_paused(engine)) return;
@@ -59427,8 +59577,9 @@ TEST(iframed_hero_leaves_broadphase_for_window) {
 /* Live Unity creatures never level (the SpawnCount level driver has no
  * live writer: CreatureSpawnSystem.cs is entirely #if false), so gems must
  * not scale creature HP or damage. The only live scaling is the co-op
- * rule: >1 living hero at spawn time -> creature HP *= 1.4
- * (UnitInitializationSystem.cs:55-58). */
+ * rule: >1 hero ENTITY at spawn time (defeated included — Unity's gate
+ * is a plain HeroId entity count) -> creature HP *= 1.4
+ * (UnitInitializationSystem.cs:27,55-58). */
 static ecs_entity_t enqueue_pending(const char *tmpl, float x, float y) {
     static int seq = 0;
     char name[64];
@@ -59451,7 +59602,6 @@ TEST(coop_hp_multiplier_at_creature_spawn) {
     /* Two living heroes -> 1.4x HP at spawn. */
     ecs_entity_t h1 = spawn_at("HeroFrog", -9, -6);
     ecs_entity_t h2 = spawn_at("HeroEagle", -9, 6);
-    (void)h2;
     run("game_time");
     int before = count_named_prefix("CreatureSlimeOrange_");
     enqueue_pending("CreatureSlimeOrange", 5, 5);
@@ -59488,8 +59638,29 @@ TEST(coop_hp_multiplier_at_creature_spawn) {
     ASSERT(fabsf(h[1] - 42.0f) < 1e-3f); /* still 1.4x, not gem-leveled */
     ecs_delete(engine->world, slime);
 
-    /* One living hero (other defeated) -> no multiplier. */
+    /* A DEFEATED hero still counts: Unity's gate is a plain HeroId
+       entity count (UnitInitializationSystem.cs:27,55) and defeated
+       heroes are never destroyed — creatures spawned during a
+       hero-down window still get 1.4x (living-only gate was a bug,
+       fixed 2026-07-07). */
     ecs_add_id(engine->world, h1, comp("Defeated"));
+    enqueue_pending("CreatureSlimeOrange", 5, 5);
+    run("delayed_spawn");
+    list = engine_entity_list(engine);
+    slime = 0;
+    for (int i = 0; i < list.count; i++)
+        if (list.items[i].name &&
+            strncmp(list.items[i].name, "CreatureSlimeOrange_", 20) == 0)
+            slime = list.items[i].id;
+    engine_entity_list_free(&list);
+    h = (const float *)get(slime, "Health");
+    ASSERT(fabsf(h[0] - 42.0f) < 1e-3f); /* 30 * 1.4: downed hero counts */
+    ASSERT(fabsf(h[1] - 42.0f) < 1e-3f);
+    ecs_delete(engine->world, slime);
+
+    /* Only one hero ENTITY on the field -> no multiplier (Unity solo:
+       one HeroId entity). */
+    ecs_delete(engine->world, h2);
     enqueue_pending("CreatureSlimeOrange", 5, 5);
     run("delayed_spawn");
     list = engine_entity_list(engine);
@@ -61237,12 +61408,19 @@ TEST(headless_full_game_to_completion) {
      *    multiplier, :143-148) reshuffles the deterministic run back to
      *    VICTORY at 10801, gems 102 -> 150, kills 265 -> 440. Observed
      *    and re-pinned, never tuned.
-     *  - 2026-07 Eagle FeatherRecall batch (this pin): the recall loop
+     *  - 2026-07 Eagle FeatherRecall batch: the recall loop
      *    lands (spent feathers recalled as homing projectiles that
      *    damage creatures en route, +50% stationary-recall haste), so
      *    the AI eagle's feathers now recycle instead of resting inert.
      *    VICTORY at 10801, gems 150 -> 196, kills 440 -> 490. Observed
-     *    and re-pinned, never tuned. */
+     *    and re-pinned, never tuned.
+     *  - 2026-07 co-op gate fix (this pin): the 1.4x creature-HP gate
+     *    now counts hero ENTITIES (defeated included), matching
+     *    Unity's plain HeroId entity count
+     *    (UnitInitializationSystem.cs:27,55) — the old living-only
+     *    filter under-scaled creatures spawned during hero-down
+     *    windows. VICTORY at 10801, gems 196 -> 175, kills 490 -> 487.
+     *    Observed and re-pinned, never tuned. */
     ASSERT(strncmp(engine->game_over_message, "Victory", 7) == 0);
     ASSERT_EQ(ticks, 10801);
     teardown();
@@ -64644,3 +64822,180 @@ def main():
 
 if __name__ == "__main__":
     main()
+#!/usr/bin/env node
+/* Full-game WASM throughput profiler for the sashimi module.
+ *
+ * Runs one deterministic game flat-out (no pacing) in Node and reports
+ * per-tick wall-time distribution against the simulation budgets:
+ *   240 Hz (4.167 ms/tick) — the 4x-speed sim target
+ *    60 Hz (16.67 ms/tick) — the real-time floor
+ * per 1800-tick phase (30 s of game time) with unit-count correlation,
+ * plus the game outcome so the run can be checked against the
+ * acceptance pin (seed 12345 + headless-verify = VICTORY at tick 10801,
+ * gems 196, kills 490).
+ *
+ * Usage (from the project root, after ./tools/build-wasm.sh sashimi):
+ *   node sandboxes/sashimi/tools/profile_runner.js \
+ *       [--seed 12345] [--config headless-verify] [--build-dir DIR] [--json]
+ */
+'use strict';
+
+const path = require('path');
+const { performance } = require('perf_hooks');
+
+const BUDGET_240 = 1000 / 240;
+const BUDGET_60 = 1000 / 60;
+const PHASE_TICKS = 1800;
+const SAFETY_CAP = 200000;
+
+function parseArgs(argv) {
+    const args = { seed: 12345, config: 'headless-verify',
+                   buildDir: null, json: false };
+    for (let i = 2; i < argv.length; i++) {
+        const a = argv[i];
+        if (a === '--seed') args.seed = parseInt(argv[++i], 10);
+        else if (a === '--config') args.config = argv[++i];
+        else if (a === '--build-dir') args.buildDir = argv[++i];
+        else if (a === '--json') args.json = true;
+        else { console.error(`unknown arg: ${a}`); process.exit(2); }
+    }
+    return args;
+}
+
+function pctile(sorted, p) {
+    if (!sorted.length) return 0;
+    const k = Math.min(sorted.length - 1,
+                       Math.max(0, Math.round(p / 100 * (sorted.length - 1))));
+    return sorted[k];
+}
+
+async function main() {
+    const args = parseArgs(process.argv);
+    const root = path.join(__dirname, '../../..');
+    const buildDir = args.buildDir || path.join(root, 'build/wasm-sashimi');
+    process.chdir(buildDir);      /* .data package resolves relative to cwd */
+    const factory = require(path.join(buildDir, 'flecs-ecs.js'));
+
+    const logLines = [];
+    const cfg = {
+        print: (t) => logLines.push(String(t)),
+        printErr: (t) => logLines.push(String(t)),
+    };
+    cfg.preRun = [() => { cfg.ENV.FLECS_SEED = String(args.seed); }];
+    const M = await factory(cfg);
+
+    const e = {
+        init: M.cwrap('wasm_init_with_config', 'number', ['string']),
+        tick: M.cwrap('wasm_tick', 'number', []),
+        count: M.cwrap('wasm_get_unit_count', 'number', []),
+        gameTick: M.cwrap('wasm_get_game_tick', 'number', []),
+        gems: M.cwrap('wasm_get_gems', 'number', []),
+        kills: M.cwrap('wasm_get_kills', 'number', []),
+        isGameOver: M.cwrap('wasm_is_game_over', 'number', []),
+        isVictory: M.cwrap('wasm_is_victory', 'number', []),
+        message: M.cwrap('wasm_get_game_over_message', 'string', []),
+    };
+    if (e.init(args.config) !== 1) {
+        throw new Error(`wasm_init_with_config(${args.config}) failed:\n` +
+                        logLines.slice(-20).join('\n'));
+    }
+
+    const tickMs = new Float64Array(SAFETY_CAP);
+    const unitsPerPhase = [];
+    let phaseUnits = 0, phaseSamples = 0;
+    let n = 0;
+    const wall0 = performance.now();
+    while (!e.isGameOver() && n < SAFETY_CAP) {
+        const t0 = performance.now();
+        e.tick();
+        tickMs[n++] = performance.now() - t0;
+        if (n % 60 === 0) {              /* density sample once per game-second */
+            phaseUnits += e.count();
+            phaseSamples++;
+        }
+        if (n % PHASE_TICKS === 0) {
+            unitsPerPhase.push(phaseSamples ? phaseUnits / phaseSamples : 0);
+            phaseUnits = 0;
+            phaseSamples = 0;
+        }
+    }
+    unitsPerPhase.push(phaseSamples ? phaseUnits / phaseSamples : 0);
+    const wallMs = performance.now() - wall0;
+
+    const all = Array.from(tickMs.subarray(0, n)).sort((a, b) => a - b);
+    const over240 = all.filter((v) => v > BUDGET_240).length;
+    const over60 = all.filter((v) => v > BUDGET_60).length;
+
+    const phases = [];
+    for (let s = 0; s < n; s += PHASE_TICKS) {
+        const slice = Array.from(tickMs.subarray(s, Math.min(s + PHASE_TICKS, n)));
+        const sum = slice.reduce((a, b) => a + b, 0);
+        const sorted = slice.slice().sort((a, b) => a - b);
+        phases.push({
+            ticks: `${s + 1}-${s + slice.length}`,
+            avg_ms: +(sum / slice.length).toFixed(3),
+            p95_ms: +pctile(sorted, 95).toFixed(3),
+            max_ms: +sorted[sorted.length - 1].toFixed(3),
+            ticks_per_sec: Math.round(slice.length * 1000 / sum),
+            avg_units: Math.round(unitsPerPhase[Math.floor(s / PHASE_TICKS)] || 0),
+        });
+    }
+
+    const report = {
+        seed: args.seed,
+        config: args.config,
+        ticks: n,
+        wall_s: +(wallMs / 1000).toFixed(2),
+        ticks_per_sec: Math.round(n * 1000 / wallMs),
+        tick_ms: {
+            p50: +pctile(all, 50).toFixed(3),
+            p95: +pctile(all, 95).toFixed(3),
+            p99: +pctile(all, 99).toFixed(3),
+            max: +all[all.length - 1].toFixed(3),
+        },
+        budget_240hz: {
+            limit_ms: +BUDGET_240.toFixed(3),
+            over: over240,
+            pct_within: +(100 * (n - over240) / n).toFixed(2),
+        },
+        budget_60hz: {
+            limit_ms: +BUDGET_60.toFixed(3),
+            over: over60,
+            pct_within: +(100 * (n - over60) / n).toFixed(2),
+        },
+        outcome: {
+            victory: e.isVictory() === 1,
+            final_tick: e.gameTick(),
+            gems: e.gems(),
+            kills: e.kills(),
+            message: e.message(),
+        },
+        phases,
+    };
+
+    if (args.json) {
+        process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+        return;
+    }
+    const r = report;
+    console.log(`seed ${r.seed}  config ${r.config}`);
+    console.log(`ticks ${r.ticks}  wall ${r.wall_s}s  ` +
+                `throughput ${r.ticks_per_sec} ticks/sec ` +
+                `(target 240: ${r.ticks_per_sec >= 240 ? 'PASS' : 'FAIL'} ` +
+                `x${(r.ticks_per_sec / 240).toFixed(1)})`);
+    console.log(`tick ms  p50 ${r.tick_ms.p50}  p95 ${r.tick_ms.p95}  ` +
+                `p99 ${r.tick_ms.p99}  max ${r.tick_ms.max}`);
+    console.log(`budget 240Hz (${r.budget_240hz.limit_ms}ms): ` +
+                `${r.budget_240hz.pct_within}% within, ` +
+                `${r.budget_240hz.over} over`);
+    console.log(`outcome: ${r.outcome.message}  (tick ${r.outcome.final_tick},` +
+                ` gems ${r.outcome.gems}, kills ${r.outcome.kills})`);
+    console.log('phases (1800 ticks = 30s game time):');
+    for (const p of r.phases) {
+        console.log(`  ${p.ticks.padStart(11)}  avg ${p.avg_ms}ms  ` +
+                    `p95 ${p.p95_ms}ms  max ${p.max_ms}ms  ` +
+                    `${p.ticks_per_sec} t/s  ~${p.avg_units} units`);
+    }
+}
+
+main().catch((err) => { console.error(err); process.exit(1); });
