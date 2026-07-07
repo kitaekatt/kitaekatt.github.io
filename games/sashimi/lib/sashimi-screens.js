@@ -97,18 +97,35 @@ var SashimiScreens = (function() {
         function activateFocused() {
             if (focusables[focusIndex]) focusables[focusIndex].activate();
         }
+        function focusIndexOf(node) {
+            for (var f = 0; f < focusables.length; f++)
+                if (focusables[f].el === node) return f;
+            return -1;
+        }
         function bindFocusable(node, activate) {
-            var entry = { el: node, activate: activate };
-            focusables.push(entry);
-            node.addEventListener('click', function(e) {
-                e.preventDefault();
-                setFocus(focusables.indexOf(entry));
-                activate();
-            });
-            node.addEventListener('pointerenter', function() {
-                setFocus(focusables.indexOf(entry));
-            });
-            return entry;
+            focusables.push({ el: node, activate: activate });
+            if (!node.dataset.control) node.dataset.control =
+                (node.textContent || '').trim().toLowerCase()
+                    .replace(/\s+/g, '-');
+            /* Screens re-register their focusables on every show;
+               DOM listeners attach once and dispatch through the
+               CURRENT registration (duplicate listeners double-fired
+               activations — one card click picked both P1 and P2). */
+            node.__activate = activate;
+            if (!node.__focusBound) {
+                node.__focusBound = true;
+                node.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    var i = focusIndexOf(node);
+                    if (i < 0) return;
+                    setFocus(i);
+                    node.__activate();
+                });
+                node.addEventListener('pointerenter', function() {
+                    var i = focusIndexOf(node);
+                    if (i >= 0) setFocus(i);
+                });
+            }
         }
 
         document.addEventListener('keydown', function(e) {
@@ -172,8 +189,10 @@ var SashimiScreens = (function() {
         var select = makeScreen('select', 'select.png');
         var frogCard = el('button', 'hero-card', select.stage);
         frogCard.style.cssText = pct(CARD_FROG);
+        frogCard.dataset.control = 'pick-frog';   /* cards have no text */
         var eagleCard = el('button', 'hero-card', select.stage);
         eagleCard.style.cssText = pct(CARD_EAGLE);
+        eagleCard.dataset.control = 'pick-eagle';
         var frogBadge = el('div', 'pick-badge', frogCard);
         var eagleBadge = el('div', 'pick-badge', eagleCard);
         var middle = el('div', 'pick-status', select.stage);
@@ -220,12 +239,17 @@ var SashimiScreens = (function() {
             refreshSelect();
         }
 
-        resetBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
+        function resetPicks() {
             pick[1] = 0;
             pick[2] = 0;
             refreshSelect();
+        }
+
+        resetBtn.dataset.control = 'reset-picks';
+        resetBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            resetPicks();
         });
 
         /* ── RESULTS (VictoryVT/DefeatVT over the shipped art) ────── */
@@ -332,12 +356,59 @@ var SashimiScreens = (function() {
 
         hide();
 
+        /* ── CLI control surface (rt-control.js / tools/client.py) ──
+           state() reports what a player could see; press() activates
+           a control through the SAME path as a pointer click. */
+        function state() {
+            return {
+                screen: current,
+                picks: { p1: pick[1], p2: pick[2] },
+                buttons: focusables.map(function(f, i) {
+                    return {
+                        name: f.el.dataset.control,
+                        label: (f.el.textContent || '').trim(),
+                        disabled: !!f.el.disabled,
+                        focused: i === focusIndex,
+                    };
+                }).concat(current === 'select' && pick[1] ? [{
+                    name: 'reset-picks',
+                    label: 'reset picks',
+                    disabled: false,
+                    focused: false,
+                }] : []),
+            };
+        }
+
+        function press(name) {
+            var want = String(name || '').toLowerCase();
+            for (var i = 0; i < focusables.length; i++) {
+                var f = focusables[i];
+                var label = (f.el.textContent || '').trim().toLowerCase();
+                if (f.el.dataset.control !== want && label !== want)
+                    continue;
+                if (f.el.disabled)
+                    throw new Error("button '" + name + "' is disabled");
+                setFocus(i);
+                f.activate();
+                return { pressed: f.el.dataset.control, screen: current };
+            }
+            /* reset-picks is pointer-only (not in the focus ring) */
+            if (want === 'reset-picks' && current === 'select') {
+                resetPicks();
+                return { pressed: 'reset-picks', screen: current };
+            }
+            throw new Error("no button '" + name + "' on screen '" +
+                            current + "'");
+        }
+
         return {
             show: show,
             hide: hide,
             poll: poll,
             current: function() { return current; },
             picks: function() { return pick; },
+            state: state,
+            press: press,
         };
     }
 

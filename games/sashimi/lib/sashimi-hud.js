@@ -37,7 +37,11 @@ var SashimiHUD = (function() {
                 '\ntime  ' + mmss(d.timeSec) + ' / ' + mmss(d.victorySec) +
                 '\nkills ' + d.kills + '   gems ' + d.gems +
                 '\n' +
-                '\nfps      ' + d.fps.toFixed(0) +
+                '\nrender   ' + d.rafFps.toFixed(0) + ' fps' +
+                '\nsim      ' + d.simHz.toFixed(0) + '/' + d.simTarget +
+                    ' Hz' + (d.simHz < d.simTarget - 2
+                        ? ' (SLOW x' + (d.simHz / d.simTarget).toFixed(2) + ')'
+                        : '') +
                 '\ntick ms  ' + d.tickMs.toFixed(2) +
                     ' (engine ' + d.engineMs.toFixed(2) + ')' +
                 '\ndraw ms  ' + d.drawMs.toFixed(2) +

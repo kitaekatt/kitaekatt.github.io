@@ -16,7 +16,14 @@
  *       statsEvery: 250,
  *   });
  *   loop.start(); loop.stop();
- *   loop.stats — { fps, tickMs, renderMs, frameMs, steps, droppedMs }
+ *   loop.stats — { fps, tickMs, renderMs, frameMs, steps, droppedMs,
+ *                  rafFps, simHz }
+ *
+ * fps is an EMA of instantaneous frame rate (smooth but laggy); rafFps and
+ * simHz are exact counts over the last stats window: frames actually
+ * rendered per second and simulation ticks actually executed per second.
+ * simHz < tickHz means the loop is dropping sim time (game slower than
+ * real time); rafFps < display rate means rendering is the bottleneck.
  */
 var RTLoop = (function() {
     function init(cfg) {
@@ -30,15 +37,20 @@ var RTLoop = (function() {
         var lastStats = 0;
 
         /* Exponential moving averages for the HUD */
-        var stats = { fps: 0, tickMs: 0, renderMs: 0, frameMs: 0, steps: 0, droppedMs: 0 };
+        var stats = { fps: 0, tickMs: 0, renderMs: 0, frameMs: 0, steps: 0, droppedMs: 0,
+                      rafFps: 0, simHz: 0 };
         var EMA = 0.1;
         function ema(prev, v) { return prev === 0 ? v : prev + (v - prev) * EMA; }
+
+        /* Exact per-window counters behind rafFps/simHz */
+        var winFrames = 0;
+        var winTicks = 0;
 
         function frame(now) {
             if (!running) return;
             requestAnimationFrame(frame);
 
-            if (last === 0) last = now;
+            if (last === 0) { last = now; lastStats = now; }
             var frameDt = now - last;
             last = now;
             /* Tab-switch / long-stall guard: never try to simulate more
@@ -72,10 +84,17 @@ var RTLoop = (function() {
             stats.frameMs = ema(stats.frameMs, frameDt);
             stats.fps = stats.frameMs > 0 ? 1000 / stats.frameMs : 0;
             stats.steps = steps;
+            winFrames++;
+            winTicks += steps;
 
-            if (cfg.onStats && now - lastStats >= statsEvery) {
+            if (now - lastStats >= statsEvery) {
+                var winMs = now - lastStats;
+                stats.rafFps = winFrames * 1000 / winMs;
+                stats.simHz = winTicks * 1000 / winMs;
+                winFrames = 0;
+                winTicks = 0;
                 lastStats = now;
-                cfg.onStats(stats);
+                if (cfg.onStats) cfg.onStats(stats);
             }
         }
 
@@ -84,6 +103,8 @@ var RTLoop = (function() {
             running = true;
             last = 0;
             acc = 0;
+            winFrames = 0;
+            winTicks = 0;
             requestAnimationFrame(frame);
         }
 

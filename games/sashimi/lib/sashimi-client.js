@@ -574,7 +574,9 @@ var SashimiClient = (function() {
                     timeSec: engine.gameTick() / tickRate,
                     victorySec: engine.victoryTicks() / tickRate,
                     kills: engine.kills(),
-                    fps: s.fps,
+                    rafFps: s.rafFps,
+                    simHz: s.simHz,
+                    simTarget: tickRate,
                     tickMs: s.tickMs,
                     engineMs: engineMs,
                     drawMs: s.renderMs,
@@ -588,6 +590,74 @@ var SashimiClient = (function() {
             statsEvery: 250,
         });
 
+        /* CLI control channel (rt-control.js -> tools/serve-client.py
+           relay -> tools/client.py): state mirrors what the player
+           sees; press routes through the same activation paths as
+           pointer/keyboard (screens.press / setPaused). Inert unless
+           served by serve-client.py on localhost. */
+        var control = RTControl.init({
+            state: function() {
+                var hero = firstHero();
+                var s = loop.stats;
+                var actions = screen === 'playing'
+                    ? [{ name: paused ? 'resume' : 'pause',
+                         label: paused ? 'resume (P)' : 'pause (P)',
+                         disabled: engine.isGameOver() === 1,
+                         focused: false }]
+                    : screens.state().buttons;
+                return {
+                    sandbox: 'sashimi',
+                    screen: screen,
+                    paused: paused,
+                    gameOver: engine.isGameOver() === 1,
+                    actions: actions,
+                    ui: screen === 'playing' ? null : screens.state(),
+                    game: {
+                        tick: engine.gameTick(),
+                        timeSec: +(engine.gameTick() /
+                                   engine.tickRate()).toFixed(1),
+                        wave: engine.wave(),
+                        waveCount: engine.waveCount(),
+                        gems: engine.gems(),
+                        kills: engine.kills(),
+                        level: engine.heroLevel(),
+                        heroHp: hero ? +hero.health.toFixed(1) : 0,
+                        heroMaxHp: hero ? hero.maxHealth : 0,
+                        units: units.length,
+                        players: input.players().map(function(p) {
+                            return 'P' + p.clientId;
+                        }),
+                    },
+                    perf: {
+                        rafFps: +s.rafFps.toFixed(1),
+                        simHz: +s.simHz.toFixed(1),
+                        tickMs: +s.tickMs.toFixed(3),
+                        engineMs: +engineMs.toFixed(3),
+                        renderMs: +s.renderMs.toFixed(3),
+                        droppedMs: Math.round(s.droppedMs),
+                    },
+                    visibility: document.visibilityState,
+                };
+            },
+            commands: {
+                press: function(args) {
+                    var name = String(args.button || '').toLowerCase();
+                    if (screen === 'playing') {
+                        if (name === 'pause' || name === 'resume') {
+                            if (engine.isGameOver() === 1)
+                                throw new Error('game is over');
+                            setPaused(name === 'pause');
+                            return { pressed: name, paused: paused };
+                        }
+                        throw new Error("no button '" + name +
+                            "' while playing (available: " +
+                            (paused ? 'resume' : 'pause') + ')');
+                    }
+                    return screens.press(name);
+                },
+            },
+        });
+
         /* Boot on the title screen; the engine world is ready but holds
            until startGame ticks it. Title interaction doubles as the
            audio unlock gesture. */
@@ -597,7 +667,8 @@ var SashimiClient = (function() {
 
         loop.start();
         return { loop: loop, engine: engine, screens: screens,
-                 start: startGame, restart: playAgain, audio: audio };
+                 start: startGame, restart: playAgain, audio: audio,
+                 control: control };
     }
 
     return { start: start };
