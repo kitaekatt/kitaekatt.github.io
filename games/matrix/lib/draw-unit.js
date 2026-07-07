@@ -75,20 +75,32 @@ function _interpFacing(u, tRotate) {
     return prevDeg + diff * tRotate;
 }
 
-function drawUnit(ctx, u, origin, CELL, phases) {
+function drawUnit(gfx, u, origin, CELL, phases) {
     const { tMove, tRotate, tTag, tTransform } = phases;
     const { ix, iy } = _interpPosition(u, tMove, tTag);
     const size = Math.floor(CELL * UNIT_SCALE);
     if (size < 2) return;
-    const pad = (CELL - size) / 2;
-    const px = origin.offX + (ix - 1) * CELL + pad;
-    const py = origin.offY + (iy - 1) * CELL + pad;
-    const deg = _interpFacing(u, tRotate);
+    // Unit center in world (canvas) space. The old code did
+    // translate(px + size/2, py + size/2) with px = offX + (ix-1)*CELL + pad and
+    // pad = (CELL-size)/2, so the center reduces to offX + (ix-1)*CELL + CELL/2,
+    // independent of size.
+    const cx0 = origin.offX + (ix - 1) * CELL + CELL / 2;
+    const cy0 = origin.offY + (iy - 1) * CELL + CELL / 2;
+    const rad = _interpFacing(u, tRotate) * Math.PI / 180;
+    const cos = Math.cos(rad), sin = Math.sin(rad);
 
-    ctx.save();
-    ctx.translate(px + size / 2, py + size / 2);
-    ctx.rotate(deg * Math.PI / 180);
-    const half = size / 2;
+    // Blit a sprite whose center sits at local offset (dx, dy) in the unit's
+    // rotated frame (after ctx.rotate(rad) in the old code), scaled by `scale`
+    // and drawn at `alpha`. Maps the old translate(cx0,cy0).rotate(rad).
+    // scale(scale).drawSprite(-half,-half,size) exactly: the local center (dx,dy)
+    // rotates into world space, the sprite itself carries the same rotation, and
+    // scale becomes the drawn size (transform draws use dx=dy=0, so scale-about-
+    // origin only affects size; offset draws use scale=1).
+    function blit(sprite, tint, dx, dy, scale, alpha) {
+        const wcx = cx0 + dx * cos - dy * sin;
+        const wcy = cy0 + dx * sin + dy * cos;
+        drawSprite(gfx, sprite, tint, wcx, wcy, size * scale, rad, alpha);
+    }
 
     const isAnimating = (t) => t > 0 && t < 1;
     const isTransformed = u.transformed && isAnimating(tTransform);
@@ -96,20 +108,10 @@ function drawUnit(ctx, u, origin, CELL, phases) {
 
     // Ship body — during transform, old body shrinks out (lose) and new body grows in (gain).
     if (isTransformed) {
-        ctx.save();
-        ctx.globalAlpha = 1 - tTransform;
-        const sLose = 1 - 0.9 * tTransform;
-        ctx.scale(sLose, sLose);
-        drawSprite(ctx, SPRITES.ship, 'lose', -half, -half, size);
-        ctx.restore();
-        ctx.save();
-        ctx.globalAlpha = tTransform;
-        const sGain = 0.1 + 0.9 * tTransform;
-        ctx.scale(sGain, sGain);
-        drawSprite(ctx, SPRITES.ship, 'gain', -half, -half, size);
-        ctx.restore();
+        blit(SPRITES.ship, 'lose', 0, 0, 1 - 0.9 * tTransform, 1 - tTransform);
+        blit(SPRITES.ship, 'gain', 0, 0, 0.1 + 0.9 * tTransform, tTransform);
     } else {
-        drawSprite(ctx, SPRITES.ship, 'idle', -half, -half, size);
+        blit(SPRITES.ship, 'idle', 0, 0, 1, 1);
     }
 
     // Capability bitmap. dx/dy shift the sprite in the unit's local frame
@@ -122,19 +124,11 @@ function drawUnit(ctx, u, origin, CELL, phases) {
         if (!sprite) return;
 
         if (gained && isAnimating(tTransform)) {
-            ctx.save(); ctx.globalAlpha = tTransform;
-            const s = 0.1 + 0.9 * tTransform;
-            ctx.scale(s, s);
-            drawSprite(ctx, sprite, 'gain', -half, -half, size);
-            ctx.restore();
+            blit(sprite, 'gain', 0, 0, 0.1 + 0.9 * tTransform, tTransform);
         } else if (lost && isAnimating(tTransform)) {
-            ctx.save(); ctx.globalAlpha = 1 - tTransform;
-            const s = 1 - 0.9 * tTransform;
-            ctx.scale(s, s);
-            drawSprite(ctx, sprite, 'lose', -half, -half, size);
-            ctx.restore();
+            blit(sprite, 'lose', 0, 0, 1 - 0.9 * tTransform, 1 - tTransform);
         } else if (has) {
-            drawSprite(ctx, sprite, activeTint, -half + dx, -half + dy, size);
+            blit(sprite, activeTint, dx, dy, 1, 1);
         }
     }
 
@@ -162,11 +156,10 @@ function drawUnit(ctx, u, origin, CELL, phases) {
         if (hasFwdRange) {
             drawCap(CAP.TagFwdAtRange, 'tagFwdAtRange', fwdTint, 0, -lungeFwd);
         } else if (SPRITES.tagForward) {
-            drawSprite(ctx, SPRITES.tagForward, fwdTint, -half, -half - lungeFwd, size);
+            // Old: drawSprite at (-half, -half - lungeFwd) => local center (0, -lungeFwd).
+            blit(SPRITES.tagForward, fwdTint, 0, -lungeFwd, 1, 1);
         }
     } else if (hasFwdRange) {
         drawCap(CAP.TagFwdAtRange, 'tagFwdAtRange', 'idle');
     }
-
-    ctx.restore();
 }

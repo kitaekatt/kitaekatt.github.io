@@ -41,12 +41,16 @@ canvas { display: block; }
     <div id="transformCount"></div>
 </div>
 <canvas id="c"></canvas>
-<div id="version">v (bfa0c76)</div>
+<div id="version">v (ec7fd00)</div>
 
 <!-- Shared render code (CLAUDE.md "Browser Client Rendering Policy") -->
 <script src="lib/render.js"></script>
 <script src="lib/sprites.js"></script>
 <script src="lib/draw-unit.js"></script>
+<!-- Engine-level Gfx surface (engine/clients/lib). build-wasm.sh merges the
+     engine runtime into the bundle lib/ alongside the sandbox render code, so
+     the relative lib/ path resolves both locally and on GitHub Pages. -->
+<script src="lib/rt-render.js"></script>
 <script>
 // CLIENT-PARITY: ignore updateViewUnits  — reads WASM cwrap exports, no REST equivalent
 // CLIENT-PARITY: ignore updatePendingSpawns  — reads WASM cwrap exports
@@ -80,7 +84,18 @@ let animDurationMs = TARGET_TURN_MS;
 let turnTransformCount = 0;
 
 const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
+// Rendering goes through the shared WebGL Gfx surface (surface-only path; this
+// client keeps its own turn-based phase-animation loop and view state). No 2D
+// fallback: WebGL-unavailable fails loudly and aborts bootstrap (root CLAUDE.md
+// decision 12).
+const gfx = RTRender.createSurface({
+    canvas: canvas,
+    onUnsupported: function(msg) {
+        const el = document.getElementById('loading');
+        el.style.display = '';
+        el.textContent = msg;
+    },
+});
 
 // ── View units (WASM-export side) ───────────────────────────────────
 // The WASM exports today provide: x, y, facing, caps, transformed, stunned,
@@ -179,11 +194,13 @@ function render(timestamp) {
     }
 
     CELL = resizeCanvas(canvas, mapW, mapH, CELL_MIN);
-    const origin = drawGrid(ctx, canvas, mapW, mapH, CELL, COL);
+    gfx.begin(canvas.width, canvas.height);
+    const origin = drawGrid(gfx, canvas, mapW, mapH, CELL, COL);
     const phases = { tMove, tRotate, tTag, tTransform };
     for (const eid of Object.keys(viewUnits))
-        drawUnit(ctx, viewUnits[eid], origin, CELL, phases);
-    if (!playing) drawPendingSpawns(ctx, origin, pendingSpawns, CELL, COL);
+        drawUnit(gfx, viewUnits[eid], origin, CELL, phases);
+    if (!playing) drawPendingSpawns(gfx, origin, pendingSpawns, CELL, COL);
+    gfx.flush();
 
     document.getElementById('turnLabel').textContent = `Turn: ${engine.get_turn()}`;
     document.getElementById('unitCount').textContent = `Units: ${engine.get_unit_count()}`;
@@ -332,10 +349,14 @@ async function init() {
     requestAnimationFrame(render);
 }
 
-const script = document.createElement('script');
-script.src = './flecs-ecs.js';
-script.onload = init;
-document.head.appendChild(script);
+// Abort bootstrap if the Gfx surface failed (WebGL unavailable). onUnsupported
+// has already painted the explanation over the loading overlay.
+if (gfx) {
+    const script = document.createElement('script');
+    script.src = './flecs-ecs.js';
+    script.onload = init;
+    document.head.appendChild(script);
+}
 </script>
 </body>
 </html>

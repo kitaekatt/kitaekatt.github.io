@@ -48,6 +48,46 @@ function hexToRgb(hex) {
     return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
 }
 
+// Hex string -> [r, g, b] as 0..1 floats. The Gfx surface takes float rgba,
+// not CSS color strings.
+function hexToRgbF(hex) {
+    const p = hexToRgb(hex);
+    return [p.r / 255, p.g / 255, p.b / 255];
+}
+
+// Dashed polyline through the Gfx surface: no ctx.setLineDash on the WebGL
+// surface, so the dash pattern is walked along the path and each "on" span is
+// a gfx.line segment. `pts` is a list of {x,y}; when `closed`, the last point
+// connects back to the first and the dash phase carries continuously across
+// every corner (matching canvas strokeRect, which strokes the rectangle as one
+// dashed subpath). Butt-capped segments leave sub-pixel gaps at corners — with
+// a 2px stroke on a small spawn marker this is not perceptible, and the dashes
+// break the outline regardless.
+function drawDashedPath(gfx, pts, closed, width, dash, r, g, b, a) {
+    const on = dash[0], off = dash[1];
+    const segCount = closed ? pts.length : pts.length - 1;
+    let drawnOn = true;      // dash pattern starts "on"
+    let rem = on;            // length remaining in the current phase span
+    for (let i = 0; i < segCount; i++) {
+        const p0 = pts[i], p1 = pts[(i + 1) % pts.length];
+        const dx = p1.x - p0.x, dy = p1.y - p0.y;
+        const len = Math.hypot(dx, dy);
+        if (len === 0) continue;
+        const ux = dx / len, uy = dy / len;
+        let pos = 0;
+        while (pos < len - 1e-6) {
+            const step = Math.min(rem, len - pos);
+            if (drawnOn) {
+                gfx.line(p0.x + ux * pos, p0.y + uy * pos,
+                         p0.x + ux * (pos + step), p0.y + uy * (pos + step),
+                         width, false, r, g, b, a);
+            }
+            pos += step; rem -= step;
+            if (rem <= 1e-6) { drawnOn = !drawnOn; rem = drawnOn ? on : off; }
+        }
+    }
+}
+
 function lerpColor(a, b, t) {
     const pa = hexToRgb(a), pb = hexToRgb(b);
     return `rgb(${Math.round(pa.r + (pb.r - pa.r) * t)},`
@@ -55,45 +95,47 @@ function lerpColor(a, b, t) {
          + `${Math.round(pa.b + (pb.b - pa.b) * t)})`;
 }
 
-// Paint background, draw grid, return origin offsets {offX, offY} for cell math.
-function drawGrid(ctx, canvas, mapW, mapH, CELL, colors) {
-    ctx.fillStyle = colors.background;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+// Clear background, draw grid, return origin offsets {offX, offY} for cell math.
+// The client must call gfx.begin(...) before this and gfx.flush() after the
+// frame; drawGrid issues the background clear (must precede all batched draws)
+// and the grid lines.
+function drawGrid(gfx, canvas, mapW, mapH, CELL, colors) {
+    const bg = hexToRgbF(colors.background);
+    gfx.clear(bg[0], bg[1], bg[2]);
     const offX = Math.floor((canvas.width - mapW * CELL) / 2);
     const offY = Math.floor((canvas.height - mapH * CELL) / 2) + 20;
-    ctx.strokeStyle = colors.grid;
-    ctx.lineWidth = 0.5;
+    const g = hexToRgbF(colors.grid);
     for (let x = 0; x <= mapW; x++) {
-        ctx.beginPath();
-        ctx.moveTo(offX + x * CELL, offY);
-        ctx.lineTo(offX + x * CELL, offY + mapH * CELL);
-        ctx.stroke();
+        gfx.line(offX + x * CELL, offY, offX + x * CELL, offY + mapH * CELL,
+                 0.5, false, g[0], g[1], g[2], 1);
     }
     for (let y = 0; y <= mapH; y++) {
-        ctx.beginPath();
-        ctx.moveTo(offX, offY + y * CELL);
-        ctx.lineTo(offX + mapW * CELL, offY + y * CELL);
-        ctx.stroke();
+        gfx.line(offX, offY + y * CELL, offX + mapW * CELL, offY + y * CELL,
+                 0.5, false, g[0], g[1], g[2], 1);
     }
     return { offX, offY };
 }
 
 // Hollow green dashed marker for spawn requests waiting for the next turn.
-function drawPendingSpawns(ctx, origin, pendingSpawns, CELL, colors) {
+function drawPendingSpawns(gfx, origin, pendingSpawns, CELL, colors) {
     if (!pendingSpawns || pendingSpawns.length === 0) return;
     const size = Math.max(4, CELL * 0.5);
     const offset = (CELL - size) / 2;
+    const g = hexToRgbF(colors.tint_transform_gain);
     for (const p of pendingSpawns) {
         if (p.x <= 0 || p.y <= 0) continue;
         const px = origin.offX + (p.x - 1) * CELL + offset;
         const py = origin.offY + (p.y - 1) * CELL + offset;
-        ctx.save();
-        ctx.fillStyle = colors.tint_transform_gain; ctx.globalAlpha = 0.3;
-        ctx.fillRect(px, py, size, size);
-        ctx.globalAlpha = 0.9; ctx.strokeStyle = colors.tint_transform_gain;
-        ctx.lineWidth = 2; ctx.setLineDash([3, 3]);
-        ctx.strokeRect(px, py, size, size);
-        ctx.setLineDash([]); ctx.restore();
+        // Translucent fill (was globalAlpha 0.3 + fillRect).
+        gfx.rect(px, py, size, size, g[0], g[1], g[2], 0.3);
+        // Dashed outline (was globalAlpha 0.9 + lineWidth 2 + setLineDash([3,3])
+        // + strokeRect). Four corners, closed, continuous dash phase.
+        drawDashedPath(gfx, [
+            { x: px,        y: py },
+            { x: px + size, y: py },
+            { x: px + size, y: py + size },
+            { x: px,        y: py + size },
+        ], true, 2, [3, 3], g[0], g[1], g[2], 0.9);
     }
 }
 

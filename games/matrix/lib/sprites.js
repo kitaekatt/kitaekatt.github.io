@@ -5,11 +5,19 @@
 // Clients call:
 //   loadSprites(basePath)  → Promise resolved when all bitmaps are loaded
 //   buildTints(colors)     → produces tinted canvases using a colors object
-//   drawSprite(ctx, sprite, tint, x, y, size)  → blits a tinted canvas
+//   drawSprite(gfx, sprite, tint, cx, cy, size, angleRad, alpha)  → blits a tinted canvas
 //
 // The tinting strategy is fill-and-mask: fill a canvas with the tint color,
 // then use the source bitmap's alpha channel as a mask (composite mode
 // 'destination-in'). Source RGB is discarded — only alpha shapes matter.
+//
+// Rendering path: tinting builds OFFSCREEN texture canvases (getContext('2d')
+// is legitimate there — it paints source textures, not the visible frame).
+// On-screen compositing goes through the shared WebGL Gfx surface: drawSprite
+// uploads the tinted canvas as a GL texture (cached by identity) and draws it
+// as a center-anchored, rotatable, alpha-modulated quad. The tinted canvas
+// already carries its final RGB, so the Gfx tint color is (1,1,1,alpha) — it
+// only modulates alpha, leaving the texture's color untouched.
 
 const SPRITES = {};
 
@@ -74,14 +82,23 @@ function buildTints(colors) {
     }
 }
 
-function drawSprite(ctx, sprite, tint, x, y, size) {
+// Blit a tinted sprite canvas through the Gfx surface, centered at (cx, cy),
+// drawn size×size, rotated angleRad about the center, alpha-modulated. The old
+// 2D signature was (ctx, sprite, tint, topLeftX, topLeftY, size) drawn inside a
+// caller ctx.translate/rotate; the transform is now folded into these explicit
+// center + angle args (draw-unit computes them), so no context stack is needed.
+function drawSprite(gfx, sprite, tint, cx, cy, size, angleRad, alpha) {
     if (!sprite) throw new Error(`drawSprite: null sprite (tint=${tint})`);
     if (!sprite[tint]) {
         const spriteKey = Object.keys(SPRITES).find(k => SPRITES[k] === sprite) || '?';
         const available = Object.keys(sprite).filter(k => k !== 'raw').join(',');
         throw new Error(`drawSprite: sprite '${spriteKey}' has no tint variant '${tint}' (have: ${available})`);
     }
-    ctx.drawImage(sprite[tint], x, y, size, size);
+    const tex = sprite[tint];
+    // Center anchor (0.5,0.5), full-texture sub-rect, no mirror; color
+    // (1,1,1,alpha) modulates only alpha since the texture is pre-tinted.
+    gfx.sprite(tex, 0, 0, tex.width, tex.height, cx, cy, size, size,
+               0.5, 0.5, false, angleRad || 0, 1, 1, 1, alpha == null ? 1 : alpha);
 }
 
 function loadSprites(basePath) {
