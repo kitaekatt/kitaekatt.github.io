@@ -127,7 +127,7 @@ var SashimiFX = (function() {
         var pendings = [];
         function setPendings(list) { pendings = list || []; }
 
-        function drawPendings(ctx, view, t) {
+        function drawPendings(gfx, view, t) {
             var warn = sprites.warn;
             if (!pendings.length || !warn || !sprites.defs[warn.def])
                 return;
@@ -138,23 +138,21 @@ var SashimiFX = (function() {
                 /* quick ramp-in when the warning appears, then hold */
                 var a = Math.min(1, (1 - p.frac) * 8) * 0.9;
                 if (a <= 0) continue;
-                ctx.globalAlpha = a;
-                RTSprites.draw(ctx, def, 'idle', 'S', t,
-                               view.toX(p.x), view.toY(p.y), sizePx, 0);
+                RTSprites.draw(gfx, def, 'idle', 'S', t,
+                               view.toX(p.x), view.toY(p.y), sizePx, 0, a);
             }
-            ctx.globalAlpha = 1;
         }
 
-        /* ── Draw passes (called from rt-render's hooks only) ───────── */
+        /* ── Draw passes (called from rt-render's hooks only, through the
+              backend-neutral Gfx surface) ─────────────────────────────── */
 
         /* effectsUnder: telegraphs under the trails, both under units */
-        function drawUnder(ctx, view, t) {
-            drawPendings(ctx, view, t);
-            drawTrails(ctx, view, t);
+        function drawUnder(gfx, view, t) {
+            drawPendings(gfx, view, t);
+            drawTrails(gfx, view, t);
         }
 
-        function drawTrails(ctx, view, t) {
-            ctx.lineCap = 'round';
+        function drawTrails(gfx, view, t) {
             for (var id in trails) {
                 var tr = trails[id];
                 var n = tr.pts.length;
@@ -177,34 +175,27 @@ var SashimiFX = (function() {
                     var frac = n > 1 ? i / (n - 1) : 1;   /* 1 = head */
                     var sx = view.toX(tr.pts[i].x + ox);
                     var sy = view.toY(tr.pts[i].y + oy);
-                    ctx.strokeStyle = 'rgba(' + spec.r + ',' + spec.g +
-                        ',' + spec.b + ',' +
-                        (TAIL_ALPHA + (HEAD_ALPHA - TAIL_ALPHA) * frac)
-                            .toFixed(3) + ')';
-                    ctx.lineWidth = Math.max(1,
+                    var a = TAIL_ALPHA + (HEAD_ALPHA - TAIL_ALPHA) * frac;
+                    var lw = Math.max(1,
                         (TRAIL_W_TAIL + (TRAIL_W_HEAD - TRAIL_W_TAIL) *
                          frac) * view.tilePx);
-                    ctx.beginPath();
-                    ctx.moveTo(px, py);
-                    ctx.lineTo(sx, sy);
-                    ctx.stroke();
+                    gfx.line(px, py, sx, sy, lw, true,
+                             spec.r / 255, spec.g / 255, spec.b / 255, a);
                     px = sx; py = sy;
                 }
             }
         }
 
-        function drawFx(ctx, view, t) {
+        function drawFx(gfx, view, t) {
             var keep = 0;
             for (var i = 0; i < fx.length; i++) {
                 var e = fx[i];
                 var age = t - e.start;
                 if (age > e.seconds) continue;   /* expired: drop */
                 fx[keep++] = e;
-                if (e.alpha !== 1) ctx.globalAlpha = e.alpha;
-                RTSprites.draw(ctx, sprites.defs[e.def], e.state, e.dir,
+                RTSprites.draw(gfx, sprites.defs[e.def], e.state, e.dir,
                                age, view.toX(e.x), view.toY(e.y),
-                               e.sizeWu * view.tilePx, 0);
-                if (e.alpha !== 1) ctx.globalAlpha = 1;
+                               e.sizeWu * view.tilePx, 0, e.alpha);
             }
             fx.length = keep;
         }

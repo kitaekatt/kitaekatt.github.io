@@ -46,8 +46,7 @@ var SashimiHUD = (function() {
                     ' (engine ' + d.engineMs.toFixed(2) + ')' +
                 '\ndraw ms  ' + d.drawMs.toFixed(2) +
                 '\nentities ' + d.entities +
-                '\nplayers  ' + (d.players || 'none') +
-                (d.paused ? '\n\n== PAUSED (P to resume) ==' : '');
+                '\nplayers  ' + (d.players || 'none');
         }
 
         function setBanner(text) { bannerEl.textContent = text; }

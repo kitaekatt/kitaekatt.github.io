@@ -2,9 +2,10 @@
  * SashimiScreens — DOM screen flow for the sashimi client:
  *
  *   TITLE -> HERO SELECT -> (gameplay, screens hidden) -> RESULTS
- *              ^                                            |
+ *              ^                |  ^                         |
+ *              |             PAUSE (Resume / End Match)      |
  *              +--------------- PLAY AGAIN <----------------+
- *   TITLE <-------------------- TITLE button ---------------+
+ *   TITLE <---------- TITLE button / End Match -------------+
  *
  * Faithful to the shipped Unity flow (UIManager + AdventureUIController):
  *
@@ -12,6 +13,12 @@
  *   left menu-button group (GlobalUIStyle.uss .menu-button, kenvector
  *   font, focus = bold). Options/Quit are dropped (the port's audio
  *   controls are always on screen; Quit is meaningless in a browser).
+ * - PAUSE reproduces PauseVT.uxml: the "Sushi Pause Screen" art (opaque,
+ *   full-screen) with the same left menu-button group — Resume (default
+ *   focus) and End Match. Options is dropped, matching the Title delta
+ *   (the port has no options panel). Resume returns to gameplay exactly
+ *   where it froze (pause is a tick gate, not time-scale); End Match
+ *   tears down the run and returns to TITLE (the toTitle() path).
  * - HERO SELECT is port-designed: Unity's shipped character select is a
  *   static full-screen image panel with no interaction (Adventure.unity
  *   _characterSelectPanel; the game starts when players possess heroes
@@ -75,7 +82,7 @@ var SashimiScreens = (function() {
 
     function init(opts) {
         var root = opts.root;
-        var current = null;          /* 'title' | 'select' | 'results' | null */
+        var current = null;          /* 'title'|'select'|'pause'|'results'|null */
         var pick = { 1: 0, 2: 0 };
 
         /* ── Shared focus model (Unity ButtonGroup.UpdateFocus) ──────
@@ -184,6 +191,13 @@ var SashimiScreens = (function() {
         var title = makeScreen('title', 'title.png');
         var titleButtons = el('div', 'menu-group', title.stage);
         var playBtn = el('button', 'menu-button', titleButtons, 'Play');
+
+        /* ── PAUSE (PauseVT.uxml) ──────────────────────────────────── */
+        var pause = makeScreen('pause', 'pause.png');
+        var pauseButtons = el('div', 'menu-group', pause.stage);
+        var resumeBtn = el('button', 'menu-button', pauseButtons, 'Resume');
+        var endMatchBtn = el('button', 'menu-button', pauseButtons,
+                             'End Match');
 
         /* ── HERO SELECT (port-designed over the shipped art) ─────── */
         var select = makeScreen('select', 'select.png');
@@ -315,6 +329,7 @@ var SashimiScreens = (function() {
         var screens = {
             title: title.screen,
             select: select.screen,
+            pause: pause.screen,
             results: results.screen,
         };
 
@@ -324,6 +339,9 @@ var SashimiScreens = (function() {
             focusables = [];
             if (name === 'title') {
                 bindFocusable(playBtn, function() { opts.onPlay(); });
+            } else if (name === 'pause') {
+                bindFocusable(resumeBtn, function() { opts.onResume(); });
+                bindFocusable(endMatchBtn, function() { opts.onEndMatch(); });
             } else if (name === 'select') {
                 bindFocusable(frogCard, function() { pickHero(KIND_FROG); });
                 bindFocusable(eagleCard, function() { pickHero(KIND_EAGLE); });

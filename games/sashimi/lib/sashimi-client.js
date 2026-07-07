@@ -40,10 +40,13 @@
  * preferences; 0 = no preference = first free hero). Devices that join
  * on a menu are possessed when the game starts; devices that join
  * mid-game are possessed immediately. Touch joins like any device: the
- * first joystick touch claims a slot. P or the pause button pauses (the
- * engine only advances when we call wasm_tick, so a client-side gate is
- * a real pause). R or the results screen's PLAY AGAIN re-inits the
- * module and returns to hero select, re-possessing joined devices on
+ * first joystick touch claims a slot. P/ESC or the pause button opens the
+ * PAUSE screen (PauseVT.uxml: opaque art, Resume default-focus / End
+ * Match); the engine only advances when we call wasm_tick, so holding
+ * that call while the screen is up is a real pause. P/ESC/Resume returns
+ * to gameplay exactly where it froze; End Match tears the run down to the
+ * title (the toTitle path). R or the results screen's PLAY AGAIN re-inits
+ * the module and returns to hero select, re-possessing joined devices on
  * the next start. No game parameter lives here (root CLAUDE.md decision
  * 13) — arena bounds, timers, XP tables, waves all come from the engine.
  *
@@ -59,6 +62,22 @@ var SashimiClient = (function() {
 
     function start(M, opts) {
         var CONFIG = opts.config || 'default';
+
+        /* Presentation quality knob (NOT a game parameter — root decision 13
+           is about sim-affecting inputs). ?dpr=N caps the canvas backing-store
+           devicePixelRatio: use it on weak/integrated GPUs that present below
+           the rAF rate when filling a full-window Retina canvas. Sanity-clamped
+           to 0.5..4; absent -> no cap (native devicePixelRatio, unchanged). */
+        var dprCap;
+        try {
+            var dprParam = new URLSearchParams(location.search).get('dpr');
+            if (dprParam !== null && dprParam !== '') {
+                var dprVal = parseFloat(dprParam);
+                if (!isNaN(dprVal))
+                    dprCap = Math.max(0.5, Math.min(4, dprVal));
+            }
+        } catch (e) { /* no URLSearchParams/location -> no cap */ }
+
         var hud = SashimiHUD.init({
             hud: opts.hud, banner: opts.banner,
         });
@@ -163,8 +182,9 @@ var SashimiClient = (function() {
         var view = RTView.init();
 
         /* ── Screen state machine ──
-           'title' | 'select' | 'playing' | 'results'. The engine only
-           ticks while 'playing'; menus poll their own focus input. */
+           'title' | 'select' | 'playing' | 'pause' | 'results'. The
+           engine only ticks while 'playing'; every other screen (pause
+           included) holds wasm_tick and polls its own focus input. */
         var screen = 'title';
 
         /* Possess a hero for a joined device, honoring its select-screen
@@ -262,6 +282,14 @@ var SashimiClient = (function() {
             canvas: opts.canvas,
             mapW: mapW, mapH: mapH,
             tilePx: 64,
+            dprCap: dprCap,        /* ?dpr=N cap (undefined -> no cap; caps the
+                                      GL backing store); rt-render leaves default
+                                      behavior when falsy. */
+            onUnsupported: function(msg) {
+                /* WebGL is the sole renderer; show the explanation on the HUD
+                   banner instead of a black canvas (root decision 12). */
+                hud.setBanner(msg);
+            },
             minTilesVisible: 11,   /* phone zoom-out: keep >= 11 world units
                                       on the shorter axis, both orientations */
             followRate: 5,
@@ -311,9 +339,13 @@ var SashimiClient = (function() {
             },
         });
 
+        /* WebGL unavailable: RTRender.init already showed the explanation
+           (onUnsupported -> HUD banner) and returned null. Abort bootstrap
+           rather than run with no renderer (root decision 12). */
+        if (!render) return null;
+
         var units = [];
         var engineMs = 0;
-        var paused = false;
         var gameOverShown = false;
         var tickIndex = 0;   /* spawn telegraphs skip the initial roster */
 
@@ -466,7 +498,6 @@ var SashimiClient = (function() {
             lastPos = {};
             fx.reset();
             gameOverShown = false;
-            setPaused(false);
             setPauseVisible(false);  /* back to a menu; startGame reshows */
             return true;
         }
@@ -505,15 +536,28 @@ var SashimiClient = (function() {
             hud.setBanner('');
         }
 
-        function setPaused(p) {
-            paused = p;
-            if (opts.pauseBtn)
-                opts.pauseBtn.textContent = paused ? '▶' : '❚❚';
-        }
-
         function setPauseVisible(v) {
             if (opts.pauseBtn)
                 opts.pauseBtn.style.display = v ? 'block' : 'none';
+        }
+
+        /* PLAYING -> PAUSE: open the opaque PauseVT screen. wasm_tick is
+           held while it is up (the screen != 'playing' tick gate), so
+           the sim freezes exactly where it stood. The floating pause
+           button hides behind the art; Resume/End Match live on-screen. */
+        function pauseGame() {
+            if (screen !== 'playing' || engine.isGameOver()) return;
+            screen = 'pause';
+            setPauseVisible(false);
+            screens.show('pause');
+        }
+
+        /* PAUSE -> PLAYING: hide the screen and resume in place. */
+        function resumeGame() {
+            if (screen !== 'pause') return;
+            screen = 'playing';
+            screens.hide();
+            setPauseVisible(true);
         }
 
         var screens = SashimiScreens.init({
@@ -525,22 +569,27 @@ var SashimiClient = (function() {
                               'device can join on its first input');
             },
             onStart: startGame,
+            onResume: resumeGame,
+            onEndMatch: toTitle,     /* tear the run down to the title */
             onPlayAgain: playAgain,
             onTitle: toTitle,
         });
 
+        /* P/ESC opens the pause screen while playing and closes it (ESC =
+           Cancel = Resume, matching Unity) while it is up; Resume/End Match
+           on-screen do the rest. R restarts from the results screen. */
         document.addEventListener('keydown', function(e) {
-            if (e.code === 'KeyP' && screen === 'playing' &&
-                !engine.isGameOver()) {
-                setPaused(!paused);
+            if (e.code === 'KeyP' || e.code === 'Escape') {
+                if (screen === 'playing' && !engine.isGameOver()) pauseGame();
+                else if (screen === 'pause') resumeGame();
             }
             if (e.code === 'KeyR' && screen === 'results') playAgain();
         });
         if (opts.pauseBtn) {
             opts.pauseBtn.addEventListener('click', function() {
-                if (screen === 'playing' && !engine.isGameOver())
-                    setPaused(!paused);
-                opts.pauseBtn.blur();  /* Space must not re-toggle */
+                if (screen === 'playing' && !engine.isGameOver()) pauseGame();
+                else if (screen === 'pause') resumeGame();
+                opts.pauseBtn.blur();  /* Space must not re-trigger */
             });
         }
 
@@ -562,7 +611,6 @@ var SashimiClient = (function() {
                     freeze();
                     return;
                 }
-                if (paused) { freeze(); return; }
                 /* Input is sampled once per simulation tick, never per
                    frame (rt-input contract). Device vectors are screen-space
                    (up = -y); the sim is y-up, so negate y here — the same
@@ -607,7 +655,6 @@ var SashimiClient = (function() {
                     players: input.players().map(function(p) {
                         return 'P' + p.clientId;
                     }).join(' '),
-                    paused: paused,
                 });
             },
             statsEvery: 250,
@@ -616,22 +663,24 @@ var SashimiClient = (function() {
         /* CLI control channel (rt-control.js -> tools/serve-client.py
            relay -> tools/client.py): state mirrors what the player
            sees; press routes through the same activation paths as
-           pointer/keyboard (screens.press / setPaused). Inert unless
+           pointer/keyboard (screens.press / pauseGame). Inert unless
            served by serve-client.py on localhost. */
         var control = RTControl.init({
             state: function() {
                 var hero = firstHero();
                 var s = loop.stats;
+                /* While playing, 'pause' is the one action; on the pause
+                   screen (screen !== 'playing') its own Resume/End Match
+                   buttons come through screens.state(). */
                 var actions = screen === 'playing'
-                    ? [{ name: paused ? 'resume' : 'pause',
-                         label: paused ? 'resume (P)' : 'pause (P)',
+                    ? [{ name: 'pause', label: 'pause (P/ESC)',
                          disabled: engine.isGameOver() === 1,
                          focused: false }]
                     : screens.state().buttons;
                 return {
                     sandbox: 'sashimi',
                     screen: screen,
-                    paused: paused,
+                    paused: screen === 'pause',
                     gameOver: engine.isGameOver() === 1,
                     actions: actions,
                     ui: screen === 'playing' ? null : screens.state(),
@@ -650,6 +699,10 @@ var SashimiClient = (function() {
                         players: input.players().map(function(p) {
                             return 'P' + p.clientId;
                         }),
+                    },
+                    render: {
+                        backend: render.backend,
+                        renderer: render.renderer,
                     },
                     perf: {
                         rafFps: +s.rafFps.toFixed(1),
@@ -670,16 +723,17 @@ var SashimiClient = (function() {
                 press: function(args) {
                     var name = String(args.button || '').toLowerCase();
                     if (screen === 'playing') {
-                        if (name === 'pause' || name === 'resume') {
+                        if (name === 'pause') {
                             if (engine.isGameOver() === 1)
                                 throw new Error('game is over');
-                            setPaused(name === 'pause');
-                            return { pressed: name, paused: paused };
+                            pauseGame();
+                            return { pressed: 'pause', screen: screen };
                         }
                         throw new Error("no button '" + name +
-                            "' while playing (available: " +
-                            (paused ? 'resume' : 'pause') + ')');
+                            "' while playing (available: pause)");
                     }
+                    /* pause screen: resume / end-match go through the same
+                       activation path as a pointer click on those buttons */
                     return screens.press(name);
                 },
             },
