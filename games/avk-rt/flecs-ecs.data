@@ -4,39 +4,55 @@ Grid-based auto-battler. Red archers (ranged) vs blue knights (melee) fight on a
 
 Our key precept is the perception units are intelligent. In a turn based game this means as the turn unwinds you see them anticipating and outplaying, versus foolishly executing an action and foolishly ignoring the emergent consequences.
 
+> **Client rendering policy** — shared client chrome (`controls.js`, `debug.js`, `layout.js`) lives in `sandboxes/avk/clients/lib/`; see root `CLAUDE.md` "Browser Client Rendering Policy". AVK's paradigm-specific exception is below.
+
+### Two clients, two paradigms
+
+AVK ships two browser clients with **intentionally different rendering models**:
+
+| Client | Slug | Render model | Used for |
+|--------|------|--------------|----------|
+| `clients/wasm/` | `avk` | Instant — redraws after each turn, no animation | Maximum throughput, FPS benchmarks, headless-style observation |
+| `clients/wasm-rt/` | `avk-rt` | Phase-animated — overlapping movement / attack / reaction / defeat phases over `TARGET_TURN_MS` | Watching the game play |
+
+Functions that look duplicated by name (`render`, `drawUnit`, `loadSprites`, `startTurn`, `tick`) are *legitimately divergent* — each client implements them in its own paradigm. They share UI chrome (about-panel, header/footer, controls) by source-of-truth being `lib/` and similar HTML in each `index.html`. The parity check allowlists the per-paradigm functions inline at the top of each `index.html`'s `<script>` block. If you add a *new* function to either client, decide first: is this shared chrome (→ `lib/`) or paradigm-specific (→ inline + allowlist)?
+
+Matrix's renderer extraction in `sandboxes/matrix/clients/lib/{render,sprites,draw-unit}.js` is the model for *unified* renderers; AVK is the deliberate counter-example where two paradigms coexist.
+
 ## Native Systems
 
-All systems implemented in C at `systems/native/systems.c`. Execution order defined in `app.yaml`:
+Game systems implemented in C at `systems/native/systems.c`; `rewind` and `history_capture` are engine-level (`engine/src/engine/history.c`), registered by `engine_app_start`. Execution order defined in `app.yaml` (`system_order:`):
 
 | Order | System | Purpose |
 |-------|--------|---------|
-| 1 | `despawn` | Deletes entities with Health <= 0 from previous turn |
-| 2 | `start_of_turn` | Removes `TookDamage` marker and clears `Weapon.attacked` field |
-| 3 | `app_start` | Spawns initial armies with random positions, then **disables itself** |
-| 4 | `movement` | Moves each unit one step toward/away from enemies based on faction strategy |
-| 5 | `attack` | Each unit attacks one enemy in range, reduces Health, adds TookDamage marker, records target in Weapon.attacked |
-| 6 | `spawn` | Processes SpawnRequest components, calls `engine_entity_spawn()` |
-| 7 | `app_stop` | Checks if either faction has 0 living units, sets `engine->game_over` |
+| 1 | `rewind` | Processes RewindRequest: restores a history snapshot, pauses the simulation |
+| 2 | `despawn` | Deletes entities with Health <= 0 from previous turn |
+| 3 | `start_of_turn` | Removes `TookDamage` and clears `Weapon.attacked` field |
+| 4 | `app_start` | Spawns initial armies with random positions, then **disables itself** |
+| 5 | `movement` | Moves each unit one step toward/away from enemies based on faction strategy |
+| 6 | `attack` | Each unit attacks one enemy in range, reduces Health, adds TookDamage, records target in Weapon.attacked |
+| 7 | `spawn` | Processes SpawnRequest components, calls `engine_entity_spawn()` |
+| 8 | `app_stop` | Checks if either faction has 0 living units, sets `engine->game_over` |
+| 9 | `history_capture` | Snapshots end-of-turn unit state into the TurnHistory ring buffer |
 
 ## Key Behaviors
 
 **app_start** (runs once on turn 1):
 - Reads MapSize from the Map entity for bounds
-- Seeds RNG: `srand(time(NULL) + seed_offset++)` -- this is the ONLY source of randomness
+- Seeds RNG: `srand(time(NULL) + seed_offset++)` -- this is the ONLY source of randomness. Set `FLECS_SEED=<n>` to pin the seed for reproducible benchmark and test runs (unset = wall-clock randomness for normal gameplay); tests rely on this to stay deterministic.
 - Creates SpawnRequest entities with random Location for each unit
-- Unit counts: 120 Archers, 470 Knights (overridable via `FLECS_ARCHERS`/`FLECS_KNIGHTS` env vars)
+- Unit counts come from `app.yaml` via `engine_app_get` (`archers:`/`knights:`, top-level defaults currently 3024/11947; named `configs:` override them). Errors out if unset — vary them with `--overrides` or a named config, never env vars
 - Calls `engine_system_disable(engine, "app_start")` -- never runs again
 
 **movement**:
 - Knights: move toward nearest enemy (melee engage)
 - Archers: kite away from nearest enemy if too close, approach if too far (maintain range)
-- Speed is always 1 (one cell per turn). Speed > 1 causes infinite oscillation.
 - Tiebreaking: backed-by-ally (knights), then farthest-from-nearest-wall, then iteration order
 
 **attack**:
 - Each unit attacks the lowest-health enemy within its Weapon.range
 - Reduces target's Health.base by attacker's AttackDamage.base
-- Adds TookDamage marker to target (rendered as white in client)
+- Adds TookDamage to target (rendered as white in client)
 - Records target entity ID in attacker's Weapon.attacked field
 
 **despawn**:
@@ -46,20 +62,20 @@ All systems implemented in C at `systems/native/systems.c`. Execution order defi
 ## Components
 
 Defined in `components/`. Mutable per-turn components:
-- `Location { x: i32, y: i32 }` -- modified by movement, 1-based (min is 1,1)
+- `Location { x: i32, y: i32 }` -- modified by movement
 - `Health { base: i32 }` -- modified by attack
 
 Immutable (set at spawn from prefab, never changed):
 - `MovementSpeed { base: i32, energy: i32 }` -- always base=1
 - `AttackDamage { base: i32 }`
 - `Weapon { range: i32, attacked: entity }` -- range is immutable; attacked is set per-turn by attack system, cleared by start_of_turn
-- `MovementType` (enum: kite, hold, etc.)
+- `MovementType` (enum: exactly `kite`, `charge`)
 - `RedFaction` / `BlueFaction` (marker tags)
-- `TookDamage` (marker, added/removed each turn)
+- `TookDamage` (`kind: component` with a single bool, used tag-like: added/removed each turn per root 'Per-turn flags' decision — never set to false)
 
 ## SimulationPaused
 
-Systems check for the `SimulationPaused` marker component and early-return if present. This is used by the rewind feature to freeze simulation state while browsing history.
+The rewind feature freezes simulation state while browsing history via the `SimulationPaused` marker (systems self-gate per root 'Self-governing systems' decision). AVK's split:
 
 **Paused systems** (check via `is_simulation_paused(engine)` from `engine/history.h`):
 `start_of_turn`, `movement`, `attack`, `despawn`, `spawn`, `app_stop`
@@ -82,9 +98,9 @@ Benchmark output should be structured YAML for machine readability. The table pr
 ## Balancing
 
 Tuning levers:
-- Army sizes: `FLECS_KNIGHTS` / `FLECS_ARCHERS` env vars (default 470/120)
+- Army sizes: `archers:`/`knights:` in `app.yaml` (top-level defaults or a named config); test variations with `--overrides DIR` (root 'Overrides directory pattern' decision)
 - Prefab stats in `entities/`: Health, AttackDamage, Weapon, MovementType
-- Map size: configured by the client via MapSize component on the Map entity
+- Map size: `map_size:` in `app.yaml` — the engine creates the Map entity with MapSize at app start (`engine_app_start`); clients never inject it (root 'No parameter injection from clients' decision)
 name: avk
 description: "Red archers vs blue knights on a bounded grid map"
 
@@ -205,9 +221,11 @@ Both modes produce identical `GameState` structs -- the rest of the client is mo
 
 ## Three Execution Modes
 
-- **Interactive** (default): Real-time display with keyboard controls. SPACE=play/pause, RIGHT=step, Q=quit.
+- **Interactive** (default): Real-time display with keyboard controls. SPACE=play/pause, RIGHT=step (browses forward through history while paused), LEFT=rewind one turn (direct mode only — pauses and browses `TurnHistory`), Q=quit.
 - **Benchmark** (`--benchmark N`): Runs N headless games, collects timing/win statistics. No rendering.
-- **Recording** (`--record FILE`): Runs game to completion, writes each frame to GIF via ffmpeg.
+- **Recording** (`--record FILE`): Runs game to completion, writes each frame to GIF via ffmpeg. `--image DIR` dumps PNG frames instead.
+
+Other flags parsed in `main.c`: `--fps N`, `--overrides DIR`, `--config NAME`, `--threads N`, `--movement NAME`, `--max-turns N` (see the argv loop for the full set).
 
 ## Game Loop (Interactive Mode)
 
@@ -242,11 +260,7 @@ Add a `#define KEY_xxx N` constant and handle in both `poll_key()` implementatio
 
 ## Key Structs
 
-```c
-Unit { eid, name[64], x, y, health, faction[16], unit_type[16], took_damage }
-GameState { Unit *units, unit_count, turn, game_over, game_over_message[256] }
-ClientConfig { server[256], sandbox[128], map_x, map_y, max_turns, delay_ms }
-```
+`Unit` and `GameState` are defined in `state.h`; `ClientConfig` and `ClientFlags` (CLI flag state) in `main.c`. Read them there — the field lists drift too fast to mirror here.
 #include "api.h"
 #include <curl/curl.h>
 #include <stdlib.h>
@@ -794,6 +808,8 @@ typedef struct {
     int threads;            /* --threads N, 0 = auto-detect, -1 = legacy (no pipeline) */
     char movement[32];      /* --movement MODEL: original, intent, sequential, etc */
     int max_turns_override; /* --max-turns N, 0 = use config default */
+    bool lean;              /* --lean: lean tick (no per-turn counting/broadcast/history
+                               unless app.yaml sets explicit cadences) */
 } ClientFlags;
 
 static bool load_config(const char *path, ClientConfig *cfg) {
@@ -924,7 +940,7 @@ static bool setup_rest(ClientConfig *cfg) {
 
 static Engine *setup_direct(ClientConfig *cfg, const char *overrides_dir,
                             const char *config_name, int threads,
-                            const char *movement_model) {
+                            const char *movement_model, bool lean) {
     Engine *engine = engine_init(NULL);
     if (!engine) { fprintf(stderr, "Failed to init engine\n"); return NULL; }
 
@@ -934,6 +950,13 @@ static Engine *setup_direct(ClientConfig *cfg, const char *overrides_dir,
      * threads == -1: legacy mode, no pipeline */
     if (threads >= 0) {
         engine_set_max_threads(engine, threads);
+    }
+
+    /* Lean tick before app start (CLI takes precedence over app.yaml).
+     * Cadences stay unset: in lean mode that means broadcast/history off
+     * unless the app.yaml configures explicit cadences. */
+    if (lean) {
+        engine->lean_tick = 1;
     }
 
     /* Set movement model before app_start (CLI takes precedence over app.yaml) */
@@ -1050,7 +1073,7 @@ static GameState game_state_fetch_direct(Engine *engine) {
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <config.yaml> [--fps N] [--benchmark N]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <config.yaml> [--fps N] [--benchmark N] [--lean]\n", argv[0]);
         return 1;
     }
 
@@ -1091,6 +1114,9 @@ int main(int argc, char *argv[]) {
         else if (strcmp(argv[i], "--max-turns") == 0 && i + 1 < argc) {
             flags.max_turns_override = atoi(argv[++i]);
         }
+        else if (strcmp(argv[i], "--lean") == 0) {
+            flags.lean = true;
+        }
     }
 
     /* Apply max_turns override if specified */
@@ -1123,7 +1149,7 @@ int main(int argc, char *argv[]) {
             double game_start = now_ms();
 
             if (flags.direct) {
-                engine = setup_direct(&cfg, flags.overrides_dir, flags.config_name, flags.threads, flags.movement);
+                engine = setup_direct(&cfg, flags.overrides_dir, flags.config_name, flags.threads, flags.movement, flags.lean);
                 if (!engine) return 1;
                 engine->profiling = true;
             } else {
@@ -1270,7 +1296,7 @@ int main(int argc, char *argv[]) {
     /* Setup engine/REST */
     Engine *engine = NULL;
     if (flags.direct) {
-        engine = setup_direct(&cfg, flags.overrides_dir, flags.config_name, flags.threads, flags.movement);
+        engine = setup_direct(&cfg, flags.overrides_dir, flags.config_name, flags.threads, flags.movement, flags.lean);
         if (!engine) return 1;
     } else {
         if (!setup_rest(&cfg)) return 1;
@@ -2178,29 +2204,20 @@ Two-world MVC pattern:
 - **ModelWorld**: identical to AvK, managed by the WASM engine
 - **ViewWorld**: persistent view units in JavaScript, tracks animation state
 
-The client advances one ModelWorld turn, then visualizes it over `TARGET_TURN_MS` (default 400ms) with overlapping phase animations.
+The client advances one ModelWorld turn, then visualizes it over `TARGET_TURN_MS` (375ms) with overlapping phase animations.
 
 ## Phase Animation (Overlapping Timeline)
 
-Phases run concurrently on a timeline, not sequentially. Each phase has a start% and end% of the turn. Movement runs the full turn as a backdrop; other phases overlay on top.
-
-```
-Turn progress:  0%              50%     75%    87.5%      100%
-                |               |       |      |          |
-Movement:       ████████████████████████████████████████████
-Attack:         ████████████████████████████████|
-Reaction:                       ████████|
-Defeat:                                 ███████████████████
-```
+Phases run concurrently on a timeline, not sequentially. Each phase has a start and end fraction of the turn. **The `TIMELINE` object in `index.html` is the source of truth** — regenerate any picture of it from there. Currently:
 
 | Phase | Start | End | What it does |
 |-------|-------|-----|-------------|
-| Movement | 0% | 100% | Interpolate position from previous to current (continuous sliding) |
-| Attack | 0% | 75% | Weapon sprite animates toward attack target |
-| Reaction | 75% | 87.5% | Hit units flash through frames 1-8 |
-| Defeat | 87.5% | 100% | Dying units shrink (frames 9-16), weapon hidden |
+| Movement | 0.0 | 1.0 | Interpolate position from previous to current (continuous sliding) |
+| Attack | 0.0 | 0.75 | Weapon sprite animates toward attack target |
+| Reaction | 0.5 | 0.75 | Hit units flash through the hit frames |
+| Defeat | 0.625 | 1.0 | Dying units shrink through the defeat frames, weapon hidden |
 
-Configured in the `TIMELINE` object in `index.html`. Each system's local `t` (0→1) is computed from turn progress `p` via: `t = clamp((p - start) / (end - start), 0, 1)`.
+Each phase's local `t` (0→1) is computed from turn progress `p` via: `t = clamp((p - start) / (end - start), 0, 1)` (`tlT()` in `index.html`).
 
 ### Dynamic Turn Duration
 
@@ -2209,17 +2226,6 @@ Total animation time adjusts each turn to compensate for engine + view update ov
 animDurationMs = TARGET_TURN_MS - (engine_ms + view_update_ms)
 ```
 This keeps actual wall time close to the target regardless of computation cost.
-
-### Turn Progress Graph Convention
-
-Use this format to visualize phase timelines in documentation:
-```
-Turn progress:  0%      33%             75%    87.5%      100%
-                |       |               |      |          |
-Phase1:         ████████████████████████████████████████████
-Phase2:                 ████████████████████████|
-```
-Tick marks show phase boundaries. `████` blocks show when each phase is active.
 
 ## View Units (Persistent)
 
@@ -2231,13 +2237,13 @@ View units persist across turns. They are NOT rebuilt from model snapshots each 
 
 ## Sprite System
 
-Sprite sheets in `assets/sprites/`:
-- `knight_body/`: 17 frames (idle=0, hit=1-8, defeat=9-16), 64x64px
-- `archer_body/`: 17 frames (same layout)
+Sprite sheets in `assets/sprites/`; each sheet's `sheet.yaml` manifest is the source of truth for frame layout:
+- `knight_body/`: 18 frames (idle=0, hit=1-9, defeat=10-17), 64x64px
+- `archer_body/`: 18 frames (same layout)
 - `knight_weapon/`: 1 frame (short arrow, pointing up)
 - `archer_weapon/`: 1 frame (long arrow, pointing up)
 
-Each sheet has a `sheet.yaml` manifest. Weapons rotate to face attack target via canvas transform.
+Weapons rotate to face attack target via canvas transform.
 
 ## WASM Exports Used
 
@@ -2256,11 +2262,11 @@ Each sheet has a `sheet.yaml` manifest. Weapons rotate to face attack target via
 
 ## Layout
 
-Responsive 16:9 canvas (1024x576 internal, CSS-scaled). Header/footer with min/max pixel budgets. Canvas fills remaining space.
+Responsive 16:9 canvas, CSS-scaled. Internal resolution is config-driven: `canvas.width/height = map_x/y * CELL` (CELL=64; e.g. 3072x1728 for the default 48x27 map). Header/footer with min/max pixel budgets; canvas fills remaining space.
 
 ## Config
 
-Uses `wasm_3x` named config from app.yaml: 4 archers vs 8 knights on 15x8 (16x9 cells) board.
+Default named config is `wasm_3x` from `app.yaml` (22 archers vs 83 knights on 48x27). The map-size selector in the UI switches among the `wasm_*x` configs; a movement-algorithm selector restarts the game with a different movement system.
    Bud1           
                                                            e r _ b o d                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           a r c h e r _ b o d yicvpblob  �bplist00�	
 _backgroundColorBlueXiconSizeXtextSize_backgroundColorRed^backgroundType_backgroundColorGreen[gridOffsetX[gridOffsetYZaxTextSize_scrollPositionY\showItemInfo_viewOptionsVersion_scrollPositionXYarrangeBy]labelOnBottom_showIconPreview[gridSpacing#?�      #@P      #@(       #        #�c�     Tnone		#@K        - C L U j y � � � � � � � �#/8AJLUVXafgh                           q    a r c h e r _ b o d yvSrnlong                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            @      �                                        @      �                                          @      �                                          @                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   E  
@@ -4397,6 +4403,25 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <div id="version">v0.1.0</div>
 </div>
 
+<script>
+// AVK has TWO clients (wasm = instant render, wasm-rt = phase-animated)
+// that share UI chrome and helper utilities via lib/ but differ in rendering
+// model by design. See sandboxes/avk/CLAUDE.md "Two clients, two paradigms".
+//
+// CLIENT-PARITY: ignore render              — animated phase-aware render loop
+// CLIENT-PARITY: ignore drawGrid            — wasm-rt-only grid renderer
+// CLIENT-PARITY: ignore drawUnit            — sprite-based with animation phases
+// CLIENT-PARITY: ignore loadSprites         — frame-sequence loader
+// CLIENT-PARITY: ignore tlT                 — phase timeline interpolation
+// CLIENT-PARITY: ignore readUnits           — view projection from WASM exports
+// CLIENT-PARITY: ignore makeViewUnit        — view-unit construction
+// CLIENT-PARITY: ignore initViewFromModel   — initial view sync
+// CLIENT-PARITY: ignore updateViewForTurn   — incremental view update
+// CLIENT-PARITY: ignore findViewUnit        — view-unit lookup helper
+// CLIENT-PARITY: ignore startTurn           — turn driver (different from wasm's tick)
+// CLIENT-PARITY: ignore collectSystemTiming — perf instrumentation
+// CLIENT-PARITY: ignore recordTiming        — perf instrumentation
+</script>
 <script src="flecs-ecs.js"></script>
 <script src="/lib/controls.js"></script>
 <script src="/lib/layout.js"></script>
@@ -5182,6 +5207,22 @@ generate_manifest("archer_weapon", 1, [
 ])
 
 print(f"\nDone. Sprites written to {ASSETS}/")
+# AvK Instant WASM Client
+
+`index.html` is the *instant-render* browser client (slug `avk`): full redraw after
+each turn, no animation. Its animated sibling is [`../wasm-rt/`](../wasm-rt/CLAUDE.md);
+the two are intentionally different paradigms — see "Two clients, two paradigms" in
+[`../../CLAUDE.md`](../../CLAUDE.md) before "deduplicating" anything between them.
+
+## `wasm_main.c` is shared by both browser clients
+
+CMake compiles `wasm_main.c` into the single `flecs-ecs-wasm` target (`CMakeLists.txt`,
+`EMSCRIPTEN` block) that **both** `wasm/index.html` and `wasm-rt/index.html` load.
+Changing an export's semantics here changes both clients — check `wasm-rt` callers too.
+
+A new C export is invisible to JS until its `_`-prefixed name is added to
+`WASM_EXPORTED_FUNCTIONS` in `CMakeLists.txt`; forgetting this fails only at runtime
+(undefined function in the browser), not at build time.
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5409,6 +5450,20 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     <div id="version">v0.1.0</div>
 </div>
 
+<script>
+// AVK has TWO clients (wasm = instant render, wasm-rt = phase-animated)
+// that share UI chrome and helper utilities via lib/ but differ in rendering
+// model by design. The parity check below acknowledges that differentiation;
+// extracting the rendering pipelines would conflate two intentional approaches.
+// See sandboxes/avk/CLAUDE.md "Two clients, two paradigms" for the rationale.
+//
+// CLIENT-PARITY: ignore render        — instant immediate-mode render after each turn
+// CLIENT-PARITY: ignore tick          — wasm-only autoplay loop
+// CLIENT-PARITY: ignore startAutoPlay — wasm-only setInterval autoplay
+// CLIENT-PARITY: ignore elapsed       — load-progress helper
+// CLIENT-PARITY: ignore markActive    — load-step UI helper
+// CLIENT-PARITY: ignore markDone      — load-step UI helper
+</script>
 <script src="flecs-ecs.js"></script>
 <script src="/lib/controls.js"></script>
 <script src="/lib/layout.js"></script>
@@ -6788,7 +6843,19 @@ static void avk_app_start(Engine *engine) {
     int my = *((const int32_t *)ms_data + 1);
     if (mx == 0 && my == 0) return;
 
-    { static int seed_offset = 0; srand((unsigned)time(NULL) + seed_offset++); }
+    /* Seed RNG for initial placement -- the ONLY source of randomness.
+     * FLECS_SEED, when set, pins the seed so benchmark and test runs are
+     * fully reproducible. Unset (the default) keeps wall-clock randomness for
+     * normal gameplay. No silent fallback: an explicit seed is always honored. */
+    {
+        const char *seed_env = getenv("FLECS_SEED");
+        if (seed_env && seed_env[0]) {
+            srand((unsigned)strtoul(seed_env, NULL, 10));
+        } else {
+            static int seed_offset = 0;
+            srand((unsigned)time(NULL) + seed_offset++);
+        }
+    }
 
     ecs_entity_t sr_comp = ecs_lookup(engine->world, "SpawnRequest");
     ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
@@ -8958,6 +9025,466 @@ void avk_register_native_systems(Engine *engine) {
 void avk_register_native_systems(Engine *engine);
 
 #endif
+/* Lean tick mode: cadence behavior and lean-vs-normal simulation
+ * equivalence on the avk sandbox. See engine.h (lean_tick,
+ * broadcast_every, history_every) for the config semantics. */
+#include "test.h"
+#include "../src/engine/engine.h"
+#include "../src/engine/simulation.h"
+#include "../src/engine/app.h"
+#include "../src/engine/history.h"
+#include "../src/engine/components.h"
+#include "../src/engine/systems.h"
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+/* ── Setup helpers ──────────────────────────────────────────────────── */
+
+/* Init the avk sandbox with the (small) wasm_1x config. app_start is
+ * disabled so the random army placement never runs; tests spawn a fixed,
+ * deterministic army via inject_fixed_army(). */
+static Engine *setup_avk(bool lean) {
+    Engine *engine = engine_init(NULL);
+    snprintf(engine->sandboxes_dir, sizeof(engine->sandboxes_dir), "./sandboxes/");
+    if (lean) engine->lean_tick = 1; /* CLI-style: set before app start */
+    engine_sandbox_select(engine, "avk");
+    AppStartResult asr;
+    engine_app_start(engine, "wasm_1x", &asr);
+    engine_system_disable(engine, "app_start");
+    return engine;
+}
+
+/* Create a SpawnRequest entity the way avk_app_start does */
+static void inject_spawn(Engine *engine, const char *name,
+                         const char *template_name, int x, int y) {
+    ecs_entity_t sr_comp = ecs_lookup(engine->world, "SpawnRequest");
+    ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
+    ecs_entity_t e = engine_entity_create(engine, name);
+    ecs_add_id(engine->world, e, sr_comp);
+    void *sr = ecs_get_mut_id(engine->world, e, sr_comp);
+    *(char **)sr = ecs_os_strdup(template_name);
+    ecs_modified_id(engine->world, e, sr_comp);
+    ecs_add_id(engine->world, e, loc_comp);
+    int32_t *loc = (int32_t *)ecs_get_mut_id(engine->world, e, loc_comp);
+    loc[0] = x; loc[1] = y;
+    ecs_modified_id(engine->world, e, loc_comp);
+}
+
+/* Fixed 3-archer / 5-knight army on the 16x9 wasm_1x map */
+static void inject_fixed_army(Engine *engine) {
+    inject_spawn(engine, "ik1", "Knight", 2, 2);
+    inject_spawn(engine, "ik2", "Knight", 2, 4);
+    inject_spawn(engine, "ik3", "Knight", 3, 6);
+    inject_spawn(engine, "ik4", "Knight", 4, 3);
+    inject_spawn(engine, "ik5", "Knight", 5, 8);
+    inject_spawn(engine, "ia1", "Archer", 12, 2);
+    inject_spawn(engine, "ia2", "Archer", 13, 5);
+    inject_spawn(engine, "ia3", "Archer", 14, 8);
+}
+
+static void advance(Engine *engine, int turns) {
+    for (int i = 0; i < turns; i++) {
+        TurnResult tr;
+        if (!engine_sim_turn(engine, &tr)) break;
+        engine_turn_result_free(&tr);
+    }
+}
+
+/* ── Canonical world dump (order-independent, ecs-id-independent) ──── */
+
+typedef struct { char line[96]; } UnitLine;
+
+static int unit_line_cmp(const void *a, const void *b) {
+    return strcmp(((const UnitLine *)a)->line, ((const UnitLine *)b)->line);
+}
+
+/* "name (x,y) hp=N" for every living unit, sorted by name. Captures the
+ * simulation-relevant state without depending on raw ecs entity ids
+ * (which can drift with bookkeeping-only query allocations). */
+static char *world_dump(Engine *engine) {
+    ecs_entity_t loc_comp = ecs_lookup(engine->world, "Location");
+    ecs_entity_t hp_comp = ecs_lookup(engine->world, "Health");
+
+    EntityList list = engine_entity_list(engine);
+    UnitLine *lines = calloc(list.count > 0 ? list.count : 1, sizeof(UnitLine));
+    int n = 0;
+
+    for (int i = 0; i < list.count; i++) {
+        ecs_entity_t eid = list.items[i].id;
+        const char *name = list.items[i].name;
+        if (!name) continue;
+        const int32_t *loc = (const int32_t *)ecs_get_id(engine->world, eid, loc_comp);
+        const int32_t *hp = (const int32_t *)ecs_get_id(engine->world, eid, hp_comp);
+        if (!loc || !hp) continue;
+        snprintf(lines[n].line, sizeof(lines[n].line),
+                 "%s (%d,%d) hp=%d", name, loc[0], loc[1], *hp);
+        n++;
+    }
+    engine_entity_list_free(&list);
+
+    qsort(lines, n, sizeof(UnitLine), unit_line_cmp);
+
+    char *buf = malloc((size_t)(n + 1) * sizeof(UnitLine) + 64);
+    int pos = sprintf(buf, "turn=%d game_over=%d\n",
+                      engine->turn_counter, engine->game_over ? 1 : 0);
+    for (int i = 0; i < n; i++)
+        pos += sprintf(buf + pos, "%s\n", lines[i].line);
+    free(lines);
+    return buf;
+}
+
+/* ── Broadcast counting callback ────────────────────────────────────── */
+
+static int g_turn_broadcasts = 0;
+static void count_turn_broadcasts(Engine *engine, const char *event) {
+    (void)engine;
+    if (strcmp(event, "turn") == 0) g_turn_broadcasts++;
+}
+
+/* ── Lean TurnResult ────────────────────────────────────────────────── */
+
+TEST(lean_turn_result_is_minimal) {
+    Engine *engine = setup_avk(true);
+    inject_fixed_army(engine);
+
+    TurnResult tr;
+    ASSERT(engine_sim_turn(engine, &tr));
+    ASSERT_EQ(tr.turn, 1);
+    /* No system lists, no entity counting in lean mode */
+    ASSERT(tr.systems_run == NULL);
+    ASSERT(tr.systems_skipped == NULL);
+    ASSERT_EQ(tr.systems_run_count, 0);
+    ASSERT_EQ(tr.systems_skipped_count, 0);
+    ASSERT_EQ(tr.entities_created, 0);
+    ASSERT_EQ(tr.entities_destroyed, 0);
+    engine_turn_result_free(&tr);
+
+    /* But the simulation actually ran: spawn processed the requests */
+    char *dump = world_dump(engine);
+    ASSERT(strstr(dump, "Knight_") != NULL);
+    ASSERT(strstr(dump, "Archer_") != NULL);
+    free(dump);
+
+    engine_fini(engine);
+}
+
+TEST(normal_mode_bookkeeping_unchanged) {
+    Engine *engine = setup_avk(false);
+    inject_fixed_army(engine);
+
+    TurnResult tr;
+    ASSERT(engine_sim_turn(engine, &tr));
+    ASSERT(tr.systems_run != NULL);
+    ASSERT(tr.systems_run_count > 0);
+    /* 8 SpawnRequest carriers deleted, 8 units spawned: net counting ran
+       (created/destroyed reflect the entity-list diff, here equal) */
+    ASSERT_EQ(tr.entities_created, 0);
+    ASSERT_EQ(tr.entities_destroyed, 0);
+    engine_turn_result_free(&tr);
+
+    engine_fini(engine);
+}
+
+/* ── Broadcast cadence ──────────────────────────────────────────────── */
+
+TEST(broadcast_every_3_ticks) {
+    Engine *engine = setup_avk(false);
+    inject_fixed_army(engine);
+    engine->broadcast_every = 3;
+    engine->on_state_change = count_turn_broadcasts;
+    g_turn_broadcasts = 0;
+
+    advance(engine, 9);
+    ASSERT_EQ(engine->turn_counter, 9);
+    ASSERT_EQ(g_turn_broadcasts, 3); /* turns 3, 6, 9 */
+
+    engine_fini(engine);
+}
+
+TEST(broadcast_default_every_tick) {
+    Engine *engine = setup_avk(false);
+    inject_fixed_army(engine);
+    engine->on_state_change = count_turn_broadcasts;
+    g_turn_broadcasts = 0;
+
+    advance(engine, 5);
+    ASSERT_EQ(g_turn_broadcasts, 5);
+
+    engine_fini(engine);
+}
+
+TEST(broadcast_off_in_lean_mode) {
+    Engine *engine = setup_avk(true);
+    inject_fixed_army(engine);
+    engine->on_state_change = count_turn_broadcasts;
+    g_turn_broadcasts = 0;
+
+    advance(engine, 5);
+    ASSERT_EQ(g_turn_broadcasts, 0);
+
+    engine_fini(engine);
+}
+
+TEST(broadcast_fires_on_game_over) {
+    Engine *engine = setup_avk(true);
+    /* Knights only: red faction is empty, app_stop ends the game turn 1 */
+    inject_spawn(engine, "ik1", "Knight", 2, 2);
+    engine->on_state_change = count_turn_broadcasts;
+    g_turn_broadcasts = 0;
+
+    advance(engine, 3);
+    ASSERT(engine->game_over);
+    /* Exactly one push: the game-over turn (cadence otherwise off) */
+    ASSERT_EQ(g_turn_broadcasts, 1);
+
+    engine_fini(engine);
+}
+
+/* ── History cadence ────────────────────────────────────────────────── */
+
+TEST(history_every_2_captures_even_turns) {
+    Engine *engine = setup_avk(false);
+    engine->history_every = 2;
+    inject_fixed_army(engine);
+
+    advance(engine, 10);
+    ASSERT_EQ(engine->turn_counter, 10);
+    ASSERT_EQ(history_newest_turn(engine), 10);
+    ASSERT_EQ(history_oldest_turn(engine), 2);
+    ASSERT(history_has_turn(engine, 10));
+    ASSERT(history_has_turn(engine, 8));
+    ASSERT(!history_has_turn(engine, 9));
+    ASSERT(!history_has_turn(engine, 1));
+
+    engine_fini(engine);
+}
+
+TEST(rewind_to_uncaptured_turn_fails_without_advancing) {
+    Engine *engine = setup_avk(false);
+    engine->history_every = 2;
+    inject_fixed_army(engine);
+    advance(engine, 10);
+
+    char *before = world_dump(engine);
+
+    /* Turn 9 is in [oldest, newest] but has no frame: must fail and must
+       not run a simulation turn as a side effect */
+    ASSERT(!engine_sim_rewind(engine, 9));
+    ASSERT_EQ(engine->turn_counter, 10);
+    char *after = world_dump(engine);
+    ASSERT_STR_EQ(before, after);
+    free(before);
+    free(after);
+
+    /* Captured turns still rewind fine */
+    ASSERT(engine_sim_rewind(engine, 8));
+    ASSERT_EQ(engine->turn_counter, 8);
+    ASSERT(is_simulation_paused(engine));
+
+    engine_fini(engine);
+}
+
+TEST(history_off_in_lean_mode) {
+    Engine *engine = setup_avk(true);
+    inject_fixed_army(engine);
+
+    advance(engine, 5);
+    ASSERT_EQ(engine->turn_counter, 5);
+    ASSERT_EQ(history_newest_turn(engine), 0); /* nothing captured */
+
+    engine_fini(engine);
+}
+
+TEST(lean_with_explicit_history_cadence) {
+    Engine *engine = setup_avk(true);
+    engine->history_every = 5;
+    inject_fixed_army(engine);
+
+    advance(engine, 10);
+    ASSERT(history_has_turn(engine, 5));
+    ASSERT(history_has_turn(engine, 10));
+    ASSERT(!history_has_turn(engine, 4));
+
+    engine_fini(engine);
+}
+
+/* ── Lean vs normal: identical simulation results ───────────────────── */
+
+TEST(lean_and_normal_produce_identical_simulation) {
+    Engine *normal = setup_avk(false);
+    Engine *lean = setup_avk(true);
+    inject_fixed_army(normal);
+    inject_fixed_army(lean);
+
+    for (int t = 0; t < 40; t++) {
+        bool n_ok, l_ok;
+        TurnResult tr;
+        n_ok = engine_sim_turn(normal, &tr);
+        if (n_ok) engine_turn_result_free(&tr);
+        l_ok = engine_sim_turn(lean, &tr);
+        if (l_ok) engine_turn_result_free(&tr);
+        ASSERT_EQ(n_ok, l_ok);
+
+        char *n_dump = world_dump(normal);
+        char *l_dump = world_dump(lean);
+        if (strcmp(n_dump, l_dump) != 0) {
+            fprintf(stderr, "Divergence at turn %d:\n--- normal ---\n%s--- lean ---\n%s",
+                    t + 1, n_dump, l_dump);
+        }
+        ASSERT_STR_EQ(n_dump, l_dump);
+        free(n_dump);
+        free(l_dump);
+
+        if (normal->game_over && lean->game_over) break;
+    }
+    ASSERT_EQ(normal->game_over, lean->game_over);
+    ASSERT_EQ(normal->turn_counter, lean->turn_counter);
+
+    engine_fini(normal);
+    engine_fini(lean);
+}
+
+/* ── app.yaml config surface ────────────────────────────────────────── */
+
+#ifdef _WIN32
+static const char *LEAN_SB_ROOT = "flecs_test_lean_sb/";
+#define LEAN_SB_CLEANUP "rmdir /s /q flecs_test_lean_sb 2>nul"
+#define LEAN_SB_MKDIR "mkdir flecs_test_lean_sb\\leansb 2>nul"
+#else
+static const char *LEAN_SB_ROOT = "/tmp/flecs_test_lean_sb/";
+#define LEAN_SB_CLEANUP "rm -rf /tmp/flecs_test_lean_sb"
+#define LEAN_SB_MKDIR "mkdir -p /tmp/flecs_test_lean_sb/leansb"
+#endif
+
+static Engine *setup_lean_sandbox(const char *app_yaml) {
+    system(LEAN_SB_CLEANUP);
+    system(LEAN_SB_MKDIR);
+
+    char path[600];
+    snprintf(path, sizeof(path), "%sleansb/app.yaml", LEAN_SB_ROOT);
+    FILE *f = fopen(path, "w");
+    fputs(app_yaml, f);
+    fclose(f);
+
+    Engine *engine = engine_init(NULL);
+    snprintf(engine->sandboxes_dir, sizeof(engine->sandboxes_dir), "%s", LEAN_SB_ROOT);
+    snprintf(engine->sandbox_name, sizeof(engine->sandbox_name), "leansb");
+    return engine;
+}
+
+TEST(app_yaml_lean_keys_parsed) {
+    Engine *engine = setup_lean_sandbox(
+        "name: leansb\n"
+        "lean_tick: true\n"
+        "broadcast_every: 30\n"
+        "history_every: 10\n");
+
+    ASSERT(engine_app_load(engine));
+    StoredApp *app = engine_app_get(engine, "leansb");
+    ASSERT_NOT_NULL(app);
+    ASSERT_EQ(app->lean_tick, 1);
+    ASSERT_EQ(app->broadcast_every, 30);
+    ASSERT_EQ(app->history_every, 10);
+
+    /* app start applies them to the engine (nothing set CLI-side) */
+    AppStartResult asr;
+    ASSERT(engine_app_start(engine, NULL, &asr));
+    ASSERT(engine_tick_is_lean(engine));
+    ASSERT_EQ(engine_tick_broadcast_every(engine), 30);
+    ASSERT_EQ(engine_tick_history_every(engine), 10);
+
+    system(LEAN_SB_CLEANUP);
+    engine_fini(engine);
+}
+
+TEST(app_yaml_lean_keys_absent_defaults) {
+    Engine *engine = setup_lean_sandbox("name: leansb\n");
+
+    ASSERT(engine_app_load(engine));
+    StoredApp *app = engine_app_get(engine, "leansb");
+    ASSERT_NOT_NULL(app);
+    ASSERT_EQ(app->lean_tick, -1);
+    ASSERT_EQ(app->broadcast_every, -1);
+    ASSERT_EQ(app->history_every, -1);
+
+    AppStartResult asr;
+    ASSERT(engine_app_start(engine, NULL, &asr));
+    /* Defaults: full bookkeeping, everything every tick */
+    ASSERT(!engine_tick_is_lean(engine));
+    ASSERT_EQ(engine_tick_broadcast_every(engine), 1);
+    ASSERT_EQ(engine_tick_history_every(engine), 1);
+
+    system(LEAN_SB_CLEANUP);
+    engine_fini(engine);
+}
+
+TEST(named_config_lean_keys_applied) {
+    Engine *engine = setup_lean_sandbox(
+        "name: leansb\n"
+        "configs:\n"
+        "  rt:\n"
+        "    lean_tick: true\n"
+        "    broadcast_every: 6\n"
+        "    history_every: 60\n");
+
+    AppStartResult asr;
+    ASSERT(engine_app_start(engine, "rt", &asr));
+    ASSERT(engine_tick_is_lean(engine));
+    ASSERT_EQ(engine_tick_broadcast_every(engine), 6);
+    ASSERT_EQ(engine_tick_history_every(engine), 60);
+
+    system(LEAN_SB_CLEANUP);
+    engine_fini(engine);
+}
+
+TEST(cli_precedence_over_app_yaml) {
+    Engine *engine = setup_lean_sandbox(
+        "name: leansb\n"
+        "lean_tick: false\n"
+        "history_every: 1\n");
+
+    /* CLI-style values set before app start win */
+    engine->lean_tick = 1;
+    engine->history_every = 7;
+
+    AppStartResult asr;
+    ASSERT(engine_app_start(engine, NULL, &asr));
+    ASSERT(engine_tick_is_lean(engine));
+    ASSERT_EQ(engine_tick_history_every(engine), 7);
+
+    system(LEAN_SB_CLEANUP);
+    engine_fini(engine);
+}
+
+int main(void) {
+    TEST_SUITE("Lean Tick: TurnResult");
+    RUN(lean_turn_result_is_minimal);
+    RUN(normal_mode_bookkeeping_unchanged);
+
+    TEST_SUITE("Lean Tick: Broadcast Cadence");
+    RUN(broadcast_every_3_ticks);
+    RUN(broadcast_default_every_tick);
+    RUN(broadcast_off_in_lean_mode);
+    RUN(broadcast_fires_on_game_over);
+
+    TEST_SUITE("Lean Tick: History Cadence");
+    RUN(history_every_2_captures_even_turns);
+    RUN(rewind_to_uncaptured_turn_fails_without_advancing);
+    RUN(history_off_in_lean_mode);
+    RUN(lean_with_explicit_history_cadence);
+
+    TEST_SUITE("Lean Tick: Simulation Equivalence");
+    RUN(lean_and_normal_produce_identical_simulation);
+
+    TEST_SUITE("Lean Tick: Config Surface");
+    RUN(app_yaml_lean_keys_parsed);
+    RUN(app_yaml_lean_keys_absent_defaults);
+    RUN(named_config_lean_keys_applied);
+    RUN(cli_precedence_over_app_yaml);
+
+    TEST_RESULTS();
+}
 #include "test.h"
 #include "../src/engine/engine.h"
 #include "../src/engine/simulation.h"
@@ -8985,6 +9512,10 @@ static void count_factions(int *archers, int *knights) {
 }
 
 static void setup_game(int map_size) {
+    /* Pin the placement RNG so spawns -- and therefore the whole run -- are
+     * deterministic. Without this the AVK sandbox seeds srand(time(NULL)),
+     * making game_over a wall-clock-dependent outcome (flaky test). */
+    setenv("FLECS_SEED", "1", 1);
     engine = engine_init(NULL);
     snprintf(engine->sandboxes_dir, sizeof(engine->sandboxes_dir), "./sandboxes/");
     engine_sandbox_select(engine, "avk");
