@@ -147,7 +147,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         <option value="wasm_38x" class="debug-only" hidden>608×342</option>
     </select>
     <button id="btn-debug" style="position:fixed;bottom:4px;right:4px;font-size:0.6em;padding:2px 6px;min-width:auto;background:transparent;color:#555;border-color:#333;">Debug</button>
-    <div id="version">v0.1.0 (bfa0c76)</div>
+    <div id="version">v0.1.0 (edade6a)</div>
 </div>
 
 <script>
@@ -173,12 +173,21 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 <script src="/lib/controls.js"></script>
 <script src="/lib/layout.js"></script>
 <script src="/lib/debug.js"></script>
+<script src="/lib/rt-render.js"></script>
 <script>
 (function() {
     const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
     const statusEl = document.getElementById('status');
     const gameOverEl = document.getElementById('game-over-msg');
+    /* Rendering goes through the shared WebGL Gfx surface (surface-only path;
+       the client keeps its own phase-animated rAF loop and view state). No 2D
+       fallback: WebGL-unavailable fails loudly and aborts bootstrap (root
+       CLAUDE.md decision 12). */
+    const gfx = RTRender.createSurface({
+        canvas: canvas,
+        onUnsupported: function(msg) { statusEl.textContent = msg; gameOverEl.textContent = ''; },
+    });
+    if (!gfx) return;
     const btnPlay = document.getElementById('btn-play');
     const btnStep = document.getElementById('btn-step');
     const btnRewind = document.getElementById('btn-rewind');
@@ -189,7 +198,6 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
     var currentConfig = 'wasm_3x';
 
     var CELL = 64, COLS = 48, ROWS = 27;
-    const BG = '#0f0f23';
 
     let engine = null;
     let mapLabel = '';
@@ -349,10 +357,9 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 
     /* ── Rendering ───────────────────────────────────────────── */
     function drawGrid() {
-        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-        ctx.lineWidth = 1;
-        for (let x = 0; x <= COLS; x++) { ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,ROWS*CELL); ctx.stroke(); }
-        for (let y = 0; y <= ROWS; y++) { ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(COLS*CELL,y*CELL); ctx.stroke(); }
+        /* grid lines: rgba(255,255,255,0.08) as numeric floats */
+        for (let x = 0; x <= COLS; x++) { gfx.line(x*CELL, 0, x*CELL, ROWS*CELL, 1, false, 1, 1, 1, 0.08); }
+        for (let y = 0; y <= ROWS; y++) { gfx.line(0, y*CELL, COLS*CELL, y*CELL, 1, false, 1, 1, 1, 0.08); }
     }
 
     function drawUnit(u, tMove, tAttack, tReact, tDefeat) {
@@ -388,7 +395,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
         if (bodyImg && bodyImg.complete) {
             const size = CELL * scale;
             const off = (CELL - size) / 2;
-            ctx.drawImage(bodyImg, drawX + off, drawY + off, size, size);
+            gfx.image(bodyImg, drawX + off, drawY + off, size, size);
         }
 
         /* Draw weapon (rotated to face attack target) */
@@ -398,11 +405,10 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
                 const size = CELL * scale;
                 const cx = drawX + CELL / 2 + weaponOffX;
                 const cy = drawY + CELL / 2 + weaponOffY;
-                ctx.save();
-                ctx.translate(cx, cy);
-                if (u.attackAngle) ctx.rotate(u.attackAngle);
-                ctx.drawImage(wImg, -size / 2, -size / 2, size, size);
-                ctx.restore();
+                /* center anchor (0.5,0.5) + rotate about (cx,cy) matches the old
+                   translate(cx,cy)/rotate/drawImage(-size/2,-size/2) semantics */
+                gfx.sprite(wImg, 0, 0, wImg.width, wImg.height, cx, cy, size, size,
+                           0.5, 0.5, false, u.attackAngle, 1, 1, 1, 1);
             }
         }
     }
@@ -412,8 +418,9 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
 
         const drawT0 = performance.now();
 
-        ctx.fillStyle = BG;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        /* BG '#0f0f23' as 0..1 floats: 15/255, 15/255, 35/255 */
+        gfx.begin(canvas.width, canvas.height);
+        gfx.clear(15/255, 15/255, 35/255);
         drawGrid();
 
         /* Compute turn progress and per-system t values */
@@ -430,6 +437,7 @@ button.active { background: #4a6a4a; border-color: #6a8a6a; }
             if (u.dead) continue;
             drawUnit(u, tMove, tAttack, tReact, tDefeat);
         }
+        gfx.flush();
 
         renderTiming.draw = performance.now() - drawT0;
 
