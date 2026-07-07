@@ -69,6 +69,19 @@ var RTControl = (function() {
             if (!handler && c.cmd === 'state' && cfg.state) {
                 handler = function() { return cfg.state(); };
             }
+            /* Built-in: 'close' closes the tab (works for single-entry
+               windows, e.g. one opened by `open -na Google Chrome
+               --new-window <url>` for a headless-driven session). The
+               result posts first; close fires after a beat. */
+            if (!handler && c.cmd === 'close') {
+                handler = function() {
+                    setTimeout(function() {
+                        stop();
+                        window.close();
+                    }, 150);
+                    return { closing: true };
+                };
+            }
             var reply;
             if (!handler) {
                 reply = { id: c.id, ok: false,
