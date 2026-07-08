@@ -70,11 +70,11 @@ canvas { display: block; touch-action: none; }
    calc(var(--su) * N) == N/19.2 px of the 1920px Unity design. */
 @font-face {
     font-family: 'Kenvector Future';   /* .uss .menu-button font */
-    src: url('assets/fonts/kenvector_future.ttf?v=11') format('truetype');
+    src: url('assets/fonts/kenvector_future.ttf?v=13') format('truetype');
 }
 @font-face {
     font-family: 'Boogaloo';           /* .uss victory/leaderboard font */
-    src: url('assets/fonts/boogaloo.ttf?v=11') format('truetype');
+    src: url('assets/fonts/boogaloo.ttf?v=13') format('truetype');
 }
 #screens { position: fixed; inset: 0; z-index: 5; display: none; }
 .screen {
@@ -227,7 +227,7 @@ canvas { display: block; touch-action: none; }
 <input id="volume" type="range" min="0" max="1" step="0.05" value="1"
        aria-label="volume">
 <div id="screens"></div>
-<div id="version">vdev (b8b63f9)</div>
+<div id="version">vdev (931885b)</div>
 
 <!-- Thin client per the Browser Client Rendering Policy: DOM shell +
      WASM-export transport + bootstrap. Loop/render/input/view logic is the
@@ -235,21 +235,21 @@ canvas { display: block; touch-action: none; }
      sashimi-specific sprites/HUD/bootstrap live in the sandbox lib
      (lib/sashimi-*.js, source: sandboxes/sashimi/clients/lib/).
      ?v=N cache-busts GitHub Pages (root CLAUDE.md decision 22). -->
-<script src="flecs-ecs.js?v=11"></script>
-<script src="lib/rt-loop.js?v=11"></script>
-<script src="lib/rt-control.js?v=11"></script>
-<script src="lib/rt-input.js?v=11"></script>
-<script src="lib/rt-view.js?v=11"></script>
-<script src="lib/rt-sprites.js?v=11"></script>
-<script src="lib/rt-render.js?v=11"></script>
-<script src="lib/sashimi-art-data.js?v=11"></script>
-<script src="lib/sashimi-audio-data.js?v=11"></script>
-<script src="lib/sashimi-sprites.js?v=11"></script>
-<script src="lib/sashimi-audio.js?v=11"></script>
-<script src="lib/sashimi-fx.js?v=11"></script>
-<script src="lib/sashimi-hud.js?v=11"></script>
-<script src="lib/sashimi-screens.js?v=11"></script>
-<script src="lib/sashimi-client.js?v=11"></script>
+<script src="flecs-ecs.js?v=13"></script>
+<script src="lib/rt-loop.js?v=13"></script>
+<script src="lib/rt-control.js?v=13"></script>
+<script src="lib/rt-input.js?v=13"></script>
+<script src="lib/rt-view.js?v=13"></script>
+<script src="lib/rt-sprites.js?v=13"></script>
+<script src="lib/rt-render.js?v=13"></script>
+<script src="lib/sashimi-art-data.js?v=13"></script>
+<script src="lib/sashimi-audio-data.js?v=13"></script>
+<script src="lib/sashimi-sprites.js?v=13"></script>
+<script src="lib/sashimi-audio.js?v=13"></script>
+<script src="lib/sashimi-fx.js?v=13"></script>
+<script src="lib/sashimi-hud.js?v=13"></script>
+<script src="lib/sashimi-screens.js?v=13"></script>
+<script src="lib/sashimi-client.js?v=13"></script>
 <script>
 FlecsECS().then(function(M) {
     /* window.__sashimi: debug/test handle (loop, engine, restart, audio) */
