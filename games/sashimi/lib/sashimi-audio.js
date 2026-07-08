@@ -16,7 +16,13 @@
  *     cacophony
  *   - looping adventure music (audioConfig.MusicOn = 1 in the Adventure
  *     scene instance), switching to the victory / defeat loops at game
- *     over. Music files are fetched lazily (they are ~2-3 MB each).
+ *     over. The wanted track is fetched+decoded as soon as it is
+ *     requested (decode works on a suspended context, same as
+ *     preloadSfx), so the menu loop is ready to start at the first
+ *     gesture; other music files stay lazy (they are ~2-3 MB each).
+ *   - Unity MusicController.FadeIn volume ramp on every track start:
+ *     0 -> max over fadeInTime (Title.unity overrides 2.0 s for the
+ *     Start loop; the prefab default 2.5 s applies elsewhere).
  *
  * Browser constraints: an AudioContext starts suspended until a user
  * gesture — unlock() is bound to the first pointerdown/touchstart/keydown
@@ -75,7 +81,7 @@ var SashimiAudio = (function() {
             return file + '?v=' + (data ? data.version : '0');
         }
 
-        function fetchClip(key, file, store) {
+        function fetchClip(key, file, store, done) {
             if (store[key] || pending[key] || !ensureCtx()) return;
             pending[key] = true;
             fetch(url(file))
@@ -88,6 +94,7 @@ var SashimiAudio = (function() {
                     store[key] = buf;
                     decoded++;
                     delete pending[key];
+                    if (done) done();
                 })
                 .catch(function(e) {
                     failed++;
@@ -139,21 +146,29 @@ var SashimiAudio = (function() {
 
         var musicBuffers = {};
 
+        /* MusicController.FadeIn ramp (linear 0 -> max over fadeInTime):
+         * the Title scene overrides fadeInTime to 2.0 s for the Start
+         * loop (Title.unity fadeInTime override); every other FadeIn
+         * uses the MusicController.prefab default 2.5 s. */
+        var FADE_IN_S = { start: 2.0 };
+        var FADE_IN_DEFAULT_S = 2.5;
+
         function setMusic(track) {
             wantTrack = track;
+            /* Prefetch immediately, even before the unlock gesture:
+             * decodeAudioData works on a suspended context (preloadSfx
+             * relies on the same), so the track is ready to start the
+             * moment unlock() runs instead of beginning a ~2-3 MB
+             * download at the first click. */
+            var m = data && data.music[track];
+            if (m) fetchClip(track, m.file, musicBuffers, startMusicIfReady);
             startMusicIfReady();
         }
 
         function startMusicIfReady() {
             if (!data || !unlocked || !wantTrack) return;
             var m = data.music[wantTrack];
-            if (!m) return;
-            if (!musicBuffers[wantTrack]) {
-                fetchClip(wantTrack, m.file, musicBuffers);
-                /* retry once decoded */
-                setTimeout(startMusicIfReady, 500);
-                return;
-            }
+            if (!m || !musicBuffers[wantTrack]) return;
             if (musicTrack === wantTrack && musicSrc) return;
             if (musicSrc) {
                 try { musicSrc.stop(); } catch (e) { /* already done */ }
@@ -163,7 +178,13 @@ var SashimiAudio = (function() {
             musicSrc = ctx.createBufferSource();
             musicSrc.buffer = musicBuffers[wantTrack];
             musicSrc.loop = !!m.loop;
-            musicSrc.connect(musicGain);
+            var fade = ctx.createGain();
+            var t = (FADE_IN_S[wantTrack] !== undefined)
+                ? FADE_IN_S[wantTrack] : FADE_IN_DEFAULT_S;
+            fade.gain.setValueAtTime(0, ctx.currentTime);
+            fade.gain.linearRampToValueAtTime(1, ctx.currentTime + t);
+            musicSrc.connect(fade);
+            fade.connect(musicGain);
             musicSrc.start();
         }
 

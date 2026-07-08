@@ -89,6 +89,7 @@ var SashimiClient = (function() {
             join: M.cwrap('wasm_join', 'number', ['number']),
             joinHero: M.cwrap('wasm_join_hero', 'number',
                               ['number', 'number']),
+            removeHero: M.cwrap('wasm_remove_hero', 'number', ['number']),
             setInput: M.cwrap('wasm_set_input', null, ['number', 'number', 'number']),
             playerEntityId: M.cwrap('wasm_player_entity_id', 'number', ['number']),
             count: M.cwrap('wasm_get_unit_count', 'number', []),
@@ -187,11 +188,16 @@ var SashimiClient = (function() {
            included) holds wasm_tick and polls its own focus input. */
         var screen = 'title';
 
-        /* Possess a hero for a joined device, honoring its select-screen
-           pick (0 = no preference -> first free hero). */
-        function possess(clientId, label) {
-            var kind = screens.picks()[clientId] || 0;
-            var eid = engine.joinHero(clientId, kind);
+        /* Human heroes chosen on the select screen that no input device
+           has claimed yet: the next device to join possesses the head of
+           this queue (kept in roster order = P1, P2). Absent when a
+           joiner should just take any free hero (e.g. an AI hero). */
+        var pendingHumanKinds = [];
+
+        /* Possess a hero for a joined device. `kind` prefers that hero
+           (SW_KIND_HERO_*); 0 = first free hero. */
+        function possess(clientId, kind, label) {
+            var eid = engine.joinHero(clientId, kind || 0);
             if (eid) {
                 /* Resolve the possessed hero's kind straight from the
                    bridge — the view is empty at game start (it only
@@ -205,20 +211,20 @@ var SashimiClient = (function() {
                 audio.select(hk || kind || 1); /* Select VO */
             }
             if (label) {
-                hud.setBanner(eid
-                    ? label + ' joined as P' + clientId +
-                      ' — a second device joins on its first input'
-                    : label + ': no free hero to possess');
+                hud.setBanner(eid ? label + ' joined as P' + clientId
+                                  : label + ': no free hero to possess');
             }
             return eid;
         }
 
         var input = RTInput.init({
-            maxPlayers: 2,   /* two heroes exist: co-op = possession */
+            maxPlayers: 2,   /* up to two heroes exist: co-op = possession */
             onJoin: function(clientId, label) {
-                /* Mid-game joins possess immediately; menu-time joins
-                   wait for game start (their pick may not exist yet). */
-                if (screen === 'playing') possess(clientId, label);
+                /* Mid-game joins possess the next pending human hero (or
+                   any free hero — e.g. take over an AI one); menu-time
+                   joins wait for game start. */
+                if (screen === 'playing')
+                    possess(clientId, pendingHumanKinds.shift() || 0, label);
                 else hud.setBanner(label + ' joined as P' + clientId);
             },
         });
@@ -496,28 +502,42 @@ var SashimiClient = (function() {
             units = [];
             tickIndex = 0;
             lastPos = {};
+            pendingHumanKinds = [];
             fx.reset();
             gameOverShown = false;
             setPauseVisible(false);  /* back to a menu; startGame reshows */
             return true;
         }
 
-        /* SELECT -> PLAYING: possess a hero per joined device (honoring
-           picks); later joins possess on their first input (onJoin). */
+        /* SELECT -> PLAYING: realize the roster. Absent heroes are
+           removed (Unity FollowerInputsystem AllowBots=0 bot
+           destruction); human heroes are possessed by joined devices in
+           roster order (P1, P2) and any without a device yet queue in
+           pendingHumanKinds for the first mid-game join; AI heroes are
+           left un-possessed for hero_ai to drive. */
         function startGame() {
             screen = 'playing';
             screens.hide();
             setPauseVisible(true);
+            var r = screens.roster();
+            r.absent.forEach(function(k) { engine.removeHero(k); });
             var players = input.players();
-            for (var i = 0; i < players.length; i++)
-                possess(players[i].clientId, null);
+            pendingHumanKinds = [];
+            for (var i = 0; i < r.human.length; i++) {
+                if (i < players.length)
+                    possess(players[i].clientId, r.human[i], null);
+                else
+                    pendingHumanKinds.push(r.human[i]);
+            }
             audio.startMusic();   /* the adventure loop */
-            hud.setBanner(players.length
-                ? players.map(function(p) {
-                      return 'P' + p.clientId;
-                  }).join(' ') + ' in — a second device joins on its ' +
-                  'first input'
-                : 'First input joins as P1 (keyboard, gamepad, or touch)');
+            var nAI = r.ai.length;
+            var joined = Math.min(players.length, r.human.length);
+            hud.setBanner(
+                (joined ? joined + (joined > 1 ? ' players' : ' player') + ' in'
+                        : 'First input joins as P1 (keyboard, gamepad, touch)')
+                + (pendingHumanKinds.length
+                    ? ' — P2 joins on its first input' : '')
+                + (nAI ? ' — ' + nAI + ' AI' : ''));
         }
 
         function playAgain() {

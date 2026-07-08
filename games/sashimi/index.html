@@ -146,8 +146,25 @@ canvas { display: block; touch-action: none; }
     font-family: 'Boogaloo', sans-serif;
     font-size: max(11px, calc(var(--su) * 1.05));
 }
-.start-button { position: absolute; left: 50%; top: 62%;
+.start-button { position: absolute; left: 50%; top: 72%;
                 transform: translateX(-50%); }
+/* Per-hero "add AI" toggle, centered under each card */
+.ai-toggle {
+    position: absolute;
+    font-family: 'Boogaloo', sans-serif;
+    font-size: max(12px, calc(var(--su) * 1.35));
+    color: #696969; background: #eee;
+    border: max(2px, calc(var(--su) * 0.14)) solid #1e90ff;
+    border-radius: calc(var(--su) * 0.6);
+    cursor: pointer;
+}
+.ai-toggle.active {
+    color: #fff; background: #1e90ff; border-color: #00bfff;
+    font-weight: bold;
+}
+.ai-toggle.focused, .ai-toggle:hover {
+    border-color: #ff1497; font-weight: bold;
+}
 /* Results: VictoryVT score line (.uss score-title-group at 756,510;
    victory-title 50px dimgray, bold value dodgerblue) */
 .victory-score { position: absolute; left: 39.38%; top: 47.22%;
@@ -210,7 +227,7 @@ canvas { display: block; touch-action: none; }
 <input id="volume" type="range" min="0" max="1" step="0.05" value="1"
        aria-label="volume">
 <div id="screens"></div>
-<div id="version">vdev (a1730f8)</div>
+<div id="version">vdev (b8b63f9)</div>
 
 <!-- Thin client per the Browser Client Rendering Policy: DOM shell +
      WASM-export transport + bootstrap. Loop/render/input/view logic is the

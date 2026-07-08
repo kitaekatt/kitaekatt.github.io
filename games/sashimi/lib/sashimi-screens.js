@@ -38,13 +38,16 @@
  * Enter/Space activate) and gamepad (dpad/stick move focus, face button
  * activates — poll() is called once per RTLoop tick while a screen is
  * up). The client owns WHEN screens show and what happens on
- * activation; this module owns DOM, focus and pick state only.
+ * activation; this module owns DOM, focus and roster state only.
  *
- * Hero picks are per-slot preferences (pick[1], pick[2] = SW hero kind
- * or 0), consumed by the client at game start via
- * wasm_join_hero(clientId, kind). Card activation assigns P1 first,
- * then P2; re-activating with both assigned re-picks P2 (same-kind
- * picks are legal — the engine falls back to the remaining hero).
+ * Participant roster (1P / 2P): each hero has a role — 'human', 'ai', or
+ * 'none'. A hero card toggles its hero human; a per-card AI button
+ * toggles it AI; 'none' heroes are removed at game start (Unity's
+ * FollowerInputsystem bot destruction). The game may start with 1 or 2
+ * participants (human and/or AI); zero blocks START. roster() reports
+ * the human kinds (ordered = P1, P2), ai kinds, and absent kinds; the
+ * client possesses joined devices onto the human heroes in order,
+ * leaves ai heroes AI-driven, and removes the absent ones.
  */
 var SashimiScreens = (function() {
     /* SW hero kinds (wasm_main.c) */
@@ -55,6 +58,9 @@ var SashimiScreens = (function() {
     var CARD_FROG = { left: 2.71, top: 35.0, width: 35.26, height: 23.98 };
     var CARD_EAGLE = { left: 62.03, top: 35.93, width: 35.26, height: 23.89 };
     var MIDDLE_BOX = { left: 39.17, top: 35.0, width: 21.04, height: 23.98 };
+    /* Per-hero "add AI" buttons, centered under each card. */
+    var AI_FROG = { left: 12.71, top: 60.0, width: 15.26, height: 6.0 };
+    var AI_EAGLE = { left: 72.03, top: 60.0, width: 15.26, height: 6.0 };
 
     /* Victory-art leaderboard slot rows (dark bars at x 1501-1860,
      * five rows starting y 724, pitch ~55 px) as stage percentages. */
@@ -83,7 +89,20 @@ var SashimiScreens = (function() {
     function init(opts) {
         var root = opts.root;
         var current = null;          /* 'title'|'select'|'pause'|'results'|null */
-        var pick = { 1: 0, 2: 0 };
+        /* Per-hero role: 'none' | 'human' | 'ai'. Kinds: FROG, EAGLE. */
+        var role = {};
+        role[KIND_FROG] = 'none';
+        role[KIND_EAGLE] = 'none';
+        var HERO_KINDS = [KIND_FROG, KIND_EAGLE];
+
+        function humanKinds() {
+            return HERO_KINDS.filter(function(k) { return role[k] === 'human'; });
+        }
+        function participantCount() {
+            return HERO_KINDS.filter(function(k) {
+                return role[k] !== 'none';
+            }).length;
+        }
 
         /* ── Shared focus model (Unity ButtonGroup.UpdateFocus) ──────
            Each screen registers its focusable elements in order;
@@ -209,53 +228,75 @@ var SashimiScreens = (function() {
         eagleCard.dataset.control = 'pick-eagle';
         var frogBadge = el('div', 'pick-badge', frogCard);
         var eagleBadge = el('div', 'pick-badge', eagleCard);
+        var aiFrogBtn = el('button', 'ai-toggle', select.stage, '+ AI');
+        aiFrogBtn.style.cssText = pct(AI_FROG);
+        aiFrogBtn.dataset.control = 'ai-frog';
+        var aiEagleBtn = el('button', 'ai-toggle', select.stage, '+ AI');
+        aiEagleBtn.style.cssText = pct(AI_EAGLE);
+        aiEagleBtn.dataset.control = 'ai-eagle';
         var middle = el('div', 'pick-status', select.stage);
         middle.style.cssText = pct(MIDDLE_BOX);
         var pickLine1 = el('div', 'pick-line', middle);
         var pickLine2 = el('div', 'pick-line', middle);
         var pickHint = el('div', 'pick-hint', middle);
-        var resetBtn = el('button', 'pick-reset', middle, 'reset picks');
+        var resetBtn = el('button', 'pick-reset', middle, 'reset');
         var startBtn = el('button', 'menu-button start-button', select.stage,
                           'Start');
 
-        function heroName(kind) {
-            return kind === KIND_FROG ? 'NINJA (Frog)'
-                 : kind === KIND_EAGLE ? 'PLUMAMANCER (Eagle)' : '—';
+        var aiBtnFor = {};
+        aiBtnFor[KIND_FROG] = aiFrogBtn;
+        aiBtnFor[KIND_EAGLE] = aiEagleBtn;
+
+        /* Badge = the hero's role: P1/P2 for humans (order = P1 then P2),
+           AI for an AI hero, blank when absent. */
+        function badgeText(kind) {
+            if (role[kind] === 'human') {
+                var hk = humanKinds();
+                return 'P' + (hk.indexOf(kind) + 1);
+            }
+            if (role[kind] === 'ai') return 'AI';
+            return '';
         }
 
         function refreshSelect() {
-            pickLine1.textContent = 'P1  ' +
-                (pick[1] ? heroName(pick[1]) : 'pick a hero');
-            pickLine2.textContent = 'P2  ' +
-                (pick[2] ? heroName(pick[2]) : (pick[1] ? 'optional' : ''));
-            pickHint.textContent = pick[1]
-                ? 'START when ready'
-                : 'choose your hero';
+            var n = participantCount();
+            pickLine1.textContent = n === 0 ? 'choose your hero'
+                : n === 1 ? '1 player' : '2 players';
+            pickLine2.textContent = n === 0 ? ''
+                : 'card = you · AI button = bot';
+            pickHint.textContent = n === 0
+                ? 'tap a hero (or + AI)'
+                : 'START when ready';
             frogBadge.textContent = badgeText(KIND_FROG);
             eagleBadge.textContent = badgeText(KIND_EAGLE);
             frogBadge.style.display = frogBadge.textContent ? 'block' : 'none';
             eagleBadge.style.display =
                 eagleBadge.textContent ? 'block' : 'none';
-            resetBtn.style.display = pick[1] ? 'inline-block' : 'none';
-            startBtn.disabled = !pick[1];
+            HERO_KINDS.forEach(function(k) {
+                var b = aiBtnFor[k];
+                var on = role[k] === 'ai';
+                b.textContent = on ? 'AI ✓' : '+ AI';
+                b.classList.toggle('active', on);
+            });
+            resetBtn.style.display = n ? 'inline-block' : 'none';
+            startBtn.disabled = n === 0;
         }
 
-        function badgeText(kind) {
-            var t = [];
-            if (pick[1] === kind) t.push('P1');
-            if (pick[2] === kind) t.push('P2');
-            return t.join(' ');
-        }
-
+        /* Card toggles the hero human (a second human card = P2); the AI
+           button toggles it AI. The two roles are mutually exclusive per
+           hero, and either toggles back to 'none' on a repeat press. */
         function pickHero(kind) {
-            if (!pick[1]) pick[1] = kind;
-            else pick[2] = kind;     /* second (or re-)pick is P2's */
+            role[kind] = (role[kind] === 'human') ? 'none' : 'human';
+            refreshSelect();
+        }
+
+        function toggleAI(kind) {
+            role[kind] = (role[kind] === 'ai') ? 'none' : 'ai';
             refreshSelect();
         }
 
         function resetPicks() {
-            pick[1] = 0;
-            pick[2] = 0;
+            HERO_KINDS.forEach(function(k) { role[k] = 'none'; });
             refreshSelect();
         }
 
@@ -344,9 +385,11 @@ var SashimiScreens = (function() {
                 bindFocusable(endMatchBtn, function() { opts.onEndMatch(); });
             } else if (name === 'select') {
                 bindFocusable(frogCard, function() { pickHero(KIND_FROG); });
+                bindFocusable(aiFrogBtn, function() { toggleAI(KIND_FROG); });
                 bindFocusable(eagleCard, function() { pickHero(KIND_EAGLE); });
+                bindFocusable(aiEagleBtn, function() { toggleAI(KIND_EAGLE); });
                 bindFocusable(startBtn, function() {
-                    if (pick[1]) opts.onStart();
+                    if (participantCount() > 0) opts.onStart();
                 });
             } else if (name === 'results') {
                 bindFocusable(againBtn, function() { opts.onPlayAgain(); });
@@ -385,7 +428,7 @@ var SashimiScreens = (function() {
         function state() {
             return {
                 screen: current,
-                picks: { p1: pick[1], p2: pick[2] },
+                roster: roster(),
                 buttons: focusables.map(function(f, i) {
                     return {
                         name: f.el.dataset.control,
@@ -393,9 +436,9 @@ var SashimiScreens = (function() {
                         disabled: !!f.el.disabled,
                         focused: i === focusIndex,
                     };
-                }).concat(current === 'select' && pick[1] ? [{
+                }).concat(current === 'select' && participantCount() ? [{
                     name: 'reset-picks',
-                    label: 'reset picks',
+                    label: 'reset',
                     disabled: false,
                     focused: false,
                 }] : []),
@@ -424,12 +467,25 @@ var SashimiScreens = (function() {
                             current + "'");
         }
 
+        /* The client's game-start contract: human kinds (ordered = P1,
+           P2), ai kinds, and absent kinds (removed at start). */
+        function roster() {
+            return {
+                human: humanKinds(),
+                ai: HERO_KINDS.filter(function(k) { return role[k] === 'ai'; }),
+                absent: HERO_KINDS.filter(function(k) {
+                    return role[k] === 'none';
+                }),
+            };
+        }
+
         return {
             show: show,
             hide: hide,
             poll: poll,
             current: function() { return current; },
-            picks: function() { return pick; },
+            roster: roster,
+            participants: participantCount,
             state: state,
             press: press,
         };

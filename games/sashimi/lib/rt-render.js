@@ -601,6 +601,38 @@ var RTRender = (function() {
         } catch (e) { /* last resort: the console.error above */ }
     }
 
+    /* Loud, no-silent-fallback failure path shared by init and
+       createSurface (root CLAUDE.md decision 12): surface a plain
+       user-visible explanation via cfg.onUnsupported (else a DOM overlay
+       over the canvas). */
+    function failUnsupported(canvas, cfg) {
+        if (cfg.onUnsupported) {
+            try { cfg.onUnsupported(WEBGL_UNSUPPORTED_MSG); }
+            catch (e) { /* client handler failed; the overlay is the
+                           safety net */ showCanvasError(canvas,
+                           WEBGL_UNSUPPORTED_MSG); }
+        } else {
+            showCanvasError(canvas, WEBGL_UNSUPPORTED_MSG);
+        }
+    }
+
+    /* Surface-only consumption path (avk): create just the backend-neutral
+       Gfx draw surface — no camera, tilemap, or frame loop (init bundles
+       those, which is the wrong fit for a turn-based, fixed-internal-
+       resolution client that owns its own rAF loop and view state). Returns
+       the gfx object on success, or null after failing loudly (same
+       WebGL-required contract as init). Module scope stays Node-safe: no
+       GL/DOM touched at load; tryCreate is the sole GL entry point. */
+    function createSurface(cfg) {
+        var canvas = cfg.canvas;
+        var gfx = GfxGL.tryCreate(canvas);
+        if (!gfx) {
+            failUnsupported(canvas, cfg);
+            return null;
+        }
+        return gfx;
+    }
+
     function init(cfg) {
         var canvas = cfg.canvas;
 
@@ -612,14 +644,7 @@ var RTRender = (function() {
            override. */
         var gfx = GfxGL.tryCreate(canvas);
         if (!gfx) {
-            if (cfg.onUnsupported) {
-                try { cfg.onUnsupported(WEBGL_UNSUPPORTED_MSG); }
-                catch (e) { /* client handler failed; the overlay is the
-                               safety net */ showCanvasError(canvas,
-                               WEBGL_UNSUPPORTED_MSG); }
-            } else {
-                showCanvasError(canvas, WEBGL_UNSUPPORTED_MSG);
-            }
+            failUnsupported(canvas, cfg);
             return null;
         }
         var curDpr = window.devicePixelRatio || 1;  /* set each resize(),
@@ -894,7 +919,7 @@ var RTRender = (function() {
 
     /* _gl: pure GfxGL math seams, exported for headless unit tests
        (test_rt_gfx.js) — no GL context required. */
-    return { init: init, _gl: {
+    return { init: init, createSurface: createSurface, _gl: {
         orthoMatrix: orthoMatrix,
         applyOrtho: applyOrtho,
         uvRect: uvRect,
