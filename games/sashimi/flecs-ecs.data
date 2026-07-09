@@ -76,12 +76,14 @@ Author's standing rulings for resolving divergence:
 
 Run headless: `./build/local/test_sashimi_systems` (ctest) includes the
 acceptance run — FLECS_SEED pinned + `--config headless-verify` must
-reproduce the pinned deterministic outcome. Since the 2026-07 Eagle
-FeatherRecall batch that outcome is VICTORY at tick 10801; since the
-2026-07-07 hit-flash threshold change the pinned stats are gems 205,
-kills 486 (the full pin history, including the interim DEFEAT-at-7591
-steering pin, lives in the acceptance test comment). The pin records
-what the port DOES, never a tuned target.
+reproduce the pinned deterministic outcome. Since the 2026-07-08
+headless-verify ratio change (0.5 -> 0.69, the ~50% win-rate balance
+point) that outcome is DEFEAT at tick 7121, gems 92, kills 250 — seed
+12345 is a coin-flip seed at the balance point and loses (it wins at the
+easier 0.5). The full pin history, including the interim DEFEAT-at-7591
+steering pin and the VICTORY-at-10801 pins at ratio 0.5, lives in the
+acceptance test comment. The pin records what the port DOES at the
+chosen acceptance ratio, never a tuned target.
 
 **Determinism is per-platform, not cross-platform** (found 2026-07-06):
 the sim rolls with libc `srand()`/`rand()`, and Darwin's and
@@ -179,7 +181,8 @@ assets/*.png, assets/audio/*.m4a).
 - **`damage_taken_ratio`** (headless-verify profile): a port-added
   GameConfig-style field. Default lives on the GameConfig entity
   (`CombatConfig.damage_taken_ratio: 1.0`); `app.yaml`'s `headless-verify`
-  named config sets `0.5` (heroes take 50% damage), selected via
+  named config sets `0.69` (heroes take 69% damage — the measured ~50%
+  hero-AI win-rate balance point, 2026-07-08 user decision), selected via
   `--config headless-verify` per root decision 13. The engine's named-config
   parser ignores game-specific keys, so slice assembly must wire the config
   value onto `CombatConfig` at app start; the damage system then consumes
@@ -563,9 +566,9 @@ touch support. Load it whenever a change touches
   never regains fuel, duration-only stacking, dead-vs-OOG recall
   behavior, en-route creature damage) and ends with the headless
   acceptance run: FLECS_SEED=12345 + `headless-verify` must reproduce
-  the pinned outcome — VICTORY at tick 10801 (gems 205, kills 486)
-  since the 2026-07-07 hit-flash threshold change (see the acceptance
-  test comment for the pin history and the winnability sanity numbers).
+  the pinned outcome — DEFEAT at tick 7121 (gems 92, kills 250)
+  since the 2026-07-08 headless-verify ratio change to 0.69 (see the
+  acceptance test comment for the pin history and the winnability notes).
   `SASHIMI_DEBUG=1` prints per-interval AI/combat traces.
 
 - `tests/test_wasm.js` (ctest `test_wasm_sashimi` in EMSCRIPTEN builds)
@@ -630,14 +633,15 @@ lean_tick: true
 
 configs:
   headless-verify:
-    # Headless verification profile: heroes take 50% damage.
+    # Headless verification profile: heroes take 69% damage (the measured
+    # ~50% hero-AI win-rate balance point; 2026-07-08 user decision).
     # damage_taken_ratio is a GameConfig-style field (CombatConfig
     # .damage_taken_ratio defaults to 1.0 on the GameConfig entity); per root
     # decision 13 the ratio lives in YAML and is selected via --config. The
     # engine's named-config parser ignores unknown keys, so wiring this value
     # onto CombatConfig at app start is part of slice assembly (documented in
     # CLAUDE.md); the damage system consumes CombatConfig.damage_taken_ratio.
-    damage_taken_ratio: 0.5
+    damage_taken_ratio: 0.69
     lean_tick: true
 
 templates:
@@ -866,26 +870,31 @@ Contracts the client depends on:
   `wasm_get_event_{count,type,kind,entity,data}` (kind = SW_KIND of the
   recorded IsA prefab). The client turns events into audio + hero
   attack/respawn anim latches.
-- **Join = possession** -- both heroes exist from app start; a device's
-  first input claims clientId 1..2 and `wasm_join_hero(clientId, kind)`
-  sets `PossessedBy` {slot} on an un-possessed hero, preferring the hero
-  whose spawn prefab kind matches the player's hero-select pick
-  (SW_KIND_HERO_EAGLE / SW_KIND_HERO_FROG; 0 = no preference) and
-  falling back to the first free hero when that kind is taken -- two
-  players may pick the same hero, the second gets the other one.
-  `wasm_join(clientId)` remains as the unpreferenced back-compat form
-  (== `wasm_join_hero(clientId, 0)`). Picks are client-side per-slot
-  preferences (sashimi-screens.js); devices joined on a menu are
-  possessed at game start, mid-game joins possess immediately (hero_ai
-  yields; the client then writes InputDirection via `wasm_set_input`).
-  There is no third hero: join returns 0. Local co-op is keyboard +
+- **Participant roster = possession + removal** -- both heroes spawn from
+  app start (spawn_list), but the hero-select screen assigns each a role
+  (`sashimi-screens.js` `roster()`: human / ai / absent). At game start
+  the client realizes the roster: `wasm_remove_hero(kind)` deletes each
+  ABSENT hero (Unity's FollowerInputsystem AllowBots=0 bot destruction,
+  so a solo match has exactly one hero entity and the co-op HP x1.4 gate
+  stays off); HUMAN heroes are possessed by joined devices in roster
+  order (P1, P2); AI heroes are left un-possessed for `hero_ai` to drive.
+  `wasm_join_hero(clientId, kind)` sets `PossessedBy` {slot} on an
+  un-possessed hero, preferring the matching spawn prefab kind
+  (SW_KIND_HERO_EAGLE / SW_KIND_HERO_FROG; 0 = first free);
+  `wasm_join(clientId)` is the unpreferenced back-compat form. A human
+  hero with no device yet queues in `pendingHumanKinds`; the next
+  mid-game device join possesses it (or takes over any free hero),
+  hero_ai yields, and the client writes InputDirection via
+  `wasm_set_input`. START requires 1 or 2 participants (human and/or
+  AI); zero is blocked. The headless-verify config never removes, so both
+  heroes persist all-AI for the acceptance run. Local co-op is keyboard +
   gamepad + touch (rt-input.js join flow).
 - **CLI control channel** -- when served by `tools/localhost.sh sashimi
   --client wasm` (i.e. `tools/serve-client.py`), the client registers
   `RTControl` handlers so `tools/client.py` can query state and drive
   the UI from the command line: `screen`/`state`/`actions` report the
-  current screen, pressable buttons, picks, game + perf counters, and
-  the active render backend (`state().render = {backend, renderer}`:
+  current screen, pressable buttons, the roster, game + perf counters,
+  and the active render backend (`state().render = {backend, renderer}`:
   `backend` is `'webgl'` or `'2d'`, `renderer` the GPU string when the
   WEBGL_debug_renderer_info extension exposes it — use it to confirm
   which backend won and, on dual-GPU Macs, which GPU);
@@ -893,7 +902,8 @@ Contracts the client depends on:
   pointer click (`screens.press`), or `press pause` while playing opens
   the pause screen.
   Stable button names (`data-control`): `play` (title); `pick-frog`,
-  `pick-eagle`, `start`, `reset-picks` (select); `pause` (playing);
+  `pick-eagle`, `ai-frog`, `ai-eagle`, `start`, `reset-picks` (select);
+  `pause` (playing);
   `resume`, `end-match` (pause); `play-again`, `title`
   (results). Inert on published pages
   (rt-control.js is localhost-gated).
@@ -51297,11 +51307,11 @@ canvas { display: block; touch-action: none; }
    calc(var(--su) * N) == N/19.2 px of the 1920px Unity design. */
 @font-face {
     font-family: 'Kenvector Future';   /* .uss .menu-button font */
-    src: url('assets/fonts/kenvector_future.ttf?v=11') format('truetype');
+    src: url('assets/fonts/kenvector_future.ttf?v=13') format('truetype');
 }
 @font-face {
     font-family: 'Boogaloo';           /* .uss victory/leaderboard font */
-    src: url('assets/fonts/boogaloo.ttf?v=11') format('truetype');
+    src: url('assets/fonts/boogaloo.ttf?v=13') format('truetype');
 }
 #screens { position: fixed; inset: 0; z-index: 5; display: none; }
 .screen {
@@ -51462,21 +51472,21 @@ canvas { display: block; touch-action: none; }
      sashimi-specific sprites/HUD/bootstrap live in the sandbox lib
      (lib/sashimi-*.js, source: sandboxes/sashimi/clients/lib/).
      ?v=N cache-busts GitHub Pages (root CLAUDE.md decision 22). -->
-<script src="flecs-ecs.js?v=11"></script>
-<script src="lib/rt-loop.js?v=11"></script>
-<script src="lib/rt-control.js?v=11"></script>
-<script src="lib/rt-input.js?v=11"></script>
-<script src="lib/rt-view.js?v=11"></script>
-<script src="lib/rt-sprites.js?v=11"></script>
-<script src="lib/rt-render.js?v=11"></script>
-<script src="lib/sashimi-art-data.js?v=11"></script>
-<script src="lib/sashimi-audio-data.js?v=11"></script>
-<script src="lib/sashimi-sprites.js?v=11"></script>
-<script src="lib/sashimi-audio.js?v=11"></script>
-<script src="lib/sashimi-fx.js?v=11"></script>
-<script src="lib/sashimi-hud.js?v=11"></script>
-<script src="lib/sashimi-screens.js?v=11"></script>
-<script src="lib/sashimi-client.js?v=11"></script>
+<script src="flecs-ecs.js?v=13"></script>
+<script src="lib/rt-loop.js?v=13"></script>
+<script src="lib/rt-control.js?v=13"></script>
+<script src="lib/rt-input.js?v=13"></script>
+<script src="lib/rt-view.js?v=13"></script>
+<script src="lib/rt-sprites.js?v=13"></script>
+<script src="lib/rt-render.js?v=13"></script>
+<script src="lib/sashimi-art-data.js?v=13"></script>
+<script src="lib/sashimi-audio-data.js?v=13"></script>
+<script src="lib/sashimi-sprites.js?v=13"></script>
+<script src="lib/sashimi-audio.js?v=13"></script>
+<script src="lib/sashimi-fx.js?v=13"></script>
+<script src="lib/sashimi-hud.js?v=13"></script>
+<script src="lib/sashimi-screens.js?v=13"></script>
+<script src="lib/sashimi-client.js?v=13"></script>
 <script>
 FlecsECS().then(function(M) {
     /* window.__sashimi: debug/test handle (loop, engine, restart, audio) */
@@ -52369,7 +52379,7 @@ name: CombatConfig
 kind: component
 fields:
   target_switch_threshold: { type: f32 }
-  damage_taken_ratio: { type: f32 }   # hero incoming-damage multiplier; 1.0 = sashimi behavior. The headless-verify config in app.yaml selects 0.5
+  damage_taken_ratio: { type: f32 }   # hero incoming-damage multiplier; 1.0 = sashimi behavior. The headless-verify config in app.yaml selects 0.69
 # GENERATED by sandboxes/sashimi/tools/generate_content.py -- do not edit by hand.
 # Creature level-up table
 # (Assets/Creatures/Creature_LevelUpSO.asset; wired to the
@@ -60161,9 +60171,10 @@ TEST(damage_taken_ratio_math) {
     /* Default config: ratio 1.0 -> 50 - 12.5 = 37.5 */
     float full = hero_hp_after_slime_hit(NULL);
     ASSERT_EQ(full, 37.5f);
-    /* headless-verify: ratio 0.5 -> 50 - 6.25 = 43.75 */
-    float half = hero_hp_after_slime_hit("headless-verify");
-    ASSERT_EQ(half, 43.75f);
+    /* headless-verify: ratio 0.69 -> 50 - 12.5*0.69 = 41.375 (0.69 is not
+       an exact float, so compute the expectation the same way). */
+    float part = hero_hp_after_slime_hit("headless-verify");
+    ASSERT(fabsf(part - (50.0f - 12.5f * 0.69f)) < 1e-3f);
 }
 
 TEST(creatures_take_full_damage_regardless_of_ratio) {
@@ -62638,9 +62649,17 @@ TEST(headless_full_game_to_completion) {
      *    an entity's archetype and thus query iteration order across all
      *    systems, reshuffling the deterministic run. VICTORY at 10801,
      *    gems 188 -> 205, kills 489 -> 486. Observed and re-pinned,
-     *    never tuned. */
-    ASSERT(strncmp(engine->game_over_message, "Victory", 7) == 0);
-    ASSERT_EQ(ticks, 10801);
+     *    never tuned.
+     *  - 2026-07-08 headless-verify ratio 0.5 -> 0.69 (user decision,
+     *    the measured ~50% hero-AI win-rate balance point): heroes now
+     *    take 69% incoming damage instead of 50%, so seed 12345 — a
+     *    coin-flip seed at the balance point — FLIPS to DEFEAT at tick
+     *    7121 (all heroes down), gems 205 -> 92, kills 486 -> 250. This
+     *    is a config change, not a mechanic change; the pin records the
+     *    deterministic outcome at the chosen acceptance ratio. Winnability
+     *    is unchanged at easier ratios (0.5 still wins at 10801). */
+    ASSERT(strncmp(engine->game_over_message, "Defeat", 6) == 0);
+    ASSERT_EQ(ticks, 7121);
     teardown();
 }
 
@@ -62825,17 +62844,17 @@ async function run() {
     assert('possess the frog for P1',
         e.joinHero(1, KIND.HERO_FROG) > 0);
     assert('remove_hero(FROG) refuses a possessed hero',
-        e.removeHero(KIND.HERO_FROG) === 0 &&
-        countKind(KIND.HERO_FROG) === 1);
+        e.removeHero(KIND.HERO_FROG) === 0);
     assert('remove_hero(EAGLE) deletes the un-possessed eagle',
-        e.removeHero(KIND.HERO_EAGLE) === 1 &&
-        countKind(KIND.HERO_EAGLE) === 0);
-    assert('solo match has exactly one hero entity',
-        countKind(KIND.HERO_FROG) === 1);
+        e.removeHero(KIND.HERO_EAGLE) === 1);
     assert('join_hero(2, 0) finds no free hero after removal',
-        e.joinHero(2, 0) === 0);
+        e.joinHero(2, 0) === 0);           /* live-world query */
     assert('remove_hero(EAGLE) again is a no-op (already gone)',
         e.removeHero(KIND.HERO_EAGLE) === 0);
+    e.tick();                              /* refresh the unit snapshot */
+    assert('solo match has exactly one hero entity',
+        countKind(KIND.HERO_FROG) === 1 &&
+        countKind(KIND.HERO_EAGLE) === 0);
 
     /* Fresh world for the untargeted back-compat flow below. */
     assert('re-init for untargeted join flow', e.init(config) === 1);
@@ -64653,7 +64672,7 @@ def gen_components(outdir):
               [("target_switch_threshold", "f32", None, None),
                ("damage_taken_ratio", "f32", None,
                 "hero incoming-damage multiplier; 1.0 = sashimi behavior."
-                " The headless-verify config in app.yaml selects 0.5")],
+                " The headless-verify config in app.yaml selects 0.69")],
               ["Combat tuning (GameConfig combatConfig). damage_taken_ratio",
                "is a port-added GameConfig-style field consumed by the damage",
                "system (see app.yaml headless-verify and CLAUDE.md)."]))
@@ -65934,14 +65953,15 @@ lean_tick: true
 
 configs:
   headless-verify:
-    # Headless verification profile: heroes take 50% damage.
+    # Headless verification profile: heroes take 69% damage (the measured
+    # ~50% hero-AI win-rate balance point; 2026-07-08 user decision).
     # damage_taken_ratio is a GameConfig-style field (CombatConfig
     # .damage_taken_ratio defaults to 1.0 on the GameConfig entity); per root
     # decision 13 the ratio lives in YAML and is selected via --config. The
     # engine's named-config parser ignores unknown keys, so wiring this value
     # onto CombatConfig at app start is part of slice assembly (documented in
     # CLAUDE.md); the damage system consumes CombatConfig.damage_taken_ratio.
-    damage_taken_ratio: 0.5
+    damage_taken_ratio: 0.69
     lean_tick: true
 
 templates:
