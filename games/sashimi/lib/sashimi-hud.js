@@ -1,6 +1,8 @@
 /**
  * SashimiHUD — DOM HUD layer for the sashimi client: status panel (HP,
- * XP/level, wave, survival timer, perf counters) and the join/pause banner.
+ * XP/level, wave, survival timer, perf counters, signed-in player with
+ * their board alias in brackets when known + current-category high
+ * score) and the join/pause banner.
  * Pure presentation: every number displayed is read from the engine through
  * the WASM bridge. The game-over overlay this module used to own is now the
  * results screen (sashimi-screens.js, the Unity VictoryVT/DefeatVT port).
@@ -46,7 +48,14 @@ var SashimiHUD = (function() {
                     ' (engine ' + d.engineMs.toFixed(2) + ')' +
                 '\ndraw ms  ' + d.drawMs.toFixed(2) +
                 '\nentities ' + d.entities +
-                '\nplayers  ' + (d.players || 'none');
+                '\nplayers  ' + (d.players || 'none') +
+                '\nheroes   ' + (d.heroes || '-') +
+                '\nsigned   ' + (d.playerName || 'guest') +
+                    (d.playerAlias ? ' [' + d.playerAlias + ']' : '') +
+                '\nbest     ' + (typeof d.bestGems === 'number'
+                    ? d.bestGems + ' gems (' + d.bestCategory + ')'
+                    : (d.bestCategory ? '- (' + d.bestCategory + ')' : '-')) +
+                (d.lbNote ? '\nboard    ' + d.lbNote : '');
         }
 
         function setBanner(text) { bannerEl.textContent = text; }

@@ -28,11 +28,15 @@
  *   status readout in the art's empty middle box, and a START button.
  * - RESULTS reproduces VictoryVT.uxml / DefeatVT.uxml over the shipped
  *   victory/defeat art: the .uss-positioned "You collected N gems!"
- *   line (victory), match stats in the art's baked leaderboard slots
+ *   line (victory), the run's board name over the slots (victory only;
+ *   Unity's LeaderBoardTitle, VictoryScreenController.cs:141-160),
+ *   match stats in the art's baked leaderboard slots
  *   (victory; the port has no Steam leaderboard — stats are the
  *   port-designed use of the panel), a left button group (Continue ->
- *   PLAY AGAIN + TITLE), and a defeat stats card (port-added; Unity's
- *   defeat screen shows no numbers).
+ *   PLAY AGAIN + TITLE), a defeat stats card (port-added; Unity's
+ *   defeat screen shows no numbers), and the port-added alias input
+ *   (setAliasPrompt; opened by the client on new-best victories only —
+ *   the online board's alias-change gate).
  *
  * Input: pointer (click/tap), keyboard (arrows/A/D move focus,
  * Enter/Space activate) and gamepad (dpad/stick move focus, face button
@@ -48,6 +52,14 @@
  * the human kinds (ordered = P1, P2), ai kinds, and absent kinds; the
  * client possesses joined devices onto the human heroes in order,
  * leaves ai heroes AI-driven, and removes the absent ones.
+ *
+ * EVERY entry to HERO SELECT starts from a FRESH roster (show('select')
+ * calls resetPicks) — each match rosters from scratch, like Unity's
+ * per-match server world. Roles used to persist across games ("picks
+ * are kept"); because a card click TOGGLES, a stale role inverted the
+ * next game's selection (clicking your previous hero deselected it),
+ * so game 2 realized rosters built on game 1's state — the
+ * "selected plumamancer, got a ninja" bug.
  */
 var SashimiScreens = (function() {
     /* SW hero kinds (wasm_main.c) */
@@ -66,6 +78,14 @@ var SashimiScreens = (function() {
      * five rows starting y 724, pitch ~55 px) as stage percentages. */
     var LB_SLOT = { left: 78.18, width: 18.70, height: 4.44 };
     var LB_TOPS = [67.04, 71.94, 76.94, 82.22, 87.41];
+    /* Board title above the slots (VictoryVT.uxml:24 LeaderBoardTitle;
+     * .uss .leaderboard-title: right 238, top 633, 302x41,
+     * translate 50%/50% -> left (1920-238-302)+151 = 1531, top 653.5
+     * of 1920x1080) and the run-category board names
+     * (VictoryScreenController.cs:141-160). */
+    var LB_TITLE = { left: 79.74, top: 60.51, width: 15.73, height: 3.80 };
+    var LB_TITLES = { ninja: 'NINJA', plumamancer: 'PLUMAMANCER',
+                      coop: 'CO-OP' };
 
     function el(tag, className, parent, text) {
         var d = document.createElement(tag);
@@ -156,6 +176,10 @@ var SashimiScreens = (function() {
 
         document.addEventListener('keydown', function(e) {
             if (!current) return;
+            /* Typing in a text input (the alias field) must not drive
+               menu focus/activation. */
+            if (e.target && e.target.tagName === 'INPUT' &&
+                e.target.type === 'text') return;
             if (e.code === 'ArrowLeft' || e.code === 'KeyA' ||
                 e.code === 'ArrowUp' || e.code === 'KeyW') {
                 moveFocus(-1);
@@ -320,6 +344,14 @@ var SashimiScreens = (function() {
                              'You collected ');
         var scoreValue = el('span', 'victory-title-bold', scoreLine, '0');
         var scoreSuffix = el('span', 'victory-title', scoreLine, ' gems!');
+        /* Personal best (SashimiLeaderboard, KeepBest): shown under the
+           score line on victory; defeat gets a stats-card line instead. */
+        var bestLine = el('div', 'personal-best', results.stage);
+        /* Victory: the run's board name over the slots (Unity's
+           LeaderBoardTitle, VictoryScreenController.cs:141-160 --
+           NINJA / PLUMAMANCER / CO-OP; defeat shows no label). */
+        var lbTitle = el('div', 'leaderboard-title', results.stage);
+        lbTitle.style.cssText = pct(LB_TITLE);
         /* Victory: stats into the art's five leaderboard slots */
         var lbRows = [];
         for (var s = 0; s < 5; s++) {
@@ -330,8 +362,129 @@ var SashimiScreens = (function() {
             });
             lbRows.push(row);
         }
+        /* Provenance notice under the board slots (user ruling
+           2026-07-09: "telling someone they are on the leaderboard
+           when they aren't is verboten"): states whether this run's
+           score reached the online board (offline / failed /
+           submitted). Text comes from
+           SashimiLeaderboard.boardPresentation via setBoardView. */
+        var lbNotice = el('div', 'board-notice', results.stage);
+        lbNotice.style.cssText = pct({ left: LB_SLOT.left, top: 92.2,
+                                       width: LB_SLOT.width,
+                                       height: 3.2 });
         /* Defeat: compact port-added stats card (Unity shows none) */
         var defeatStats = el('div', 'defeat-stats', results.stage);
+        var lastVictory = false;     /* setBoardView applies to victory only */
+
+        /* ── Alias input (victory, new-best runs only) ─────────────
+           The client (sashimi-client.js) opens this via setAliasPrompt
+           exactly when the run strictly improved the local best -- the
+           same condition under which the Worker accepts an alias
+           change. Enter or OK confirms (onConfirm receives the raw
+           text); the prompt is pointer/typing only, outside the menu
+           focus ring (the key-nav handler above skips INPUT targets,
+           and the input's own keydown stops propagation so typing
+           never reaches the client's R-restart handler). */
+        var aliasRow = el('div', 'alias-row', results.stage);
+        el('span', 'alias-label', aliasRow, 'alias');
+        var aliasInput = el('input', 'alias-input', aliasRow);
+        aliasInput.maxLength = 32;         /* Worker caps at 32 too */
+        aliasInput.dataset.control = 'alias-input';
+        var aliasBtn = el('button', 'alias-ok', aliasRow, 'OK');
+        aliasBtn.dataset.control = 'alias-ok';
+        var aliasConfirm = null;   /* onConfirm while the prompt is up */
+        var aliasDirty = false;    /* the player typed something */
+        aliasInput.addEventListener('input', function() {
+            aliasDirty = true;
+        });
+        aliasInput.addEventListener('keydown', function(e) {
+            e.stopPropagation();
+            if (e.code === 'Enter') {
+                e.preventDefault();
+                confirmAlias();
+            }
+        });
+        aliasBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            confirmAlias();
+        });
+        function confirmAlias() {
+            var fn = aliasConfirm;
+            if (!fn) return;
+            var v = aliasInput.value;
+            setAliasPrompt(null);
+            fn(v);
+        }
+        /* setAliasPrompt(null) hides; { value, onConfirm } opens the
+           prompt prefilled; { value } alone updates the prefill of an
+           OPEN prompt (late board fetch) unless the player already
+           typed. */
+        function setAliasPrompt(p) {
+            if (!p) {
+                aliasConfirm = null;
+                aliasRow.style.display = 'none';
+                return;
+            }
+            if (!aliasConfirm) {
+                if (!p.onConfirm) return;   /* nothing to confirm into */
+                aliasConfirm = p.onConfirm;
+                aliasDirty = false;
+                aliasInput.value = p.value || '';
+                aliasRow.style.display = 'flex';
+                if (aliasInput.focus) aliasInput.focus();
+                return;
+            }
+            if (p.onConfirm) aliasConfirm = p.onConfirm;
+            if (!aliasDirty && p.value) aliasInput.value = p.value;
+        }
+
+        /* Swap the victory art's 5 slots to board rows (boardWindow or
+           localBoardRows output). Unity shows the leaderboard on
+           VICTORY only, and the board fetch is async -- fillResults
+           already painted the self-stats fallback, so a late/failed
+           fetch changes nothing. Internal: clients go through
+           setBoardView so rows always arrive with their provenance
+           (title + notice). */
+        function setBoardRows(rows) {
+            if (current !== 'results' || !lastVictory) return false;
+            if (!rows || !rows.length) return false;
+            for (var i = 0; i < lbRows.length; i++) {
+                var r = rows[i];
+                lbRows[i].innerHTML = '';
+                lbRows[i].style.display = r ? 'flex' : 'none';
+                lbRows[i].classList.toggle('lb-you', !!(r && r.you));
+                if (!r) continue;
+                el('span', 'lb-label', lbRows[i], '#' + r.rank + ' ' + r.name);
+                el('span', 'lb-value', lbRows[i], String(r.gems));
+            }
+            return true;
+        }
+
+        /* Apply a SashimiLeaderboard.boardPresentation result to the
+           victory panel: the board title (carries the ' - LOCAL BEST'
+           suffix when the rows are local), the slot rows, and the
+           provenance notice line. rows === null leaves the already
+           painted slots (the self-stats fill). Victory results only --
+           defeat never shows a board. */
+        function setBoardView(p) {
+            if (current !== 'results' || !lastVictory || !p) return false;
+            if (p.title) {
+                lbTitle.textContent = p.title;
+                lbTitle.style.display = 'block';
+            }
+            lbNotice.textContent = p.notice || '';
+            lbNotice.className = 'board-notice' + (p.notice
+                ? ' board-notice-' + (p.noticeKind || 'warn') : '');
+            lbNotice.style.display = p.notice ? 'block' : 'none';
+            if (p.rows && p.rows.length) setBoardRows(p.rows);
+            return true;
+        }
+
+        /* The category's board display name (Unity's LeaderBoardTitle
+           strings) -- the boardName input to boardPresentation. */
+        function boardTitle(category) {
+            return LB_TITLES[category] || '';
+        }
 
         function statLines(d) {
             return [
@@ -350,15 +503,43 @@ var SashimiScreens = (function() {
             resultMsg.textContent = d.message || '';
             scoreLine.style.display = d.victory ? 'block' : 'none';
             scoreValue.textContent = String(d.gems);
+            /* Personal best line (victory + recorded runs only --
+               >= 1 human in the roster; see SashimiLeaderboard).
+               Text is Unity's score-to-beat messaging, precomputed by
+               SashimiLeaderboard.scoreMessage: NEW HIGH SCORE! on a
+               tie-or-better, else "Collect N more to beat your
+               score!" (VictoryScreenController.cs:226-249). */
+            var recorded = typeof d.best === 'number';
+            bestLine.style.display =
+                (d.victory && recorded) ? 'block' : 'none';
+            bestLine.textContent =
+                (d.victory && recorded) ? (d.bestText || '') : '';
+            bestLine.classList.toggle('new-best', !!d.newBest);
+            /* Board name over the slots on victory only (Unity's
+               LeaderBoardTitle); defeat has no board panel. */
+            var boardName = d.victory ? (LB_TITLES[d.category] || '') : '';
+            lbTitle.textContent = boardName;
+            lbTitle.style.display = boardName ? 'block' : 'none';
+            lbNotice.textContent = '';        /* setBoardView owns it */
+            lbNotice.style.display = 'none';
+            setAliasPrompt(null);   /* the client re-opens it if eligible */
+            lastVictory = !!d.victory;
             var lines = statLines(d);
             for (var i = 0; i < lbRows.length; i++) {
                 lbRows[i].style.display = d.victory ? 'flex' : 'none';
                 lbRows[i].innerHTML = '';
+                lbRows[i].classList.remove('lb-you');
                 el('span', 'lb-label', lbRows[i], lines[i][0]);
                 el('span', 'lb-value', lbRows[i], lines[i][1]);
             }
             defeatStats.style.display = d.victory ? 'none' : 'block';
             defeatStats.innerHTML = '';
+            /* Defeat keeps its 'best' row, but from the STORED best
+               only -- a defeat never records (victory-only record,
+               Unity VictoryScreenController.cs:173-197). */
+            if (!d.victory && recorded) {
+                lines.push(['best', String(d.best)]);
+            }
             for (var j = 0; j < lines.length; j++) {
                 var dl = el('div', 'defeat-stat-line', defeatStats);
                 el('span', 'lb-label', dl, lines[j][0]);
@@ -408,7 +589,10 @@ var SashimiScreens = (function() {
                insta-activate this screen's focused button — poll()'s
                {act: true} default requires a release first. */
             padPrev = {};
-            if (name === 'select') refreshSelect();
+            /* Fresh roster on every select entry (see header): a stale
+               role from the previous game inverts the card toggle, so
+               the roster must never survive into the next match. */
+            if (name === 'select') resetPicks();
             if (name === 'results' && data) fillResults(data);
             rebuildFocus(name);
             root.style.display = 'block';
@@ -488,6 +672,9 @@ var SashimiScreens = (function() {
             participants: participantCount,
             state: state,
             press: press,
+            setBoardView: setBoardView,
+            setAliasPrompt: setAliasPrompt,
+            boardTitle: boardTitle,
         };
     }
 

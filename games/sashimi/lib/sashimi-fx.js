@@ -200,6 +200,30 @@ var SashimiFX = (function() {
             fx.length = keep;
         }
 
+        /* End-of-match countdown over each hero's head. Unity shows a
+           single centered warning number when the victory timer has
+           <= 12 s left (DebugPanelUIController.warningTime <= 12), dark
+           red (0.765,0.10,0.10) over a white highlight, integer seconds.
+           Port decision: draw it per-hero (over each head) as requested,
+           keeping Unity's threshold, colour and integer-seconds display.
+           `secs` is computed by the client from the time exports; heroes
+           are kinds 1 (Eagle) / 2 (Frog) per the wasm kind contract. */
+        function drawHeroCountdown(gfx, view, units, secs) {
+            if (secs == null || secs > 12 || secs < 1) return;
+            var txt = String(secs);
+            var size = Math.round(view.tilePx * 0.6);
+            var off = Math.max(1, Math.round(view.tilePx * 0.06));
+            for (var i = 0; i < units.length; i++) {
+                var u = units[i];
+                if (u.kind !== 1 && u.kind !== 2) continue;
+                if (u.flags & 1) continue;   /* skip defeated heroes */
+                var cx = view.toX(u.x);
+                var cy = view.toY(u.y) - view.tilePx * 1.3;
+                gfx.text(txt, cx + off, cy + off, size, 1, 1, 1, 1);
+                gfx.text(txt, cx, cy, size, 0.765, 0.10, 0.10, 1);
+            }
+        }
+
         /* Restart: entity ids are reused after a module re-init, so
            drop everything keyed by id and all pending entries. */
         function reset() {
@@ -217,6 +241,7 @@ var SashimiFX = (function() {
             drawUnder: drawUnder,
             drawTrails: drawTrails,
             drawFx: drawFx,
+            drawHeroCountdown: drawHeroCountdown,
         };
     }
 

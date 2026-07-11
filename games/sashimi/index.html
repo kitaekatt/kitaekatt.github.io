@@ -70,11 +70,11 @@ canvas { display: block; touch-action: none; }
    calc(var(--su) * N) == N/19.2 px of the 1920px Unity design. */
 @font-face {
     font-family: 'Kenvector Future';   /* .uss .menu-button font */
-    src: url('assets/fonts/kenvector_future.ttf?v=13') format('truetype');
+    src: url('assets/fonts/kenvector_future.ttf?v=14') format('truetype');
 }
 @font-face {
     font-family: 'Boogaloo';           /* .uss victory/leaderboard font */
-    src: url('assets/fonts/boogaloo.ttf?v=13') format('truetype');
+    src: url('assets/fonts/boogaloo.ttf?v=14') format('truetype');
 }
 #screens { position: fixed; inset: 0; z-index: 5; display: none; }
 .screen {
@@ -177,6 +177,44 @@ canvas { display: block; touch-action: none; }
     font-family: 'Boogaloo', sans-serif;
     font-size: calc(var(--su) * 2.6); color: #1e90ff; font-weight: bold;
 }
+/* Results: personal-best line under the victory score line
+   (SashimiLeaderboard KeepBest; pink when this run set a new best) */
+.personal-best {
+    position: absolute; left: 39.38%; top: 53.5%;
+    font-family: 'Boogaloo', sans-serif;
+    font-size: calc(var(--su) * 1.7); color: #696969;
+    white-space: nowrap; display: none;
+}
+.personal-best.new-best { color: #ff1497; font-weight: bold; }
+/* Results: alias input under the best line -- shown by the client on
+   NEW-BEST victories only (the online board's alias-change gate; see
+   sashimi-screens.js setAliasPrompt / sashimi-client.js flushAlias) */
+.alias-row {
+    position: absolute; left: 39.38%; top: 58%;
+    display: none; align-items: center;
+    gap: calc(var(--su) * 0.8);
+    font-family: 'Boogaloo', sans-serif;
+    font-size: calc(var(--su) * 1.5); color: #696969;
+    white-space: nowrap;
+}
+.alias-input {
+    font-family: 'Boogaloo', sans-serif;
+    font-size: calc(var(--su) * 1.5); color: #696969;
+    background: #eee;
+    border: max(2px, calc(var(--su) * 0.14)) solid #1e90ff;
+    border-radius: calc(var(--su) * 0.5);
+    padding: 0 calc(var(--su) * 0.6);
+    width: calc(var(--su) * 14);
+}
+.alias-ok {
+    font-family: 'Boogaloo', sans-serif;
+    font-size: calc(var(--su) * 1.4); font-weight: bold;
+    color: #fff; background: #1e90ff;
+    border: none; border-radius: calc(var(--su) * 0.5);
+    padding: calc(var(--su) * 0.15) calc(var(--su) * 0.9);
+    cursor: pointer;
+}
+.alias-ok:hover { background: #ff1497; }
 /* Results: match stats in the victory art's leaderboard slots
    (.uss leaderboard-entry: Boogaloo, whitesmoke) */
 .leaderboard-entry {
@@ -188,6 +226,33 @@ canvas { display: block; touch-action: none; }
     color: #f5f5f5;                    /* uss --color-text-light */
 }
 .lb-label { text-transform: uppercase; letter-spacing: 0.05em; }
+/* Results: the run's board name over the slots, victory only
+   (VictoryVT.uxml LeaderBoardTitle; .uss .leaderboard-title: 48px bold
+   centered, custom teal rgb(67,87,97)) */
+.leaderboard-title {
+    position: absolute; display: none;
+    font-family: 'Boogaloo', sans-serif;
+    font-size: calc(var(--su) * 2.5); font-weight: bold;
+    color: rgb(67, 87, 97);            /* uss --color-accent-dark */
+    text-align: center; line-height: 1;
+    white-space: nowrap;
+}
+/* Online-board rank rows: the player's own row (boardWindow 'you') */
+.leaderboard-entry.lb-you { color: #ffd700; font-weight: bold; }
+/* Results: board provenance notice under the slots (boardPresentation
+   -- user ruling 2026-07-09: never imply an unsubmitted score is on
+   the online leaderboard) */
+.board-notice {
+    position: absolute; display: none;
+    font-family: 'Boogaloo', sans-serif;
+    font-size: max(10px, calc(var(--su) * 1.15));
+    font-weight: bold; text-align: center; line-height: 1.2;
+    white-space: nowrap;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.board-notice-warn { color: #ffb43c; }
+.board-notice-ok { color: #9dff8a; }
+.board-notice-info { color: #f5f5f5; }
 /* Results: defeat stats card (port-added; the defeat art has no panel) */
 .defeat-stats {
     position: absolute; left: 3%; bottom: 6%;
@@ -210,6 +275,28 @@ canvas { display: block; touch-action: none; }
     max-width: calc(var(--su) * 24);
 }
 
+/* Google sign-in gate (SashimiAuth; config-gated -- never shown while
+   window.SASHIMI_LEADERBOARD_CONFIG ships disabled) */
+.auth-overlay {
+    position: fixed; inset: 0; z-index: 8;
+    background: rgba(10, 10, 25, 0.72);
+    display: flex; align-items: center; justify-content: center;
+}
+.auth-card {
+    background: #eee; border: 3px solid #1e90ff; border-radius: 10px;
+    padding: 24px 28px; max-width: 90vw;
+    display: flex; flex-direction: column; gap: 14px; align-items: center;
+    font-family: 'Boogaloo', sans-serif; color: #696969;
+    text-align: center;
+}
+.auth-title { font-family: 'Kenvector Future', monospace; font-size: 18px; }
+.auth-msg { color: #c0392b; font-size: 14px; min-height: 1em; max-width: 320px; }
+.auth-skip, .auth-cancel {
+    background: none; border: none; cursor: pointer;
+    color: #1e90ff; text-decoration: underline;
+    font-family: 'Boogaloo', sans-serif; font-size: 15px;
+}
+
 /* Phone-size HUD: smaller type, tighter panel, wrap the banner */
 @media (max-width: 600px), (max-height: 500px) {
     #hud { font-size: 10px; line-height: 1.4; padding: 5px 8px; }
@@ -227,7 +314,7 @@ canvas { display: block; touch-action: none; }
 <input id="volume" type="range" min="0" max="1" step="0.05" value="1"
        aria-label="volume">
 <div id="screens"></div>
-<div id="version">vdev (06dd456)</div>
+<div id="version">vdev (3c5c2f6)</div>
 
 <!-- Thin client per the Browser Client Rendering Policy: DOM shell +
      WASM-export transport + bootstrap. Loop/render/input/view logic is the
@@ -235,22 +322,41 @@ canvas { display: block; touch-action: none; }
      sashimi-specific sprites/HUD/bootstrap live in the sandbox lib
      (lib/sashimi-*.js, source: sandboxes/sashimi/clients/lib/).
      ?v=N cache-busts GitHub Pages (root CLAUDE.md decision 22). -->
-<script src="flecs-ecs.js?v=13"></script>
-<script src="lib/rt-loop.js?v=13"></script>
-<script src="lib/rt-control.js?v=13"></script>
-<script src="lib/rt-input.js?v=13"></script>
-<script src="lib/rt-view.js?v=13"></script>
-<script src="lib/rt-sprites.js?v=13"></script>
-<script src="lib/rt-render.js?v=13"></script>
-<script src="lib/sashimi-art-data.js?v=13"></script>
-<script src="lib/sashimi-audio-data.js?v=13"></script>
-<script src="lib/sashimi-sprites.js?v=13"></script>
-<script src="lib/sashimi-audio.js?v=13"></script>
-<script src="lib/sashimi-fx.js?v=13"></script>
-<script src="lib/sashimi-hud.js?v=13"></script>
-<script src="lib/sashimi-screens.js?v=13"></script>
-<script src="lib/sashimi-client.js?v=13"></script>
+<script src="flecs-ecs.js?v=14"></script>
+<script src="lib/rt-loop.js?v=14"></script>
+<script src="lib/rt-control.js?v=14"></script>
+<script src="lib/rt-input.js?v=14"></script>
+<script src="lib/rt-view.js?v=14"></script>
+<script src="lib/rt-sprites.js?v=14"></script>
+<script src="lib/rt-render.js?v=14"></script>
+<script src="lib/sashimi-art-data.js?v=14"></script>
+<script src="lib/sashimi-audio-data.js?v=14"></script>
+<script src="lib/sashimi-sprites.js?v=14"></script>
+<script src="lib/sashimi-audio.js?v=14"></script>
+<script src="lib/sashimi-fx.js?v=14"></script>
+<script src="lib/sashimi-leaderboard.js?v=14"></script>
+<script src="lib/sashimi-auth.js?v=14"></script>
+<script src="lib/sashimi-hud.js?v=14"></script>
+<script src="lib/sashimi-screens.js?v=14"></script>
+<script src="lib/sashimi-client.js?v=14"></script>
 <script>
+/* ── Leaderboard + Google-auth config (SashimiLeaderboard/SashimiAuth) ──
+   THE single switchboard for all online behavior. As shipped (all off /
+   empty) the game is fully playable offline: no auth, no network.
+   Provisioning steps: sandboxes/sashimi/leaderboard/README.md.
+     enabled        master switch for the online board (submit + read)
+     authRequired   require Google Sign-In at START (needs googleClientId)
+     workerUrl      deployed Cloudflare Worker endpoint (score submission)
+     googleClientId Google OAuth web client id (Google Identity Services)
+     boardUrl       public board CSV (read path) */
+window.SASHIMI_LEADERBOARD_CONFIG = {
+    enabled: true,
+    authRequired: true,
+    workerUrl: 'https://sashimi-leaderboard.truffle-9a6.workers.dev',
+    googleClientId: '250255210825-sdd4lchrqilga9i3i9mdola1k6297bo6.apps.googleusercontent.com',
+    boardUrl: 'https://kitaekatt.github.io/leaderboard/sashimi.csv',
+};
+
 FlecsECS().then(function(M) {
     /* window.__sashimi: debug/test handle (loop, engine, restart, audio) */
     window.__sashimi = SashimiClient.start(M, {
@@ -262,6 +368,7 @@ FlecsECS().then(function(M) {
         pauseBtn: document.getElementById('pausebtn'),
         muteBtn: document.getElementById('mutebtn'),
         volSlider: document.getElementById('volume'),
+        leaderboard: window.SASHIMI_LEADERBOARD_CONFIG,
     });
 });
 </script>
