@@ -19,6 +19,10 @@ It plays two deliberate roles:
 Invert this (serve a full front page here instead of redirecting) **only** if the markdown
 profile ever becomes too limiting. Until then: **profile = entry, github.io = depth.**
 
+A practical consequence: the root `index.html` contains **no content** — only the redirect.
+When asked to "change the front page" or "edit index.html", the correct file is almost
+always `README.md` in the profile repo (`~/Dev/kitaekatt`), not anything here.
+
 ## Relationship to the Profile Repo
 
 The GitHub profile (`~/Dev/kitaekatt`, `github.com/kitaekatt/kitaekatt`) is the front page
