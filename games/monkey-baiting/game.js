@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var VERSION = 'v4';
+  var VERSION = 'v5';
   var MB = window.MB;
 
   var game = {
