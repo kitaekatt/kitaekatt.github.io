@@ -1,0 +1,95 @@
+# JACCO MACACCO — player character. Stats: Speed 8 / Power 3 / Reach 3 / Grip-resistance 9.
+id: jacco
+name: JACCO MACACCO
+max_health: 100
+walk_speed: 1.7
+jump_velocity: -5.2
+gravity: 0.32
+weight: 0.85            # light: takes bigger knockback
+grip_resistance: 9      # 9+: cannot be grabbed while ripple frames are active
+hurtbox: {w: 24, h: 22}
+
+palette:
+  fur: "#7A6A55"
+  muzzle: "#C8B49A"
+  wound: "#8E1B12"
+  chain: "#4A4E52"
+
+mechanics:
+  finisher_move: special   # WINDPIPE lands the named finisher
+  chain_radius: 118       # leash radius from ring-centre stake (fights where chained: true)
+  ripple_frames: 4        # skin-ripple tell: last N startup frames of any attack; grab-immune
+  wall_scramble: true     # may jump again once off a ring wall
+
+ai:  # used for headless AI-vs-AI simulation only
+  aggression: 0.65
+  poke_range: 34
+  block_chance: 0.25
+  retreat_chance: 0.1
+  special_min_range: 24
+  special_max_range: 90
+  jump_chance: 0.06
+
+moves:
+  light:
+    name: Saucer Hand
+    type: strike
+    startup_frames: 5
+    active_frames: 4
+    recovery_frames: 8
+    damage: 5
+    base_knockback: 1.1
+    knockback_growth: 0.6
+    launch_angle: 20
+    hitstun: 14
+    blockstun: 8
+    pushback_hit: 5
+    pushback_block: 4
+    hitbox: {x: 10, y: -15, w: 15, h: 10}
+    hit_freeze: 4
+    shake: 0
+    sound: swipe
+    cooldown: 0
+  heavy:
+    name: Present the Back
+    type: strike
+    startup_frames: 18
+    active_frames: 9
+    recovery_frames: 15
+    damage: 14
+    base_knockback: 2.4
+    knockback_growth: 1.2
+    launch_angle: 45
+    hitstun: 26
+    blockstun: 12
+    pushback_hit: 9
+    pushback_block: 6
+    hitbox: {x: 4, y: -18, w: 19, h: 16}
+    hit_freeze: 8
+    shake: 3
+    sound: thud
+    cooldown: 0
+    armor_frames: [2, 18]     # armoured on the turn
+    armor_damage_ratio: 0.5
+    move_forward: 2.6         # rides up the opponent's body during active
+  special:
+    name: WINDPIPE
+    type: grab
+    startup_frames: 8
+    active_frames: 18
+    recovery_frames: 20
+    damage: 16                # dealt over the hold
+    base_knockback: 2.0
+    knockback_growth: 0.8
+    launch_angle: 30
+    hitstun: 24
+    blockstun: 0
+    pushback_hit: 8
+    pushback_block: 0
+    hitbox: {x: 2, y: -16, w: 15, h: 15}
+    hit_freeze: 6
+    shake: 2
+    sound: bite
+    cooldown: 110
+    leap: {vx: 3.2, vy: -3.6} # leap to the throat
+    grab_hold_frames: 48      # chain snaps rigid behind him

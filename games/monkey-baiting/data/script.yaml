@@ -1,0 +1,911 @@
+# MONKEY BAITING — all narrative text. shared: is campaign-independent;
+# campaigns: holds one entry per playable character, transcribed VERBATIM from
+# docs/campaigns.md (Jacco's campaign per DESIGN.md, which wins on conflict).
+# Dialogue is keyed by campaign AND opponent — the same pairing is a different
+# exchange in each campaign and must never be merged.
+# Defeat quotes are the opponent speaking over the fallen player.
+
+shared:
+  title: MONKEY BAITING
+  tagline: No quarrel but the chain.
+
+  poster:
+    - THIS DAY, at the WESTMINSTER PIT, DUCK LANE
+    - THE CELEBRATED MONKEY, JACCO MACACCO
+    - will FIGHT ANY DOG in ENGLAND of TWICE his WEIGHT
+    - FOR ONE HUNDRED GUINEAS A SIDE
+    - Doors at Seven. Gas lit at Eight. Blood by Nine.
+    - NO CREDIT. STAKES DOWN, OR STAND ASIDE.
+  poster_footnote: and other DIVERSIONS as the Company shall require.
+
+  barker:
+    - >
+      "Come down, come down! The peer and the pickpocket, one shilling the same!"
+    - >
+      "Ten pound says the little cove don't last two minutes. Any takers?
+      ANY TAKERS?"
+    - >
+      "He has no weapon, gentlemen. He has no weapon and he has never once lost."
+
+  prefight_ritual: >
+    "Wash 'em! Milk and water, both of 'em, and let the handlers lick the coats.
+    No pepper, no acid, no tricks -- not tonight, gentlemen. Not till the odds
+    are set."
+
+  announcer:
+    round1: ROUND ONE -- LET THE TURN-UP BEGIN!
+    round2: ROUND TWO. STAKES STILL DOWN!
+    round3: THE DECIDER. STAKES STILL DOWN!
+    finisher: SERVE HIM OUT!
+    finisher_final: SETTLE THE ACCOUNT!
+    perfect: BANG-UP! Not a mark on the little cove!
+    low_health: He's got bottom, gentlemen! He's game! HE'S GAME!
+    victory: PAY UP OR WELSH -- JACCO MACACCO STANDS!
+    defeat: And that's the blunt gone. Home in the dark, my lads.
+
+  names:
+    jacco: JACCO MACACCO
+    brock: BROCK
+    billy: BILLY
+    puss: PUSS
+    aistrop: CHARLES AISTROP
+
+  closing_note: |
+    Jacco Macacco was real. He fought at the Westminster Pit on Duck Lane in Westminster around 1820-1822, chained, unarmed, against dogs of twice his weight, and won thirteen or fourteen times.
+
+    Three accounts of his last fight against Tom Cribb's bitch Puss survive and none of them agree: his owner Charles Aistrop said Jacco won in two and a half minutes; Richard Martin MP told Parliament the fight lasted half an hour, that Jacco tore the dog's carotid, that his own jaw was torn off, and that both animals were dead within two hours; an eyewitness said Cribb had the dog cut beforehand and the match was fixed and declared a draw.
+
+    Martin's Act of 1822 was the first animal-welfare law in Britain. It did not protect the animals of the pits. The SPCA was founded in 1824. The Westminster Pit closed in 1830.
+
+    Nobody recorded what happened to the badger.
+
+campaigns:
+
+  # ------------------------------------------------------------- JACCO
+  jacco:
+    available: true
+    select_line: THE CELEBRATED MONKEY, JACCO MACACCO
+    bill:
+      - THIS DAY, at the WESTMINSTER PIT, DUCK LANE
+      - THE CELEBRATED MONKEY, JACCO MACACCO
+      - will FIGHT ANY DOG in ENGLAND of TWICE his WEIGHT
+      - FOR ONE HUNDRED GUINEAS A SIDE
+      - Doors at Seven. Gas lit at Eight. Blood by Nine.
+      - NO CREDIT. STAKES DOWN, OR STAND ASIDE.
+    bill_footnote: and other DIVERSIONS as the Company shall require.
+
+    opening_crawl: |
+      LONDON, 1821.
+
+      Under the shadow of Parliament there is a cellar with a boarded ring in it, eighteen feet across, and two hundred men leaning over the rail.
+
+      Dukes and housebreakers, shoulder to shoulder, with money down.
+
+      In the middle of the floor is an iron stake, and a short thin chain, and at the end of the chain is a monkey who has never lost.
+
+      The men are not fighting anyone.
+
+    fights:
+      - opponent: brock
+        billing: "FIRST TURN-UP: JACCO MACACCO against BROCK the BADGER"
+        finisher_name: LET HIM SLEEP IN IT
+        dialogue:
+          - who: brock
+            text: >
+              Twenty-two years in that barrel, cove. They drag me out, I bite,
+              they push me back in.
+          - who: brock
+            text: You're the little one they talk about upstairs.
+          - who: jacco
+            text: They talk about me down here as well. It hasn't helped.
+          - who: jacco
+            text: Stay in the barrel, old man. I'll tell them you were game.
+          - who: brock
+            text: >
+              Can't. Same as you can't. There's a chain on the both of us --
+              mine's just made of wood.
+        victory: '"Sleep. You''ve earned it more than they have."'
+        defeat: >
+          "Don't take it hard, little one. I only won because they wanted a
+          long night."
+        interstitial: >
+          The badger goes back in the barrel and the barrel goes back under the
+          stair, and the takings for the first turn-up are counted on the
+          drum-head in front of everyone -- eleven pound six, and a gold watch
+          nobody asks about. A Corinthian in a beaver hat leans over the rail to
+          look at Jacco properly, the way you look at a horse. The next name on
+          the bill is one the whole room already knows.
+
+      - opponent: billy
+        billing: "SECOND TURN-UP: JACCO MACACCO against BILLY the RAT-KILLER"
+        finisher_name: COUNT HIM OUT
+        dialogue:
+          - who: billy
+            text: Hundred rats. Six minutes. Twenty-five seconds. Hundred rats. Six --
+          - who: jacco
+            text: Billy. Billy, look at me. I'm not a rat.
+          - who: billy
+            text: (head twitching) You're small and you're moving.
+          - who: jacco
+            text: So's every one of us in here.
+          - who: billy
+            text: Then I'm sorry. I can't stop. They took the stopping out.
+        victory: '"Nobody counted for you, Billy. Not once. I did."'
+        defeat: >
+          "Ninety-nine. ... Ninety-nine. Where's the hundredth. Where's the
+          hundredth."
+        interstitial: >
+          They sluice the sawdust and lay fresh, which means the odds have
+          shifted enough to be worth the trouble. Word runs up Duck Lane that
+          the Champion of England himself has sent his bitch down, and the stair
+          fills to the ceiling with men who have never been in a cellar in their
+          lives. On the door, in wet ink, the bill reads: JACCO MACACCO AGAINST
+          PUSS. ONE HUNDRED GUINEAS A SIDE.
+
+      - opponent: puss
+        billing: "THIRD TURN-UP: JACCO MACACCO against PUSS -- ONE HUNDRED GUINEAS A SIDE"
+        finisher_name: THE CAROTID
+        dialogue:
+          - who: puss
+            text: I belong to the Champion of England.
+          - who: jacco
+            text: So did that cut on your shoulder. Straight edge. No tooth did that.
+          - who: puss
+            text: (beat) He said the crowd wants to see blood early.
+          - who: jacco
+            text: Then he's already sold you, and neither of us is the one being paid.
+          - who: puss
+            text: >
+              I know. I'm still going to be game about it. It's the only thing
+              that's mine.
+        victory: >
+          "You were game. Tell them that upstairs -- they won't write it down."
+        defeat: '"I''m sorry. I''m sorry. I was told to make it look long."'
+        interstitial: >
+          It is the longest turn-up the Pit has ever hosted, and the gas is
+          guttering, and the stakeholder pays out to both sides because the
+          stakeholder always does. Men who wagered against Jacco shake hands
+          with men who wagered for him and neither is out of pocket enough to
+          mind. When the floor is empty there is one figure still in the ring,
+          in a bottle-green coat, holding the loose end of the chain, and the
+          barker's voice has gone strangely quiet.
+
+      - opponent: aistrop
+        billing: "LAST TURN-UP: JACCO MACACCO against the PROPRIETOR"
+        finisher_name: THE HUNDRED GUINEAS
+        dialogue:
+          - who: aistrop
+            text: Easy. Easy now. Who fed you? Who paid the surgeon for your jaw?
+          - who: aistrop
+            text: >
+              I have made you the most famous animal in London. You are on
+              handbills from here to Portsmouth.
+          - who: jacco
+            text: You've made money on me thirteen times. You've never once been bit.
+          - who: aistrop
+            text: >
+              Because I hold the chain, little cove. That is the whole of the
+              trade. Dog wins, I take the stakes. You win, I take the stakes.
+          - who: jacco
+            text: Then tonight's the first fight in this pit that isn't on the cross.
+          - who: aistrop
+            text: >
+              (putting on his gloves) Don't be sentimental. You're property,
+              and property doesn't get a quarrel.
+        victory: '"Wrong. Property was all I ever had a quarrel with."'
+        defeat: >
+          "There, there. You were bang-up while you lasted. I'll get a good
+          price for you yet."
+        interstitial: ~
+
+    ending_a: |
+      He takes the collar off, and it makes a small sound, and two hundred men who came to watch him die find they have nothing to bet on.
+
+      He walks out of the ring, and up the stair, and past the bills with his own name on them, and out into Duck Lane, where Parliament is lit up over the rooftops and full of men who have never heard of him.
+
+      Next year one of them will pass Martin's Act, the first law in England against cruelty to animals. It will cover cattle. It will not cover the pit.
+
+      The barrel is still under the stair. Billy is still counting. The gas is still on.
+
+      One chain came off. That is all. It is not nothing.
+    ending_a_card: NO QUARREL BUT THE CHAIN.
+
+    ending_b: |
+      Mr Aistrop was always clear on it. The monkey never lost to the Champion's bitch, whatever Mr Martin said in Parliament. He lived fifteen months more. He died of an illness, quietly, and was very well looked after at the end.
+
+      He was stuffed, and glass eyes were put in, and he was sold to a Mr Shaw of Mitcham Common, who kept him in a case, still on his chain.
+
+      They say he drew a crowd for years.
+
+      He was, after all, worth more standing still.
+    ending_b_card: CONTINUE?
+
+    continue_screen:
+      heading: CONTINUE?
+      note: the count is his, either way
+
+  # ------------------------------------------------------------- BROCK
+  brock:
+    available: true
+    select_line: THE OLD GREY BADGER, TWO-AND-TWENTY YEARS DRAWN
+    bill:
+      - THIS DAY, at the WESTMINSTER PIT, DUCK LANE
+      - THE OLD GREY BADGER, TWO-AND-TWENTY YEARS DRAWN
+      - will be BAITED CONTINUALLY until the COMPANY IS SATISFIED
+      - ADMISSION ONE SHILLING. NO CREDIT.
+    bill_footnote: He has never once been let stay in.
+
+    announcer:
+      victory: PAY UP OR WELSH -- THE OLD BADGER STANDS!
+      perfect: BANG-UP! Not a mark on the old fellow!
+
+    opening_crawl: |
+      Twenty-two years under this stair, in a barrel that fits.
+
+      They open the lid, a dog comes, I bite what I can reach, and then it is dark again and there is water, sometimes.
+
+      I have seen everything in this cellar come down those steps for the first time. Frightened, all of them. Every one.
+
+      Tonight the lid opened and nobody pushed me back.
+
+      That has not happened before.
+
+    fights:
+      - opponent: billy
+        billing: "FIRST TURN-UP: BROCK against BILLY the RAT-KILLER"
+        finisher_name: LET HIM REST
+        dialogue:
+          - who: brock
+            text: Steady, young 'un. You've had me out four times this week already.
+          - who: billy
+            text: Doesn't count. Big and slow doesn't count.
+          - who: brock
+            text: >
+              You were small once. Came down in a coat pocket, wet as a Tuesday.
+              I went easy on you a fortnight.
+          - who: billy
+            text: (twitch) -- ninety-one, ninety-two --
+          - who: brock
+            text: Aye. I know. Come on then. I'll not tell them you were kind.
+        victory: >
+          "Sleep, lad. There's nothing running. There's nothing running, I
+          promise you."
+        defeat: '"Big and slow. Big and slow. Doesn''t count. Next."'
+        interstitial: >
+          They do not sluice the sawdust for a badger; they simply throw more
+          down. Under the stair the barrel stands with its lid up like a mouth
+          waiting, and nobody has put him back in it, and he cannot stop looking
+          at it. The next name is read out and the room goes up two shillings on
+          the door: the Champion of England has sent his bitch.
+
+      - opponent: puss
+        billing: "SECOND TURN-UP: BROCK against PUSS, the CHAMPION'S OWN"
+        finisher_name: LET HER KEEP THE RIBBON
+        dialogue:
+          - who: puss
+            text: Old man. You look well.
+          - who: brock
+            text: >
+              I look like a doormat and we both know it. You've come up handsome,
+              though. Ribbons and all.
+          - who: puss
+            text: Don't. Please.
+          - who: brock
+            text: >
+              First night you come down that stair you got behind my barrel and
+              you wouldn't come out. Six month old. I never said a word to a soul.
+          - who: puss
+            text: I know what you never said. That's why I'm going to do this properly.
+        victory: '"You were always game, girl. Even the night you weren''t."'
+        defeat: >
+          "You should have let them think you were finished years ago. They'd
+          have stopped."
+        interstitial: >
+          Two men on the stair argue about whether a badger can be said to win
+          anything, since a badger is not entered, only produced. On the
+          drum-head the takings go into two piles and neither of them is for the
+          animal that made them. Something small and dun is brought up in a
+          crate with the straw still in it, the way it came from Portsmouth, and
+          Brock recognises the crate before he recognises the animal.
+
+      - opponent: jacco
+        billing: "THIRD TURN-UP: BROCK against the CELEBRATED JACCO MACACCO"
+        finisher_name: TELL THEM HE WAS GAME
+        dialogue:
+          - who: brock
+            text: >
+              I watched you come down that stair. Two winters back, wet through,
+              in that same box.
+          - who: jacco
+            text: Nobody's ever mentioned that to me.
+          - who: brock
+            text: Nobody down here mentions arriving. They only talk about you upstairs.
+          - who: jacco
+            text: They talk about me down here as well. It hasn't helped.
+          - who: brock
+            text: >
+              No. It never does. Well -- there's a chain on the both of us,
+              little cove. Mine's just made of wood.
+        victory: '"You had no quarrel with me. I know it. Rest easy, cove."'
+        defeat: >
+          "Stay down, old man. I'll tell them you were game -- and they'll write
+          down that you were slow."
+        interstitial: >
+          The gas gutters and one jet goes out for good. The crowd has thinned
+          to the serious money, the men who stay for the settling, and the
+          barrel under the stair has been quietly moved into the ring by two
+          boys who will not look at it. Standing beside it, holding a length of
+          chain that belongs to somebody else, is the man who bought a yearling
+          badger for eight shillings in the year eighteen hundred and one.
+
+      - opponent: aistrop
+        billing: "LAST TURN-UP: BROCK against the PROPRIETOR"
+        finisher_name: THE LID
+        dialogue:
+          - who: aistrop
+            text: >
+              Eight shillings. That is what you cost me, and that was in ninety --
+              no, eighteen hundred and one. Best money I ever laid out.
+          - who: aistrop
+            text: >
+              Twenty-two years, and you never wanted feeding much, and you never
+              once needed a surgeon. If they were all like you I'd die rich.
+          - who: brock
+            text: I know what I cost. I've heard you tell it to gentlemen.
+          - who: aistrop
+            text: And I always tell it fondly.
+          - who: brock
+            text: Aye. You're fond. You're fond the way the lid is fond.
+          - who: aistrop
+            text: >
+              (taking up the cane) Get in the barrel, old fellow. There's a good
+              stock.
+        victory: >
+          "Twenty-two years I came out when you asked. This once I'll come out
+          when I don't."
+        defeat: >
+          "There now. Back you go. Same time Thursday -- you're on the bill,
+          you're always on the bill."
+        interstitial: ~
+
+    ending_a: |
+      He does not go up the stair. A badger's whole trade is going down and coming back up, and he has only ever been made to do the coming up.
+
+      So he goes to the corner where the cellar floor is beaten earth rather than board, and he starts to dig, in front of two hundred men who paid a shilling to watch him be dragged out of a barrel, and none of them knows what they are looking at, because none of them has ever seen him do the thing he is for.
+
+      He is very good at it. He is quick, and he is neat, and he is gone.
+
+      Behind him the lid stands open on an empty barrel. Nothing to draw. Nothing on the bill.
+    ending_a_card: NO QUARREL BUT THE CHAIN.
+
+    continue_screen:
+      heading: DRAW HIM AGAIN?
+      note: the tally rises whether he answers or not
+
+  # ------------------------------------------------------------- BILLY
+  billy:
+    available: true
+    select_line: THE FAMOUS DOG BILLY, of DUCK LANE
+    bill:
+      - THIS DAY, at the WESTMINSTER PIT, DUCK LANE
+      - THE FAMOUS DOG BILLY, of DUCK LANE
+      - will KILL ONE HUNDRED, and the WATCH WILL BE HELD OPEN
+      - WAGERS ON THE TIME. STAKES DOWN.
+    bill_footnote: the Company is asked not to name the number aloud.
+
+    announcer:
+      victory: PAY UP OR WELSH -- THE DOG BILLY STANDS!
+      perfect: BANG-UP! Not a mark on the lad!
+
+    opening_crawl: |
+      One. Two. Three. Four.
+
+      They hold the watch open where I can see it and they say a number before I start, and then I fill it. That is the whole of the arrangement. I am very good.
+
+      Between the numbers there is nothing. I do not know what is in there.
+
+      Tonight the number is not rats.
+
+      One. Two.
+
+    fights:
+      - opponent: brock
+        billing: "FIRST TURN-UP: BILLY against BROCK the BADGER"
+        finisher_name: NOTHING'S RUNNING
+        dialogue:
+          - who: billy
+            text: Barrel. Grey. Slow. This one's four already this week.
+          - who: brock
+            text: Five, lad. You've forgot Monday.
+          - who: billy
+            text: (twitch) Doesn't count. Nothing that big counts.
+          - who: brock
+            text: >
+              Nothing I do counts, that's the trade. Come on then. Mind the eye,
+              I've only the one that works.
+          - who: billy
+            text: Why do you always say that?
+          - who: brock
+            text: So that one of us remembers it.
+        victory: '"Still doesn''t count. Still doesn''t count. Next. NEXT."'
+        defeat: >
+          "Down you go, young 'un. You can stop for a minute now. See? Nothing's
+          running."
+        interstitial: >
+          A man in a good hat holds a watch open over the rail and complains
+          that the badger does not make a proper time of it. Fresh sawdust,
+          because the last lot is spoiled. Billy is walked in a tight circle at
+          the end of a rope by his keeper, who tells four gentlemen at once
+          about October, and about a hundred, and about six minutes twenty-five,
+          as though it had already happened.
+
+      - opponent: jacco
+        billing: "SECOND TURN-UP: BILLY against JACCO MACACCO"
+        finisher_name: THAT'S ONE
+        dialogue:
+          - who: billy
+            text: Small. Moving. Small and moving.
+          - who: jacco
+            text: Billy. It's Jacco. We've been in the same building two years.
+          - who: billy
+            text: >
+              (head jerking) I know the smell. I don't know the -- I don't have
+              the word for you.
+          - who: jacco
+            text: Nobody gave you one. That was on purpose.
+          - who: billy
+            text: Then don't move. If you don't move it doesn't start.
+          - who: jacco
+            text: >
+              (beat) I can't do that either, cove. They took the standing still
+              out of me the same day.
+        victory: '"That''s one. That''s one. Why''s it still one."'
+        defeat: >
+          "Nobody counted for you. Not once. I did -- for what it was worth."
+        interstitial: >
+          The house is full to the ceiling and the rail bows visibly, because
+          word is up Duck Lane that Cribb's own bitch is down for the next
+          turn-up. The keeper sluices Billy's mouth with milk and water and
+          licks the coat in front of the Company, no pepper, no acid, no tricks.
+          Billy is looking past all of it at the door, at something white being
+          led in, and for the first time all night he has stopped counting and
+          does not know why.
+
+      - opponent: puss
+        billing: "THIRD TURN-UP: BILLY against PUSS -- SAME BASKET, SAME WEEK"
+        finisher_name: THE HUNDREDTH
+        dialogue:
+          - who: puss
+            text: Billy.
+          - who: billy
+            text: (nothing)
+          - who: puss
+            text: >
+              We were in the same basket. Same week, same straw. They took you
+              left out of the yard and me right, and I have thought about it
+              every day since and you have not thought about it once.
+          - who: billy
+            text: ... I know the smell.
+          - who: puss
+            text: Yes. That's me. That's your sister, that smell.
+          - who: billy
+            text: >
+              (twitch) -- and you're small, and you're moving. I'm sorry. I'm
+              sorry. It's already started.
+        victory: >
+          "Ninety-nine. She's ninety-nine. Where's the -- where's the hundredth."
+        defeat: >
+          "Sleep, brother. You never got told a single true thing in your life."
+        interstitial: >
+          They pay out, and the money is very good, and none of it goes to Duck
+          Lane tonight because the hire was settled in advance and settled low.
+          The gas gutters. Billy is still standing in the middle of the ring,
+          waiting for the next thing to be let in, because there has never yet
+          been a night when the next thing was not let in. A man in a
+          bottle-green coat steps over the boards and does not put a rope on him.
+
+      - opponent: aistrop
+        billing: "LAST TURN-UP: BILLY against the MAN WHO SAYS THE NUMBER"
+        finisher_name: A NUMBER THAT STOPS
+        dialogue:
+          - who: aistrop
+            text: >
+              Two pound the night, and worth every penny. Do you know I have
+              never once had to make you willing? You arrive willing.
+          - who: aistrop
+            text: >
+              They'll be saying your name in October, my lad. A hundred, and
+              under seven minutes. I have already had the bill set.
+          - who: billy
+            text: You said the number before.
+          - who: aistrop
+            text: Somebody has to say the number. That is what a proprietor is.
+          - who: billy
+            text: (twitch) Say a number that stops.
+          - who: aistrop
+            text: (pleasantly) Now why on earth would I do that?
+        victory: >
+          "You said it. You said it and then you went upstairs. I've never once
+          been upstairs."
+        defeat: >
+          "Good dog. Good dog. Back on the rope -- there's a hundred waiting on
+          you and I've the bills printed."
+        interstitial: ~
+
+    ending_a: |
+      The crowd counts him out, from habit, because that is what they do in this room, and at the number the room goes quiet.
+
+      Billy waits.
+
+      He waits for the next thing to be let in, the way it always is, and it is not. The sawdust does not boil. The rail does not shout. There is nothing small, and nothing moving, and nothing at all to fill.
+
+      He does not know how to be at the end of a number. He stands in the middle of the ring for a long time with his head jerking at nothing.
+
+      Then, badly, like a thing he was never taught, he lies down.
+
+      The hundredth was never a rat.
+    ending_a_card: NO QUARREL BUT THE CHAIN.
+
+    continue_screen:
+      heading: AGAIN?
+      note: the count wipes itself back to nought
+
+  # ------------------------------------------------------------- PUSS
+  puss:
+    available: true
+    select_line: PUSS, the PROPERTY of MR THOMAS CRIBB
+    bill:
+      - THIS DAY, at the WESTMINSTER PIT, DUCK LANE
+      - PUSS, the PROPERTY of MR THOMAS CRIBB, CHAMPION of ENGLAND
+      - will FIGHT ALL COMERS for ONE HUNDRED GUINEAS A SIDE
+      - BLUE AND BUFF. THE CHAMPION'S OWN COLOURS.
+    bill_footnote: Mr Cribb does not attend. Mr Cribb sends.
+
+    announcer:
+      victory: PAY UP OR WELSH -- THE CHAMPION'S BITCH STANDS!
+      perfect: BANG-UP! Not a mark on her -- the ribbon neither!
+
+    opening_crawl: |
+      I am not from here. I am from a yard behind a public house off Panton Street, where the Champion of England keeps his dogs, and men come to look at me on Sundays.
+
+      I have blue and buff on my collar and my own name on a bill.
+
+      They cut me before we came out tonight. Straight, with a blade, so the blood would be early.
+
+      I did not ask why. I am beginning to.
+
+    fights:
+      - opponent: brock
+        billing: "FIRST TURN-UP: PUSS against BROCK the BADGER"
+        finisher_name: THE ONLY COIN
+        dialogue:
+          - who: puss
+            text: Old man. I'd rather it were anyone else on the bill.
+          - who: brock
+            text: Everyone would, girl. That's what I'm for.
+          - who: puss
+            text: They put me first against you because they think it's a warm-up.
+          - who: brock
+            text: >
+              It is a warm-up. I've been a warm-up two-and-twenty years. Don't
+              take it personal, it's only the trade.
+          - who: puss
+            text: (quietly) You never told them about my first night.
+          - who: brock
+            text: >
+              Nothing to tell. Six month old and frightened. Show me a creature
+              in this cellar that wasn't.
+        victory: >
+          "You were kind to me once when it cost you. I've paid you in the only
+          coin they let me carry."
+        defeat: >
+          "There, girl. Lie still. The ribbon's still clean -- that's all
+          they'll be looking at."
+        interstitial: >
+          The blood came early, as arranged, and the room is pleased with her. A
+          man from Panton Street stands at the rail with his arms folded and
+          does not come down to look at the shoulder. On the drum-head the
+          takings go into piles, and one of the piles is called Mr Cribb's side,
+          and she watches it be counted and understands for the first time that
+          she is not on either side. She is the thing the sides are about.
+
+      - opponent: billy
+        billing: "SECOND TURN-UP: PUSS against BILLY -- SAME BASKET, SAME WEEK"
+        finisher_name: THE WHOLE DIFFERENCE
+        dialogue:
+          - who: puss
+            text: Look at me. Look at me properly, just once.
+          - who: billy
+            text: Small. White. Quick. -- I know that smell.
+          - who: puss
+            text: >
+              You should. Same basket, same week. They took you out of the yard
+              left and me right, and you got a cellar and I got a Champion, and
+              there was not one thing between us but which hand picked us up.
+          - who: billy
+            text: (twitch) Ninety-one, ninety-two --
+          - who: puss
+            text: Don't. Don't do the numbers at me.
+          - who: billy
+            text: It's the only thing they left in.
+        victory: >
+          "That's the whole difference, then. I got a ribbon and he got a watch
+          held open."
+        defeat: >
+          "That's one. That's one. Small and white and it's still only one."
+        interstitial: >
+          They lay fresh sawdust over the old, which is a courtesy paid to the
+          odds and not to anybody bleeding. Her keeper wipes her down and
+          rearranges the blue and buff so it sits square for the gentlemen, and
+          she notices that the ribbon is cleaner than she is and will still be
+          cleaner tomorrow. On the door, in wet ink: PUSS AGAINST JACCO MACACCO.
+          ONE HUNDRED GUINEAS A SIDE. The stair fills to the ceiling.
+
+      - opponent: jacco
+        billing: "THIRD TURN-UP: PUSS against JACCO MACACCO -- ONE HUNDRED GUINEAS A SIDE"
+        finisher_name: NAMES THE SAME SIZE
+        dialogue:
+          - who: puss
+            text: You're smaller than the bills say.
+          - who: jacco
+            text: The bills are the only part of me they paid for.
+          - who: puss
+            text: They've put our names the same size. Do you know what that's worth?
+          - who: jacco
+            text: >
+              I know exactly what it's worth. Look at your shoulder, and then
+              ask me again.
+          - who: puss
+            text: (beat) Straight edge. Yes. He said the crowd wants blood early.
+          - who: puss
+            text: Don't be gentle with me about it. Gentle is what he was.
+        victory: >
+          "You told me the truth and I opened your jaw for it. That's this
+          cellar entire."
+        defeat: >
+          "You were game. Tell them that upstairs -- they won't write it down."
+        interstitial: >
+          It is the longest turn-up the Pit has hosted and the stakeholder pays
+          out to both sides, as the stakeholder always does. The man from Panton
+          Street has gone up the stair without waiting for the settling; there
+          is a whistle she has answered every day of her life and it does not
+          come. What comes instead is a bottle-green coat, stepping over the
+          boards, saying her master's name in the easy way men say the names of
+          people they have done business with.
+
+      - opponent: aistrop
+        billing: "LAST TURN-UP: PUSS against the MAN WHO WROTE THE BILL"
+        finisher_name: HIS COLOURS, HIS TERMS
+        dialogue:
+          - who: aistrop
+            text: >
+              Handsome creature. I said so to Tom over a pot in his own bar.
+              Handsome, and dear, and worth the terms.
+          - who: puss
+            text: What terms.
+          - who: aistrop
+            text: >
+              Sides, and appearances, and how long a thing ought to last for the
+              money. Nothing underhand. Two gentlemen agreeing what an evening
+              should look like.
+          - who: puss
+            text: He cut me for your evening.
+          - who: aistrop
+            text: He cut you for HIS side of it. Do be fair. I only wrote the bill.
+          - who: puss
+            text: You wrote my name on it the same size as the monkey's.
+          - who: aistrop
+            text: >
+              (smiling) And you were flattered. That is what I sell, my dear.
+              Not the fight. The flattery.
+        victory: >
+          "Blue and buff. His colours, his terms, his cut. Nothing in this ring
+          was mine but the going on."
+        defeat: >
+          "Up you get. Tom will want you home clean -- he's very fond, and he'll
+          want you on the bill again Friday."
+        interstitial: ~
+
+    ending_a: |
+      She gets the ribbon off on the third try. It is a small blue-and-buff thing, and it is not damaged at all, and it lies in the dark sawdust looking exactly as it looked in the yard on Panton Street.
+
+      Up in Duck Lane there is a whistle, twice, the way there has been every day of her life.
+
+      She has been somebody since she was six months old. It turns out that somebody was a set of colours, a hundred guineas a side, and a straight cut made early for the look of the thing.
+
+      So she is nobody now, and she goes the other way up the lane, and it weighs almost nothing.
+    ending_a_card: NO QUARREL BUT THE CHAIN.
+
+    continue_screen:
+      heading: ANOTHER SIDE? ONE HUNDRED GUINEAS
+      note: somebody else always covers her retry
+
+  # ------------------------------------------------------------- AISTROP
+  aistrop:
+    available: true
+    select_line: MR CHAS. AISTROP, PROPRIETOR
+    bill:
+      - THIS DAY, at the WESTMINSTER PIT, DUCK LANE
+      - MR CHAS. AISTROP, PROPRIETOR, WILL HIMSELF ENTER
+      - and DISCIPLINE HIS STOCK before the ASSEMBLED COMPANY
+      - DOORS AT SEVEN. NO CREDIT. THE HOUSE TAKES ALL.
+    bill_footnote: the proprietor wagers against no man, being paid by all.
+
+    announcer:
+      victory: THE HOUSE STANDS. THE HOUSE ALWAYS STANDS.
+      defeat: THE PROPRIETOR IS DOWN -- AND STILL PAID.
+      perfect: BANG-UP! Not a mark on the good coat!
+
+    opening_crawl: |
+      A shilling at the door, peer and pickpocket alike, and I do not care which is which so long as the coin is good.
+
+      I take a cut of the stakes whichever animal wins. That is not cunning. That is simply what a house is.
+
+      They are all fed. They are all doctored when they want it. Not one of them has ever been struck in temper.
+
+      Tonight I go in myself. The Company likes a novelty.
+
+    fights:
+      - opponent: brock
+        billing: "FIRST TURN-UP: THE PROPRIETOR against BROCK the BADGER"
+        finisher_name: EIGHT SHILLINGS WELL SPENT
+        dialogue:
+          - who: aistrop
+            text: >
+              Eight shillings, in eighteen hundred and one, off a digger out of
+              Wiltshire. Gentlemen, I have had two-and-twenty years' amusement
+              out of eight shillings.
+          - who: brock
+            text: You've had two-and-twenty years out of me, and I've had a barrel.
+          - who: aistrop
+            text: >
+              And a dry one. Ask a badger in a hedge what he thinks of a dry
+              barrel.
+          - who: brock
+            text: Ask him what he thinks of the lid.
+          - who: aistrop
+            text: >
+              (genuinely) Old fellow, you have outlived every dog that ever drew
+              you. I call that a kindness of mine.
+        victory: >
+          "In you go. You've a long career yet, and I've never once had to pay a
+          surgeon for you."
+        defeat: >
+          "Two-and-twenty years, and it was always going to be the lid or me.
+          Mind your coat -- it's the good one."
+        interstitial: >
+          He counts it himself on the drum-head, in front of everybody, because
+          a house that counts in the open is a house men come back to. Eleven
+          pound six on a badger that cost eight shillings before the Peace of
+          Amiens. He is not gloating; he is simply pleased, the way a man is
+          pleased with a good coat. The next turn-up costs him two pound before
+          the doors even open, and he begrudges it every time.
+
+      - opponent: billy
+        billing: "SECOND TURN-UP: THE PROPRIETOR against BILLY, TWO POUND THE NIGHT"
+        finisher_name: SOUND STOCK
+        dialogue:
+          - who: aistrop
+            text: >
+              Two pound the night to a man in Duck Lane who does nothing but
+              hold a rope. It is robbery, and I pay it, and I smile.
+          - who: billy
+            text: (twitch) -- ninety-one, ninety-two --
+          - who: aistrop
+            text: >
+              Yes, yes. Save it for October, my lad, I've the bill set already:
+              one hundred, and under seven minutes, and the watch held open.
+          - who: billy
+            text: You said the number.
+          - who: aistrop
+            text: >
+              Somebody must say the number. Without a number it is only a dog in
+              a room, and nobody pays a shilling for that.
+          - who: billy
+            text: Say one that stops.
+          - who: aistrop
+            text: (amused) Then who would come?
+        victory: >
+          "Rope him and pay the man. Sound stock -- I'd buy him outright if the
+          fool would sell."
+        defeat: >
+          "Small. Moving. Green coat. -- Doesn't count. Doesn't count. Where's
+          the next one."
+        interstitial: >
+          Word is up Duck Lane that Cribb's bitch is on the bill, and the stair
+          fills to the ceiling with men who have never been in a cellar in their
+          lives, which is exactly two shillings' worth of curiosity apiece. He
+          has the sawdust laid fresh because a hundred-guinea side deserves a
+          clean floor. He recalls the terms with some satisfaction: agreed in a
+          public bar off Panton Street, between two gentlemen, over a pot, with
+          nothing at all put in writing.
+
+      - opponent: puss
+        billing: "THIRD TURN-UP: THE PROPRIETOR against PUSS, BLUE AND BUFF"
+        finisher_name: TERMS KEPT, NEAR ENOUGH
+        dialogue:
+          - who: aistrop
+            text: >
+              Blue and buff. I have never had those colours in my cellar before
+              tonight, and I have had a dozen dukes.
+          - who: puss
+            text: You talked to him over my head. I stood by the table the whole hour.
+          - who: aistrop
+            text: >
+              Business is talked over everyone's head, my dear. Yours is not a
+              special case.
+          - who: puss
+            text: He cut me. Straight, with a blade, before we came down.
+          - who: aistrop
+            text: >
+              He did, and I said nothing, and that is the extent of my part in
+              it. A man may decline to notice a thing.
+          - who: puss
+            text: >
+              That's the whole of you. You never do it. You only ever fail to
+              stop it.
+          - who: aistrop
+            text: >
+              (pleased) Precisely so. That is what a proprietor is. Now be game,
+              there's a good bitch -- the room has paid to see it.
+        victory: >
+          "Handsome. Send her home clean and tell Tom the terms were kept. They
+          were, near enough."
+        defeat: >
+          "Go on then. Tell him it was a draw. You will anyway -- your sort
+          always has the pen."
+        interstitial: >
+          The gas gutters and one lamp is out and the serious money has stayed
+          for the settling. He pays both sides, because a stakeholder always
+          does, and the difference stays in his hand and nobody minds because
+          nobody has been welshed. Then he takes up the loose end of a chain
+          that has been in his left hand every night for two years, and he steps
+          into his own ring, and the barker's voice goes strangely quiet,
+          because there is nothing on the bill after this.
+
+      - opponent: jacco
+        billing: "LAST TURN-UP: THE PROPRIETOR against JACCO MACACCO, HIS OWN"
+        finisher_name: THE LEDGER
+        dialogue:
+          - who: aistrop
+            text: >
+              Carter would not come within a yard of you. Handled you from
+              behind an iron sheet, the great coward, and sold you to me for
+              five pound and a silver watch.
+          - who: aistrop
+            text: I have never used a sheet. I have fed you out of my own hand.
+          - who: jacco
+            text: You've made money on me thirteen times. You've never once been bit.
+          - who: aistrop
+            text: >
+              Because I am fond of you, and because I hold the chain, and I have
+              never been able to see why those two want separating.
+          - who: jacco
+            text: That's the only true thing you've ever said in this cellar.
+          - who: aistrop
+            text: >
+              (drawing on his gloves) Then we understand each other, little
+              cove. Stand up. You're property, and property doesn't get a
+              quarrel.
+        victory: >
+          "There, there. You were bang-up while you lasted. I'll get a good
+          price for you yet."
+        defeat: '"Wrong. Property was all I ever had a quarrel with."'
+        interstitial: ~
+
+    ending_a: |
+      He has the floor swept before he does anything else, because the Company will be back Thursday and a house is a house.
+
+      Then he writes it down, and what he writes is this. The monkey never lost. He lived fifteen months more. He died of an illness, quietly, and was very well looked after at the end.
+
+      Stuffed, with glass eyes fitted, and sold on to a Mr Shaw of Mitcham Common, who kept him in a case, still on his chain, and drew a crowd for years.
+
+      No one contradicts a man who kept the ledger. Mr Martin may say what he likes in Parliament; Parliament was not there, and Parliament did not pay in.
+
+      He was, after all, worth more standing still.
+    ending_a_card: THE HOUSE TAKES ALL.
+    ending_a_card_2: NO QUARREL BUT THE CHAIN.
+
+    continue_screen:
+      heading: THE HOUSE WILL COVER IT.
+      note: a stakeholder is paid either way

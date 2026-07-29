@@ -1,0 +1,93 @@
+# BROCK — Fight 1. European badger. Speed 3 / Power 7 / Reach 4.
+# Slow, armoured, punishes greed. Teaches blocking and patience.
+id: brock
+name: BROCK
+max_health: 100
+walk_speed: 0.55
+jump_velocity: -3.4
+gravity: 0.32
+weight: 1.5             # near-unmovable
+grip_resistance: 2
+hurtbox: {w: 30, h: 16}
+
+palette:
+  coat: "#D6D2C4"
+  stripe: "#1C1A18"
+  ochre: "#9A8A63"
+  blood: "#5B2A22"
+
+mechanics:
+  finisher_move: special      # DRAWN AGAIN
+  post_exchange_retreat: 22   # always shuffles back toward the barrel (his own corner) after an exchange
+
+ai:
+  aggression: 0.55
+  poke_range: 38
+  block_chance: 0.2
+  retreat_chance: 0.1
+  special_min_range: 80
+  special_max_range: 280
+  jump_chance: 0.0
+  stance_chance: 0.25         # chance to answer pressure with Barrel Set
+
+moves:
+  light:
+    name: Snap
+    type: strike
+    startup_frames: 10
+    active_frames: 5
+    recovery_frames: 14
+    damage: 7
+    base_knockback: 1.5
+    knockback_growth: 0.6
+    launch_angle: 12
+    hitstun: 16
+    blockstun: 9
+    pushback_hit: 6
+    pushback_block: 5
+    hitbox: {x: 12, y: -9, w: 14, h: 9}   # jaw snap at knee height
+    hit_freeze: 5
+    shake: 0
+    sound: bite
+    cooldown: 0
+  heavy:
+    name: Barrel Set
+    type: stance
+    startup_frames: 6
+    active_frames: 46          # plants, lowers, near-unmovable
+    recovery_frames: 12
+    damage: 0
+    base_knockback: 0
+    knockback_growth: 0
+    launch_angle: 0
+    hitstun: 0
+    blockstun: 0
+    pushback_hit: 0
+    pushback_block: 0
+    hitbox: {x: 0, y: 0, w: 0, h: 0}
+    hit_freeze: 0
+    shake: 0
+    sound: thud
+    cooldown: 180
+    stance_take_ratio: 0.25    # damage he still takes while set
+    stance_return_ratio: 0.5   # any hit taken during it is returned at half
+  special:
+    name: DRAWN AGAIN
+    type: strike
+    startup_frames: 24         # explodes out of a defensive crouch as though yanked
+    active_frames: 14
+    recovery_frames: 30        # punishable if baited
+    damage: 16
+    base_knockback: 3.0
+    knockback_growth: 1.0
+    launch_angle: 30
+    hitstun: 26
+    blockstun: 14
+    pushback_hit: 10
+    pushback_block: 8
+    hitbox: {x: 6, y: -13, w: 22, h: 13}
+    hit_freeze: 8
+    shake: 4
+    sound: bite
+    cooldown: 280
+    move_forward: 5.5          # a lunging bite that covers the whole ring floor

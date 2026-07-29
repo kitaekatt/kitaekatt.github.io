@@ -1,0 +1,98 @@
+# PUSS — Fight 3. White bull-and-terrier bitch, Tom Cribb's dog. Speed 6 / Power 8 / Reach 7.
+# The hardest animal fight. Everything the first two taught, at once, and she never panics.
+id: puss
+name: PUSS
+max_health: 100
+walk_speed: 1.25
+jump_velocity: -4.8
+gravity: 0.32
+weight: 1.1
+grip_resistance: 4
+hurtbox: {w: 28, h: 20}
+
+palette:
+  white: "#F2EFE8"
+  ribbon_blue: "#2B4C7E"
+  ribbon_buff: "#D9BE7A"
+  scar: "#B8695E"
+  red: "#9E1108"
+
+mechanics:
+  finisher_move: special      # THE CHAMPION'S BITCH
+  pre_cut: true               # already cut before the round begins; no tooth did that
+  cross_health: 0.5           # ON THE CROSS triggers at half health
+  cross_damage_mult: 0.6      # she has been told to lose slowly
+
+ai:
+  aggression: 0.65
+  poke_range: 42
+  block_chance: 0.35
+  retreat_chance: 0.12
+  special_min_range: 20
+  special_max_range: 70
+  jump_chance: 0.04
+
+moves:
+  light:
+    name: Jab
+    type: strike
+    startup_frames: 6
+    active_frames: 3
+    recovery_frames: 9
+    damage: 7
+    base_knockback: 1.3
+    knockback_growth: 0.5
+    launch_angle: 8
+    hitstun: 14
+    blockstun: 9
+    pushback_hit: 6
+    pushback_block: 5
+    hitbox: {x: 14, y: -16, w: 16, h: 8}   # a boxer's dog: short, straight, snapping lead
+    hit_freeze: 4
+    shake: 0
+    sound: swipe
+    cooldown: 0
+  heavy:
+    name: Bottom
+    type: strike
+    startup_frames: 14
+    active_frames: 6
+    recovery_frames: 14
+    damage: 12
+    base_knockback: 2.6
+    knockback_growth: 1.0
+    launch_angle: 40
+    hitstun: 24
+    blockstun: 12
+    pushback_hit: 9
+    pushback_block: 6
+    hitbox: {x: 10, y: -17, w: 17, h: 13}
+    hit_freeze: 7
+    shake: 3
+    sound: thud
+    cooldown: 0
+    armor_frames: [1, 14]      # she eats a hit on purpose to land hers
+    armor_damage_ratio: 1.0    # trades — takes it all, doesn't flinch
+  special:
+    name: THE CHAMPION'S BITCH
+    type: strike
+    startup_frames: 10
+    active_frames: 44
+    recovery_frames: 20
+    damage: 5                  # per hit of the pressure sequence
+    hits: 3
+    hit_interval: 14
+    base_knockback: 1.4
+    knockback_growth: 0.6
+    launch_angle: 20
+    hitstun: 15
+    blockstun: 10
+    pushback_hit: 5
+    pushback_block: 4
+    hitbox: {x: 10, y: -16, w: 16, h: 12}
+    hit_freeze: 4
+    shake: 2
+    sound: bite
+    cooldown: 320
+    move_forward: 1.3
+    armor_if_health_above: 0.25  # cannot be knocked out of it above a quarter — pure game

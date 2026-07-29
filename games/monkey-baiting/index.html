@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>MONKEY BAITING — no quarrel but the chain</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; background: #0b0908; overflow: hidden;
+    height: 100%; touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  canvas#game {
+    position: fixed; top: 0; left: 0; display: block;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+  }
+  .chrome {
+    position: fixed; z-index: 10; font: 11px "Courier New", monospace;
+    color: #7a7264; background: rgba(20,17,16,0.7); border: 1px solid #3a362e;
+    padding: 6px 10px; cursor: pointer; letter-spacing: 1px;
+  }
+  .chrome:active { color: #e8ddc0; }
+  #mute { top: 8px; right: 8px; }
+  #padToggle { top: 8px; right: 110px; }
+  #stamp {
+    position: fixed; bottom: 4px; right: 6px; z-index: 10;
+    font: 10px "Courier New", monospace; color: #57524a; pointer-events: none;
+  }
+  /* on-screen controller: thumbs-first sizing (>=48px targets) */
+  #pad { position: fixed; inset: 0; z-index: 5; pointer-events: none; display: none; }
+  #pad .btn {
+    position: absolute; pointer-events: auto; box-sizing: border-box;
+    width: 58px; height: 58px; border-radius: 10px;
+    background: rgba(35,33,28,0.55); border: 2px solid rgba(122,114,100,0.6);
+    color: #b8ae96; font: bold 13px Georgia, serif; letter-spacing: 1px;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+  }
+  #pad .btn.on { background: rgba(201,162,39,0.35); border-color: #c9a227; color: #e8ddc0; }
+  /* D-pad, bottom-left */
+  #pad .b-left  { left: 14px;  bottom: 24px; }
+  #pad .b-right { left: 140px; bottom: 24px; }
+  #pad .b-jump  { left: 77px;  bottom: 88px; }
+  /* actions, bottom-right */
+  #pad .b-light   { right: 140px; bottom: 24px; background: rgba(60,40,30,0.55); }
+  #pad .b-heavy   { right: 76px;  bottom: 56px; background: rgba(60,40,30,0.55); }
+  #pad .b-special { right: 12px;  bottom: 88px; background: rgba(88,30,22,0.55); }
+  #pad .b-block   { right: 12px;  bottom: 20px; background: rgba(35,45,55,0.55); }
+</style>
+</head>
+<body>
+<canvas id="game" width="800" height="450"></canvas>
+
+<button id="padToggle" class="chrome" type="button">PAD</button>
+<button id="mute" class="chrome" type="button">SOUND: ON</button>
+<div id="stamp">MONKEY BAITING v3</div>
+
+<div id="pad">
+  <div class="btn b-left"  data-act="left">&#9668;</div>
+  <div class="btn b-right" data-act="right">&#9658;</div>
+  <div class="btn b-jump"  data-act="jump">&#9650;</div>
+  <div class="btn b-light"   data-act="light">L</div>
+  <div class="btn b-heavy"   data-act="heavy">H</div>
+  <div class="btn b-special" data-act="special">S</div>
+  <div class="btn b-block"   data-act="block">B</div>
+</div>
+
+<script src="yaml.js"></script>
+<script src="data.js"></script>
+<script src="sprites.js"></script>
+<script src="logic.js"></script>
+<script src="audio.js"></script>
+<script src="render.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

@@ -1,0 +1,88 @@
+# MONKEY BAITING — game structure. Drives campaigns (per-character fight
+# orders), round rules, the finisher condition, and the screen flow graph.
+# The game loop walks the flow graph below; nothing about progression is
+# hardcoded in JS.
+#
+# chain, per fight: either the scalar `none`, or {to: player|opponent,
+# from: stake|player|opponent}. `from: stake` tethers that fighter to the
+# ring-centre stake (movement clamp, radius from the character's
+# mechanics.chain_radius). `from: player/opponent` puts the chain in that
+# fighter's hand (no clamp — the yank is the leash).
+
+campaigns:
+  jacco:
+    continue_style: countdown # CONTINUE? — Aistrop's coin counter runs down
+    fights:
+      - {opponent: brock,   stage_wear: 0, chain: {to: player, from: stake}}
+      - {opponent: billy,   stage_wear: 1, chain: {to: player, from: stake}}
+      - {opponent: puss,    stage_wear: 2, chain: {to: player, from: stake}}
+      - {opponent: aistrop, stage_wear: 3, chain: {to: player, from: opponent}}
+  brock:
+    continue_style: tally     # DRAW HIM AGAIN? — the tally rises regardless
+    fights:
+      - {opponent: billy,   stage_wear: 0, chain: none}
+      - {opponent: puss,    stage_wear: 1, chain: none}
+      - {opponent: jacco,   stage_wear: 2, chain: {to: opponent, from: stake}}
+      - {opponent: aistrop, stage_wear: 3, chain: none}
+  billy:
+    continue_style: wipe      # AGAIN? — the count wipes itself back to nought
+    fights:
+      - {opponent: brock,   stage_wear: 0, chain: none}
+      - {opponent: jacco,   stage_wear: 1, chain: {to: opponent, from: stake}}
+      - {opponent: puss,    stage_wear: 2, chain: none}
+      - {opponent: aistrop, stage_wear: 3, chain: none}
+  puss:
+    continue_style: purse     # ANOTHER SIDE? — Mr Cribb's purse covers it
+    fights:
+      - {opponent: brock,   stage_wear: 0, chain: none}
+      - {opponent: billy,   stage_wear: 1, chain: none}
+      - {opponent: jacco,   stage_wear: 2, chain: {to: opponent, from: stake}}
+      - {opponent: aistrop, stage_wear: 3, chain: none}
+  aistrop:
+    continue_style: house     # THE HOUSE WILL COVER IT — his counter goes UP
+    fights:
+      - {opponent: brock,   stage_wear: 0, chain: none}
+      - {opponent: billy,   stage_wear: 1, chain: none}
+      - {opponent: puss,    stage_wear: 2, chain: none}
+      - {opponent: jacco,   stage_wear: 3, chain: {to: opponent, from: player}}
+
+rounds:
+  wins_to_take_match: 2        # best of 3 — first to two falls
+  time_seconds: 60
+  intro_frames: 170
+  end_frames: 140
+  timeout_tie_winner: opponent # the house's fighter takes a dead-even round
+
+finisher:
+  condition: deciding_round    # only offered when the player is at match point
+  health_threshold: 0.22
+  window_seconds: 6.0
+  rearm_frames: 240
+  cinematic_frames: 240
+  prompt_key: finisher         # announcer key, non-final fights: SERVE HIM OUT!
+  prompt_key_final: finisher_final  # final fight: SETTLE THE ACCOUNT!
+
+# Each fight node runs this internal sequence. "interstitial" is skipped
+# when the fight's interstitial text is null in script.yaml.
+fight_sequence: [prefight, match, victory, interstitial]
+
+continue_rules:
+  allowed: true
+  retry: current_fight
+  decline: ending_b            # give up: the house's version gets written down
+
+flow:
+  start: title
+  nodes:
+    title:        {kind: screen, next: select}
+    select:       {kind: select, next: bill}
+    bill:         {kind: screen, next: crawl}
+    crawl:        {kind: screen, next: fight0}
+    fight0:       {kind: fight, index: 0, win: fight1,   lose: continue}
+    fight1:       {kind: fight, index: 1, win: fight2,   lose: continue}
+    fight2:       {kind: fight, index: 2, win: fight3,   lose: continue}
+    fight3:       {kind: fight, index: 3, win: ending_a, lose: continue}
+    continue:     {kind: continue}
+    ending_a:     {kind: screen, next: closing_note}
+    ending_b:     {kind: screen, next: closing_note}
+    closing_note: {kind: screen, next: title}

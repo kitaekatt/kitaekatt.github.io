@@ -1,0 +1,95 @@
+# BILLY — Fight 2. Bull-and-terrier, the rat-killing dog. Speed 7 / Power 5 / Reach 4.
+# Fast, relentless, long commitments. Teaches whiff-punish.
+id: billy
+name: BILLY
+max_health: 100
+walk_speed: 1.45
+jump_velocity: -4.6
+gravity: 0.32
+weight: 1.0
+grip_resistance: 3
+hurtbox: {w: 26, h: 17}
+
+palette:
+  white: "#E8E4DA"
+  liver: "#6B4530"
+  muzzle: "#C97F72"
+  rat: "#3A3A3C"
+
+mechanics:
+  finisher_move: heavy       # Six Twenty-Five
+  twitch: true               # idle has no rest pose; head jerks at nothing
+
+ai:
+  aggression: 0.75
+  poke_range: 32
+  block_chance: 0.08
+  retreat_chance: 0.05
+  special_min_range: 60
+  special_max_range: 200
+  jump_chance: 0.03
+
+moves:
+  light:
+    name: Shake
+    type: strike
+    startup_frames: 6
+    active_frames: 4
+    recovery_frames: 9
+    damage: 5
+    base_knockback: 1.2
+    knockback_growth: 0.5
+    launch_angle: 15
+    hitstun: 13
+    blockstun: 8
+    pushback_hit: 5
+    pushback_block: 4
+    hitbox: {x: 11, y: -12, w: 13, h: 10}
+    hit_freeze: 4
+    shake: 0
+    sound: bite
+    cooldown: 0
+  heavy:
+    name: Six Twenty-Five
+    type: strike
+    startup_frames: 12
+    active_frames: 50          # fixed length, cannot be cancelled — not even by Billy
+    recovery_frames: 24
+    damage: 3                  # per hit
+    hits: 5
+    hit_interval: 10
+    base_knockback: 1.0
+    knockback_growth: 0.4
+    launch_angle: 10
+    hitstun: 12
+    blockstun: 7
+    pushback_hit: 4
+    pushback_block: 3
+    hitbox: {x: 9, y: -13, w: 14, h: 11}
+    hit_freeze: 3
+    shake: 2
+    sound: bite
+    cooldown: 200
+    move_forward: 1.8
+  special:
+    name: THE HUNDRED
+    type: hazard_rats
+    startup_frames: 20
+    active_frames: 2
+    recovery_frames: 28
+    damage: 0
+    base_knockback: 0
+    knockback_growth: 0
+    launch_angle: 0
+    hitstun: 0
+    blockstun: 0
+    pushback_hit: 0
+    pushback_block: 0
+    hitbox: {x: 0, y: 0, w: 0, h: 0}
+    hit_freeze: 0
+    shake: 2
+    sound: rats
+    cooldown: 460
+    rats_duration: 160         # the sawdust boils; rats pour across the pit floor
+    rats_chip_dps: 6           # chip damage while caught in the wave (grounded)
+    rats_invuln_frames: 130    # Billy loses himself in them; briefly invulnerable

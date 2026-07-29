@@ -1,0 +1,26 @@
+# MONKEY BAITING — global physics/combat tuning. All frame counts at 60 Hz.
+# Game structure (fight order, rounds, finisher rules, screen flow) lives in
+# data/structure.yaml; character stats and frame data in data/characters/.
+logic_hz: 60
+internal_width: 400
+internal_height: 225
+floor_y: 190
+
+ring:
+  left: 26
+  right: 374
+  center: 200
+  wall_height: 34
+
+combat:
+  block_chip_ratio: 0.2
+  hit_freeze_default: 5
+  ko_slowmo_frames: 70
+  ko_fall_frames: 100
+  low_health_announce: 0.25
+  # knockback scaling: kb = (base + growth * (1 - hp/max)) / weight  (remaining-health scaling)
+  knockback_scale: 1.0
+  min_health_floor: 0        # hp can reach 0 normally; extensions may raise it temporarily
+
+ai:
+  decision_interval_frames: 16

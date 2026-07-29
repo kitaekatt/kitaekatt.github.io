@@ -1,0 +1,127 @@
+# CHARLES AISTROP — Fight 4, final boss. Human, proprietor of the Westminster Pit.
+# Speed 4 / Power 6 / Reach 10 / Control 10. Beating him is beating an environment.
+id: aistrop
+name: CHARLES AISTROP
+max_health: 110
+walk_speed: 0.85
+jump_velocity: -3.0
+gravity: 0.32
+weight: 1.3
+grip_resistance: 5
+hurtbox: {w: 18, h: 40}     # the only upright silhouette in the game; the player looks UP
+
+palette:
+  coat: "#243B2E"
+  cream: "#E6DFC8"
+  black: "#141312"
+  gold: "#C9A227"
+  chain: "#4A4E52"
+
+mechanics:
+  finisher_move: heavy       # TAKE UP THE SLACK — he collects
+  holds_chain: true          # Jacco's chain is in this man's left hand
+  pays_crowd: true           # pays out of the purse mid-fight, without looking
+  the_cross:                 # the cheat, once per match, at low health
+    trigger_health: 0.35
+    window_seconds: 8.0      # the fix only holds if Jacco accepts it
+    drain_per_second: 5.0    # Jacco's own health drains as though ruled against
+    min_health: 1
+    break_bonus_damage: 14   # broken by landing WINDPIPE inside the window
+    break_stagger_frames: 70
+
+ai:
+  aggression: 0.65
+  poke_range: 62             # the cane keeps everything at arm's length
+  block_chance: 0.2
+  retreat_chance: 0.3        # he does not have to fight; he has never had to fight
+  special_min_range: 40
+  special_max_range: 240
+  jump_chance: 0.0
+  keep_range: 58             # preferred spacing
+  stakes_down_health: 0.6    # below this he may simply step out of the ring
+
+moves:
+  light:
+    name: The Cane
+    type: strike
+    startup_frames: 9
+    active_frames: 5
+    recovery_frames: 13
+    damage: 4                # he is not trying to kill Jacco; that would be waste
+    base_knockback: 1.0
+    knockback_growth: 0.3
+    launch_angle: 5
+    hitstun: 26              # contemptuous tap: low damage, high stagger
+    blockstun: 12
+    pushback_hit: 10
+    pushback_block: 8
+    hitbox: {x: 14, y: -26, w: 28, h: 8}   # long reach
+    hit_freeze: 4
+    shake: 0
+    sound: cane
+    cooldown: 0
+  heavy:
+    name: TAKE UP THE SLACK
+    type: chain_yank
+    startup_frames: 34       # he hauls the chain; the only counter is to be airborne
+    active_frames: 4
+    recovery_frames: 22
+    damage: 8
+    base_knockback: 0
+    knockback_growth: 0
+    launch_angle: 0
+    hitstun: 34
+    blockstun: 0
+    pushback_hit: 0
+    pushback_block: 0
+    hitbox: {x: 0, y: 0, w: 0, h: 0}       # positional, not a box: grounded = caught
+    hit_freeze: 6
+    shake: 4
+    sound: chain
+    cooldown: 320
+    unblockable: true
+    yank_speed: 9            # Jacco is dragged to Aistrop's feet regardless of position
+  special:
+    name: MOPUSSES
+    type: hazard_coins
+    startup_frames: 18
+    active_frames: 2
+    recovery_frames: 26
+    damage: 0
+    base_knockback: 0
+    knockback_growth: 0
+    launch_angle: 0
+    hitstun: 0
+    blockstun: 0
+    pushback_hit: 0
+    pushback_block: 0
+    hitbox: {x: 0, y: 0, w: 0, h: 0}
+    hit_freeze: 0
+    shake: 2
+    sound: coins
+    cooldown: 520
+    coins_duration: 220      # the gallery surges; hands come down into the ring
+    coins_zones: 3
+    coins_zone_width: 46
+    coins_chip_dps: 5
+  stakes_down:
+    name: STAKES DOWN
+    type: retreat
+    input: jump              # player-Aistrop: jump button steps out of the ring instead of jumping
+    startup_frames: 12
+    active_frames: 150       # he steps back out of the ring and lets the crowd throw things
+    recovery_frames: 18
+    damage: 4                # per thrown object that lands
+    base_knockback: 1.2
+    knockback_growth: 0.3
+    launch_angle: 60
+    hitstun: 14
+    blockstun: 8
+    pushback_hit: 5
+    pushback_block: 3
+    hitbox: {x: 0, y: 0, w: 0, h: 0}
+    hit_freeze: 3
+    shake: 1
+    sound: thud
+    cooldown: 640
+    projectile_interval: 32
