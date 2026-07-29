@@ -96,12 +96,25 @@
     this.data = data;
     this.tuning = data.tuning;
     this.st = data.structure;
-    this.campaignId = campaignId;
-    this.campaign = this.st.campaigns[campaignId];
-    if (!this.campaign) throw new Error('structure.yaml: no campaign "' + campaignId + '"');
-    this.fightIndex = fightIndex;
-    this.fight = this.campaign.fights[fightIndex];
-    this.texts = opts.texts || defaultTexts(data, campaignId, fightIndex);
+    if (typeof campaignId === 'object' && campaignId !== null) {
+      // direct-pair mode (tournament / headless): { p0, p1, texts?, stage_wear? }
+      var pair = campaignId;
+      if (!data.characters[pair.p0] || !data.characters[pair.p1]) {
+        throw new Error('Match: unknown character in pair ' + pair.p0 + ' vs ' + pair.p1);
+      }
+      this.campaignId = pair.p0;
+      this.fightIndex = 0;
+      this.fight = { opponent: pair.p1, stage_wear: pair.stage_wear || 0, chain: 'none' };
+      this.campaign = { fights: [this.fight] }; // synthesized, single-fight card
+      this.texts = pair.texts || opts.texts || defaultTexts(data, pair.p0, 0);
+    } else {
+      this.campaignId = campaignId;
+      this.campaign = this.st.campaigns[campaignId];
+      if (!this.campaign) throw new Error('structure.yaml: no campaign "' + campaignId + '"');
+      this.fightIndex = fightIndex;
+      this.fight = this.campaign.fights[fightIndex];
+      this.texts = opts.texts || defaultTexts(data, campaignId, fightIndex);
+    }
     this.rng = opts.rng || Math.random;
     this.playerAI = !!(opts.playerAI || opts.jaccoAI);
     this.events = [];
@@ -119,12 +132,13 @@
     this.frame = 0;
     this.winner = null;
 
-    this.player = new Fighter(data.characters[campaignId], 0, this);
+    this.player = new Fighter(data.characters[this.campaignId], 0, this);
     this.opp = new Fighter(data.characters[this.fight.opponent], 1, this);
     this.fighters = [this.player, this.opp];
 
-    // chain wiring from the fight's chain record (see structure.yaml)
-    var ch = this.fight.chain;
+    // chain wiring from the fight's chain record (see structure.yaml);
+    // opts.neutral strips all tether rules (balance is measured neutral first)
+    var ch = opts.neutral ? null : this.fight.chain;
     this.chain = (ch && typeof ch === 'object') ? ch : null;
     this.chainedFighter = null;
     this.chainHolder = null;
@@ -136,6 +150,16 @@
         this.chainHolder = this.chain.from === 'player' ? this.player : this.opp;
       }
     }
+
+    // strategy wiring: opp always runs a policy; player runs one when
+    // requested (AI-vs-AI). Specs: { name, move? } resolved against
+    // data/strategies.yaml — unknown names fail loudly.
+    var specs = opts.strategies || {};
+    this.opp.policy = makePolicy(data, specs.opp || { name: 'default' });
+    this.player.policy = (specs.player || this.playerAI)
+      ? makePolicy(data, specs.player || { name: 'default' })
+      : null;
+
     this.startRound();
   }
 
@@ -221,7 +245,7 @@
     // ---- fight phase ----
     if (this.freeze > 0) { this.freeze--; return; }
 
-    var inpP = this.playerAI ? this.aiThink(this.player) : (playerInput || emptyInput());
+    var inpP = this.player.policy ? this.aiThink(this.player) : (playerInput || emptyInput());
     var inpO = this.aiThink(this.opp);
 
     this.stepFighter(this.player, inpP);
@@ -859,65 +883,124 @@
   };
 
   // --------------------------------------------------------------------- AI
+  //
+  // Strategies: a policy is a function (fighter, match) -> virtual input,
+  // called on the AI decision interval. Named strategies come from
+  // data/strategies.yaml; "default" is the tuned house AI below, "spam" is
+  // the degenerate one-move pressure template used for balance probing.
+
+  function makePolicy(data, spec) {
+    var def = data.strategies[spec.name];
+    if (!def) {
+      throw new Error('strategies.yaml: no strategy named "' + spec.name + '"');
+    }
+    if (def.kind === 'default') return defaultPolicy;
+    if (def.kind === 'spam') {
+      if (!spec.move) throw new Error('strategy "spam" needs a move to spam (spec.move)');
+      return makeSpamPolicy(spec.move, def.params);
+    }
+    throw new Error('strategies.yaml: unhandled kind "' + def.kind + '"');
+  }
+
+  // spam(move): walk in until the move can reach, then use only that move on
+  // cooldown. Never blocks, never jumps. Pure degenerate pressure.
+  function makeSpamPolicy(moveKey, params) {
+    return function spamPolicy(f, match) {
+      var mv = f.def.moves[moveKey];
+      if (!mv) {
+        throw new Error('spam strategy: ' + f.id + ' has no move "' + moveKey + '"');
+      }
+      var inp = emptyInput();
+      var foe = match.other(f);
+      var dist = Math.abs(foe.x - f.x) - (f.def.hurtbox.w + foe.def.hurtbox.w) / 2;
+      var unranged = mv.type === 'chain_yank' || mv.type === 'hazard_rats' ||
+        mv.type === 'hazard_coins' || mv.type === 'retreat';
+      var reach = unranged ? params.unranged_reach
+        : (mv.hitbox.x + mv.hitbox.w - f.def.hurtbox.w / 2) + params.reach_margin +
+          (mv.leap ? params.leap_reach_bonus : 0);
+      var ready = !f.cd[moveKey] || f.cd[moveKey] <= 0;
+      if (ready && dist <= reach) {
+        if (moveKey === 'light' || moveKey === 'heavy' || moveKey === 'special' ||
+          moveKey === 'stakes_down') {
+          inp[moveKey] = true;
+        } else if (mv.input) {
+          inp[mv.input] = true;
+        } else {
+          throw new Error('spam strategy: move "' + moveKey + '" of ' + f.id +
+            ' has no pressable input');
+        }
+      } else {
+        inp[foe.x > f.x ? 'right' : 'left'] = true; // close the distance
+      }
+      return inp;
+    };
+  }
 
   Match.prototype.aiThink = function (f) {
-    var ai = f.def.ai;
-    if (!ai) return emptyInput();
+    if (!f.policy) return emptyInput();
     if (f.aiHold > 0) { f.aiHold--; var held = f.aiInput; f.aiInput = dropPresses(held); return held; }
     f.aiHold = this.tuning.ai.decision_interval_frames;
+    var inp = f.policy(f, this);
+    f.aiInput = dropPresses(inp);
+    return inp;
+  };
 
+  // the tuned house AI — parameters come from the character's own ai: block
+  function defaultPolicy(f, match) {
+    var ai = f.def.ai;
+    if (!ai) return emptyInput();
     var inp = emptyInput();
-    var foe = this.other(f);
+    var foe = match.other(f);
     var dist = Math.abs(foe.x - f.x) - (f.def.hurtbox.w + foe.def.hurtbox.w) / 2;
     var toward = foe.x > f.x ? 'right' : 'left';
     var away = foe.x > f.x ? 'left' : 'right';
-    var rng = this.rng;
+    var rng = match.rng;
     var foeWinding = foe.state === 'attack' && foe.attackPhase() === 'wind';
 
-    if (f.busy() && f.state !== 'attack') { f.aiInput = inp; return inp; }
+    if (f.busy() && f.state !== 'attack') return inp;
 
     // dodge the chain yank: be airborne when it fires
     if (foeWinding && foe.move && foe.move.type === 'chain_yank' && f.grounded() && rng() < 0.6) {
-      inp.jump = true; f.aiInput = dropPresses(inp); return inp;
+      inp.jump = true; return inp;
     }
 
     // block reaction
     if (foeWinding && dist < ai.poke_range + 26 && rng() < ai.block_chance) {
-      inp.block = true; f.aiInput = inp; return inp;
+      inp.block = true; return inp;
     }
 
     // extension: Brock answers pressure with the Barrel Set
     if (ai.stance_chance && foe.state === 'attack' && dist < 50 && rng() < ai.stance_chance &&
       (!f.cd.heavy || f.cd.heavy <= 0)) {
-      inp.heavy = true; f.aiInput = dropPresses(inp); return inp;
+      inp.heavy = true; return inp;
     }
 
     // extension: Aistrop steps out of the ring when pressed
     if (ai.stakes_down_health !== undefined && f.def.moves.stakes_down &&
       f.hp < ai.stakes_down_health * f.def.max_health && dist < 46 &&
       (!f.cd.stakes_down || f.cd.stakes_down <= 0) && rng() < 0.5) {
-      inp.stakes_down = true; f.aiInput = dropPresses(inp); return inp;
+      inp.stakes_down = true; return inp;
     }
 
     // special
     if (dist >= ai.special_min_range && dist <= ai.special_max_range &&
       (!f.cd.special || f.cd.special <= 0) && rng() < 0.45 * ai.aggression) {
-      inp.special = true; f.aiInput = dropPresses(inp); return inp;
+      inp.special = true; return inp;
     }
 
     // heavy (Aistrop's heavy is the yank — use it at range on a grounded foe)
     var heavyOk = (!f.cd.heavy || f.cd.heavy <= 0);
     if (f.def.moves.heavy.type === 'chain_yank') {
       if (heavyOk && dist > 55 && foe.grounded() && rng() < 0.5) {
-        inp.heavy = true; f.aiInput = dropPresses(inp); return inp;
+        inp.heavy = true; return inp;
       }
     } else if (heavyOk && dist < ai.poke_range + 12 && rng() < ai.aggression * 0.35) {
-      inp.heavy = true; f.aiInput = dropPresses(inp); return inp;
+      inp.heavy = true; return inp;
     }
 
     // light poke
     if (dist < ai.poke_range && rng() < ai.aggression) {
-      inp.light = true; f.aiInput = dropPresses(inp); return inp;
+      inp.light = true; return inp;
     }
 
     // spacing
@@ -930,9 +1013,8 @@
     }
     if (rng() < ai.jump_chance) inp.jump = true;
 
-    f.aiInput = inp;
     return inp;
-  };
+  }
 
   function dropPresses(inp) {
     // press-type buttons shouldn't be held across the whole decision interval
@@ -971,6 +1053,6 @@
   }
 
   g.MB = g.MB || {};
-  g.MB.Logic = { Match: Match, emptyInput: emptyInput, poseOf: poseOf };
+  g.MB.Logic = { Match: Match, emptyInput: emptyInput, poseOf: poseOf, makePolicy: makePolicy };
   if (typeof module !== 'undefined' && module.exports) module.exports = g.MB.Logic;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -8,7 +8,7 @@
 
   var CHARACTERS = ['jacco', 'brock', 'billy', 'puss', 'aistrop'];
 
-  var FILES = ['tuning.yaml', 'structure.yaml', 'script.yaml'].concat(
+  var FILES = ['tuning.yaml', 'structure.yaml', 'script.yaml', 'strategies.yaml'].concat(
     CHARACTERS.map(function (c) { return 'characters/' + c + '.yaml'; }));
 
   // ---- validation helpers -------------------------------------------------
@@ -187,6 +187,29 @@
     }
   }
 
+  var STRATEGY_KINDS = ['default', 'spam'];
+
+  function checkStrategies(file, st, errors) {
+    var ck = new Checker(file, errors);
+    var strategies = ck.get(st, 'strategies', 'map');
+    if (!strategies) return;
+    if (!strategies.default) errors.push(file + ': a "default" strategy is required');
+    if (!strategies.spam) errors.push(file + ': the "spam" strategy template is required');
+    Object.keys(strategies).forEach(function (name) {
+      var sfile = file + ' strategies.' + name;
+      var c = new Checker(sfile, errors);
+      var kind = c.get(strategies[name], 'kind', 'string');
+      if (kind && STRATEGY_KINDS.indexOf(kind) < 0) {
+        errors.push(sfile + ': kind "' + kind + '" must be one of ' + STRATEGY_KINDS.join('/'));
+      }
+      if (kind === 'spam') {
+        ['reach_margin', 'leap_reach_bonus', 'unranged_reach'].forEach(function (p) {
+          c.get(strategies[name], 'params.' + p, 'number');
+        });
+      }
+    });
+  }
+
   function checkScript(file, s, errors) {
     var ck = new Checker(file, errors);
     ['shared.title', 'shared.tagline', 'shared.poster_footnote',
@@ -270,6 +293,7 @@
       checkTuning('data/tuning.yaml', parsed['tuning.yaml'], errors);
       checkStructure('data/structure.yaml', parsed['structure.yaml'], errors);
       checkScript('data/script.yaml', parsed['script.yaml'], errors);
+      checkStrategies('data/strategies.yaml', parsed['strategies.yaml'], errors);
       var characters = {};
       CHARACTERS.forEach(function (c) {
         var file = 'characters/' + c + '.yaml';
@@ -330,6 +354,7 @@
 
       return {
         tuning: tun, structure: st, script: scr,
+        strategies: parsed['strategies.yaml'].strategies,
         characters: characters, characterIds: CHARACTERS.slice()
       };
     });

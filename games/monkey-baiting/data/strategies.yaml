@@ -1,0 +1,22 @@
+# MONKEY BAITING — AI strategies. A strategy is a named decision policy an AI
+# fighter can run; it consumes the same observable match state the AI always
+# has and emits the same virtual inputs a player would press.
+#
+# kinds (implemented in logic.js):
+#   default — the tuned house AI. Its per-character parameters live in each
+#             character's own `ai:` block (data/characters/*.yaml).
+#   spam    — spam(move) template: approach until the named move can reach,
+#             then use ONLY that move on cooldown. Never blocks, never jumps.
+#             Pure degenerate pressure, for balance probing. The move is an
+#             instantiation argument supplied by the entrant, not listed here.
+
+strategies:
+  default:
+    kind: default
+
+  spam:
+    kind: spam
+    params:
+      reach_margin: 6        # press within this many px inside the move's reach
+      leap_reach_bonus: 40   # extra reach credited to leaping moves (WINDPIPE)
+      unranged_reach: 999    # hazard/yank/retreat moves press from anywhere
