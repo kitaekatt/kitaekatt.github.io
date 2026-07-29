@@ -1,0 +1,38 @@
+# MONKEY BAITING -- BOTS: pure data over the strategies.
+# "each decision method is a STRATEGY and all bots are expressed as weight
+# and proximity data over the available strategies."
+#
+# A bot is a table of {strategy: weight} entries (any positive numbers,
+# normalized internally). An entry may carry a proximity gate:
+#   spam-heavy: {weight: 5, within: reach}    # or a numeric gap; beyond: N
+# meaning that component only decides when in range ("so the spam bot
+# doesn't spam the air"). Gated entries are filtered per decision and the
+# weights renormalized; if nothing is eligible the heaviest UNGATED entry
+# decides -- every bot must have at least one ungated entry (validated).
+# spam-<move> resolves per character; perfect-based bots need solved
+# policies supplied at match setup. Bots must reference strategies only
+# (no bot-in-bot nesting -- one vector, primitive components).
+#
+# The tournament auto-generates a standard field per character (default,
+# one spam bot per move, random, passive); the named bots below are
+# hand-authored and join via --bots (and `house` is what the shipped game
+# plays). Auto-generated and hand-authored bots coexist freely -- an
+# auto-generated pure spam bot is just {spam-<move>: 1} in this same schema.
+
+bots:
+  house:                       # the shipped opponent AI
+    default: 1
+
+  # difficulty ladder -- tuning difficulty = editing these numbers
+  gentle:                      # EASY done right: correct play, rarely
+    passive: 7
+    perfect: 3
+  novice:
+    random: 7
+    default: 3
+  journeyman:
+    default: 7
+    random: 3
+  champion:
+    perfect: 8
+    random: 2

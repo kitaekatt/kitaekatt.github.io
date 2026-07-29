@@ -1,0 +1,59 @@
+# MONKEY BAITING -- balance class envelopes (analysis targets, NOT runtime
+# tuning). Every move belongs to a class -- its moveset slot (light / heavy /
+# special) or "extra" for additional input-mapped moves (e.g. Aistrop's
+# STAKES DOWN). The envelope is the min/max box a move's parameters should
+# live in while it is tuned toward the spam-parity target (~50% of the other
+# spam bots beaten head-to-head). Parity of OUTCOME, not homogeneity of
+# NUMBERS: two 50% moves should get there by different shapes (reach vs speed
+# vs armor vs damage). framedata.js reports each move's position in its
+# envelope and flags out-of-envelope values.
+#
+# damage_total = damage x hits (multi-hit) or the full grab/hold damage.
+# cancel_allowed / cancel_window_max: which classes may carry a `cancel:`
+# block (the dormant animation-cancel mechanic) and the longest window
+# a tuning pass may give them.
+
+classes:
+  light:
+    startup_frames: [4, 10]
+    active_frames: [2, 6]
+    recovery_frames: [6, 14]
+    damage_total: [3, 7]
+    base_knockback: [0.8, 1.6]
+    hitstun: [10, 18]
+    cooldown: [0, 0]
+    cancel_allowed: true
+    cancel_window_max: 8
+
+  heavy:
+    startup_frames: [10, 36]
+    active_frames: [4, 60]
+    recovery_frames: [10, 26]
+    damage_total: [8, 16]
+    base_knockback: [0.0, 3.0]
+    hitstun: [12, 36]
+    cooldown: [0, 360]
+    cancel_allowed: false
+    cancel_window_max: 0
+
+  special:
+    startup_frames: [6, 26]
+    active_frames: [1, 50]
+    recovery_frames: [16, 36]
+    damage_total: [0, 18]
+    base_knockback: [0.0, 3.2]
+    hitstun: [0, 30]
+    cooldown: [90, 560]
+    cancel_allowed: true
+    cancel_window_max: 12
+
+  extra:
+    startup_frames: [8, 40]
+    active_frames: [2, 160]
+    recovery_frames: [12, 30]
+    damage_total: [0, 12]
+    base_knockback: [0.0, 2.0]
+    hitstun: [0, 20]
+    cooldown: [240, 720]
+    cancel_allowed: false
+    cancel_window_max: 0

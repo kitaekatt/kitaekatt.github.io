@@ -8,7 +8,7 @@
 
   var CHARACTERS = ['jacco', 'brock', 'billy', 'puss', 'aistrop'];
 
-  var FILES = ['tuning.yaml', 'structure.yaml', 'script.yaml', 'strategies.yaml'].concat(
+  var FILES = ['tuning.yaml', 'structure.yaml', 'script.yaml', 'strategies.yaml', 'bots.yaml', 'balance.yaml'].concat(
     CHARACTERS.map(function (c) { return 'characters/' + c + '.yaml'; }));
 
   // ---- validation helpers -------------------------------------------------
@@ -80,6 +80,20 @@
     }
     if (mv.input !== undefined && ['jump', 'light', 'heavy', 'special', 'block'].indexOf(mv.input) < 0) {
       ck.errors.push(ck.file + ': ' + p + 'input must be one of jump/light/heavy/special/block');
+    }
+    if (mv.cancel !== undefined) {
+      if (!mv.cancel || typeof mv.cancel !== 'object' ||
+        !Array.isArray(mv.cancel.window) || mv.cancel.window.length !== 2 ||
+        typeof mv.cancel.window[0] !== 'number' || typeof mv.cancel.window[1] !== 'number' ||
+        !Array.isArray(mv.cancel.into) || !mv.cancel.into.length) {
+        ck.errors.push(ck.file + ': ' + p + 'cancel must be {into: [move keys], window: [start, end]}');
+      } else {
+        mv.cancel.into.forEach(function (tk) {
+          if (!chr.moves || !chr.moves[tk]) {
+            ck.errors.push(ck.file + ': ' + p + 'cancel.into "' + tk + '" is not a move of this character');
+          }
+        });
+      }
     }
   }
 
@@ -187,7 +201,86 @@
     }
   }
 
-  var STRATEGY_KINDS = ['default', 'spam'];
+  var MOVE_CLASSES = ['light', 'heavy', 'special', 'extra'];
+  var ENVELOPE_FIELDS = ['startup_frames', 'active_frames', 'recovery_frames',
+    'damage_total', 'base_knockback', 'hitstun', 'cooldown'];
+
+  // BOTS: pure data -- weight (and optional proximity) tables over strategies
+  function checkBots(file, botsDoc, strategies, errors) {
+    var ck = new Checker(file, errors);
+    var bots = ck.get(botsDoc, 'bots', 'map');
+    if (!bots) return;
+    if (!bots.house) errors.push(file + ': a "house" bot (the shipped opponent) is required');
+    Object.keys(bots).forEach(function (name) {
+      var bfile = file + ' bots.' + name;
+      var table = bots[name];
+      if (!table || typeof table !== 'object' || Array.isArray(table)) {
+        errors.push(bfile + ' must be a map of {strategy: weight}');
+        return;
+      }
+      var keys = Object.keys(table);
+      if (!keys.length) { errors.push(bfile + ': empty bot table'); return; }
+      var ungated = 0;
+      keys.forEach(function (ref) {
+        var v = table[ref];
+        if (typeof v === 'number') {
+          if (v <= 0) errors.push(bfile + '.' + ref + ' must be > 0');
+          ungated++;
+        } else if (v && typeof v === 'object') {
+          if (typeof v.weight !== 'number' || v.weight <= 0) {
+            errors.push(bfile + '.' + ref + '.weight must be a number > 0');
+          }
+          if (v.within === undefined && v.beyond === undefined) ungated++;
+          if (v.within !== undefined && v.within !== 'reach' &&
+            !(typeof v.within === 'number' && v.within > 0)) {
+            errors.push(bfile + '.' + ref + '.within must be "reach" or a gap > 0');
+          }
+          if (v.within === 'reach' && ref.indexOf('spam-') !== 0) {
+            errors.push(bfile + '.' + ref + ': within "reach" only applies to spam-<move> entries');
+          }
+          if (v.beyond !== undefined && !(typeof v.beyond === 'number' && v.beyond > 0)) {
+            errors.push(bfile + '.' + ref + '.beyond must be a gap > 0');
+          }
+        } else {
+          errors.push(bfile + '.' + ref + ' must be a number or {weight, within?, beyond?}');
+        }
+        var base = ref.indexOf('spam-') === 0 ? 'spam' : ref;
+        if (strategies && !strategies[base]) {
+          errors.push(bfile + ': "' + ref + '" is not a strategy' +
+            (botsDoc.bots[ref] ? ' (bots cannot reference bots -- one vector, primitive components)' : ''));
+        }
+      });
+      if (!ungated) {
+        errors.push(bfile + ': every entry is proximity-gated -- at least one ' +
+          'ungated entry is required as the out-of-range fallback');
+      }
+    });
+  }
+
+  function checkBalance(file, bal, errors) {
+    var ck = new Checker(file, errors);
+    var classes = ck.get(bal, 'classes', 'map');
+    if (!classes) return;
+    MOVE_CLASSES.forEach(function (cls) {
+      if (!classes[cls]) { errors.push(file + ': missing classes.' + cls); return; }
+      var cfile = file + ' classes.' + cls;
+      ENVELOPE_FIELDS.forEach(function (fld) {
+        var v = classes[cls][fld];
+        if (!Array.isArray(v) || v.length !== 2 ||
+          typeof v[0] !== 'number' || typeof v[1] !== 'number' || v[0] > v[1]) {
+          errors.push(cfile + '.' + fld + ' must be [min, max]');
+        }
+      });
+      if (typeof classes[cls].cancel_allowed !== 'boolean') {
+        errors.push(cfile + '.cancel_allowed must be a boolean');
+      }
+      if (typeof classes[cls].cancel_window_max !== 'number') {
+        errors.push(cfile + '.cancel_window_max must be a number');
+      }
+    });
+  }
+
+  var STRATEGY_KINDS = ['default', 'spam', 'perfect', 'random', 'passive'];
 
   function checkStrategies(file, st, errors) {
     var ck = new Checker(file, errors);
@@ -206,6 +299,61 @@
         ['reach_margin', 'leap_reach_bonus', 'unranged_reach'].forEach(function (p) {
           c.get(strategies[name], 'params.' + p, 'number');
         });
+      }
+      if (kind === 'passive') {
+        ['block_chance', 'maintain_distance'].forEach(function (p) {
+          c.get(strategies[name], 'params.' + p, 'number');
+        });
+      }
+      if (kind === 'random') {
+        ['decision_interval', 'move_weight'].forEach(function (p) {
+          c.get(strategies[name], 'params.' + p, 'number');
+        });
+      }
+      if (kind === 'blend') {
+        var weights = c.get(strategies[name], 'weights', 'map');
+        if (weights) {
+          var keys = Object.keys(weights);
+          if (!keys.length) errors.push(sfile + ': weights must not be empty');
+          var ungated = 0;
+          keys.forEach(function (comp) {
+            var v = weights[comp];
+            var gated = false;
+            if (typeof v === 'number') {
+              if (v <= 0) errors.push(sfile + '.weights.' + comp + ' must be > 0');
+              ungated++;
+            } else if (v && typeof v === 'object') {
+              if (typeof v.weight !== 'number' || v.weight <= 0) {
+                errors.push(sfile + '.weights.' + comp + '.weight must be a number > 0');
+              }
+              gated = v.within !== undefined || v.beyond !== undefined;
+              if (!gated) ungated++;
+              if (v.within !== undefined && v.within !== 'reach' &&
+                !(typeof v.within === 'number' && v.within > 0)) {
+                errors.push(sfile + '.weights.' + comp + '.within must be "reach" or a gap > 0');
+              }
+              if (v.within === 'reach' && comp.indexOf('spam-') !== 0) {
+                errors.push(sfile + '.weights.' + comp + ': within "reach" only applies to spam-<move> components');
+              }
+              if (v.beyond !== undefined && !(typeof v.beyond === 'number' && v.beyond > 0)) {
+                errors.push(sfile + '.weights.' + comp + '.beyond must be a gap > 0');
+              }
+            } else {
+              errors.push(sfile + '.weights.' + comp + ' must be a number or {weight, within?, beyond?}');
+            }
+            var base = comp.indexOf('spam-') === 0 ? 'spam' : comp;
+            if (!strategies[base]) {
+              errors.push(sfile + '.weights: unknown strategy "' + comp + '"');
+            } else if (strategies[base].kind === 'blend') {
+              errors.push(sfile + '.weights: nested blend "' + comp +
+                '" not supported -- a bot is one weight vector over PRIMITIVE policies');
+            }
+          });
+          if (keys.length && !ungated) {
+            errors.push(sfile + ': every component is proximity-gated -- at least one ' +
+              'ungated component is required as the out-of-range fallback');
+          }
+        }
       }
     });
   }
@@ -294,6 +442,9 @@
       checkStructure('data/structure.yaml', parsed['structure.yaml'], errors);
       checkScript('data/script.yaml', parsed['script.yaml'], errors);
       checkStrategies('data/strategies.yaml', parsed['strategies.yaml'], errors);
+      checkBots('data/bots.yaml', parsed['bots.yaml'],
+        parsed['strategies.yaml'] && parsed['strategies.yaml'].strategies, errors);
+      checkBalance('data/balance.yaml', parsed['balance.yaml'], errors);
       var characters = {};
       CHARACTERS.forEach(function (c) {
         var file = 'characters/' + c + '.yaml';
@@ -355,6 +506,8 @@
       return {
         tuning: tun, structure: st, script: scr,
         strategies: parsed['strategies.yaml'].strategies,
+        bots: parsed['bots.yaml'].bots,
+        balance: parsed['balance.yaml'],
         characters: characters, characterIds: CHARACTERS.slice()
       };
     });

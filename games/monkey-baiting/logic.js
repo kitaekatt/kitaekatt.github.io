@@ -154,10 +154,10 @@
     // strategy wiring: opp always runs a policy; player runs one when
     // requested (AI-vs-AI). Specs: { name, move? } resolved against
     // data/strategies.yaml — unknown names fail loudly.
-    var specs = opts.strategies || {};
-    this.opp.policy = makePolicy(data, specs.opp || { name: 'default' });
+    var specs = opts.strategies || opts.bots || {};
+    this.opp.policy = makeBot(data, specs.opp || { bot: 'house' });
     this.player.policy = (specs.player || this.playerAI)
-      ? makePolicy(data, specs.player || { name: 'default' })
+      ? makeBot(data, specs.player || { bot: 'house' })
       : null;
 
     this.startRound();
@@ -477,13 +477,35 @@
       this.emit({ type: 'stakes_down', id: f.id });
       f.projT = 0;
     }
-    this.emit({ type: 'move_start', id: f.id, move: key, name: mv.name });
+    // analysis fields: distance gap and what the foe was doing at press time
+    var foe = this.other(f);
+    this.emit({
+      type: 'move_start', id: f.id, move: key, name: mv.name,
+      gap: Math.round(Math.abs(foe.x - f.x) - (f.def.hurtbox.w + foe.def.hurtbox.w) / 2),
+      foeState: foe.state, foePhase: foe.state === 'attack' ? foe.attackPhase() : null
+    });
   };
 
   Match.prototype.stepAttack = function (f, foe, inp) {
     var m = f.move;
     var su = m.startup_frames, act = m.active_frames, rec = m.recovery_frames;
     var phase = f.attackPhase();
+
+    // cancel window: optional per-move `cancel: {into: [...], window: [a, b]}`
+    if (m.cancel && f.t >= m.cancel.window[0] && f.t <= m.cancel.window[1]) {
+      for (var ci = 0; ci < m.cancel.into.length; ci++) {
+        var ck = m.cancel.into[ci];
+        var cmv = f.def.moves[ck];
+        if (!cmv) continue; // validated at load; guard anyway
+        var pressed = (ck === 'light' || ck === 'heavy' || ck === 'special' || ck === 'stakes_down')
+          ? inp[ck] : (cmv.input ? inp[cmv.input] : false);
+        if (pressed && (!f.cd[ck] || f.cd[ck] <= 0)) {
+          this.emit({ type: 'cancel', id: f.id, from: f.moveKey, into: ck, at: f.t });
+          this.startMove(f, ck, cmv);
+          return;
+        }
+      }
+    }
 
     // jacco extension: the skin moves before he does (grab-immune tell)
     var rip = f.def.mechanics && f.def.mechanics.ripple_frames;
@@ -525,7 +547,7 @@
       f.hitIndex = idx;
       this.resolveHit(f, foe, m);
     } else if (!m.hits && f.t === m.startup_frames + m.active_frames - 1) {
-      this.emit({ type: 'whiff', id: f.id });
+      this.emit({ type: 'whiff', id: f.id, move: f.moveKey });
     }
   };
 
@@ -557,7 +579,10 @@
       vic.tookDamage = true;
       vic.state = 'stun'; vic.stunT = m.blockstun; vic.blockStun = true; vic.t = 0;
       vic.vx = dir * m.pushback_block * 0.4;
-      this.emit({ type: 'block', x: vic.x, y: -vic.y - vic.def.hurtbox.h * 0.6, id: vic.id });
+      this.emit({
+        type: 'block', x: vic.x, y: -vic.y - vic.def.hurtbox.h * 0.6, id: vic.id,
+        attId: att.id, move: att.moveKey, chip: dmg * tun.block_chip_ratio, blockstun: m.blockstun
+      });
       this.freeze = Math.max(this.freeze, 2);
       this.onExchange(att, vic);
       return;
@@ -573,7 +598,11 @@
       att.vx = -dir * 2.5;
       this.freeze = Math.max(this.freeze, 6);
       this.shake = Math.max(this.shake, 3);
-      this.emit({ type: 'stance_return', x: att.x, id: vic.id });
+      this.emit({
+        type: 'stance_return', x: att.x, id: vic.id,
+        attId: att.id, move: att.moveKey,
+        taken: dmg * vic.move.stance_take_ratio, returned: dmg * vic.move.stance_return_ratio
+      });
       this.onExchange(att, vic);
       return;
     }
@@ -595,7 +624,10 @@
       vic.hp -= dmg * armorRatio;
       vic.tookDamage = true;
       this.freeze = Math.max(this.freeze, 3);
-      this.emit({ type: 'armor', x: vic.x, y: -vic.y - vic.def.hurtbox.h * 0.7, id: vic.id });
+      this.emit({
+        type: 'armor', x: vic.x, y: -vic.y - vic.def.hurtbox.h * 0.7, id: vic.id,
+        attId: att.id, move: att.moveKey, dmg: dmg * armorRatio
+      });
       this.onExchange(att, vic);
       return;
     }
@@ -615,7 +647,8 @@
     this.shake = Math.max(this.shake, m.shake);
     this.emit({
       type: 'hit', x: vic.x, y: -vic.y - vic.def.hurtbox.h * 0.7,
-      dmg: dmg, heavy: m.shake >= 2, sound: m.sound, dir: dir, id: vic.id
+      dmg: dmg, heavy: m.shake >= 2, sound: m.sound, dir: dir, id: vic.id,
+      attId: att.id, move: att.moveKey, hitstun: m.hitstun
     });
     this.onExchange(att, vic);
   };
@@ -670,7 +703,7 @@
     foe.x = f.x + f.facing * (f.def.hurtbox.w / 2 + 4);
     foe.y = 0; foe.vy = 0;
     this.freeze = Math.max(this.freeze, m.hit_freeze);
-    this.emit({ type: 'grab', id: f.id, sound: m.sound });
+    this.emit({ type: 'grab', id: f.id, sound: m.sound, move: f.moveKey, vicId: foe.id, dmg: m.damage });
   };
 
   Match.prototype.stepGrabHold = function (f, foe) {
@@ -709,7 +742,7 @@
     foe.vx = 0;
     this.freeze = Math.max(this.freeze, m.hit_freeze);
     this.shake = Math.max(this.shake, m.shake);
-    this.emit({ type: 'yank', id: foe.id, sound: m.sound });
+    this.emit({ type: 'yank', id: foe.id, sound: m.sound, attId: f.id, move: f.moveKey, dmg: m.damage * f.damageMult, hitstun: m.hitstun });
     this.onExchange(f, foe);
   };
 
@@ -889,18 +922,131 @@
   // data/strategies.yaml; "default" is the tuned house AI below, "spam" is
   // the degenerate one-move pressure template used for balance probing.
 
-  function makePolicy(data, spec) {
-    var def = data.strategies[spec.name];
+  // Canonical model: each decision method is a STRATEGY; all BOTS are
+  // expressed as weight and proximity data over the available strategies.
+  // makeBot resolves a bot spec into one policy function:
+  //   {bot: name}         -- a named bot from data/bots.yaml
+  //   {table: {...}}      -- an inline bot table
+  //   {name: 'spam', move: 'heavy'} / {name: 'default'} / {name: <botName>}
+  //                       -- shorthand: named bot if it exists, else a
+  //                          single-strategy table (a pure bot never rolls)
+  // spec.policy carries the solved perfect policy where needed.
+  function makeBot(data, spec) {
+    var table, botName;
+    if (spec.bot) {
+      table = data.bots[spec.bot]; botName = spec.bot;
+      if (!table) throw new Error('bots.yaml: no bot named "' + spec.bot + '"');
+    } else if (spec.table) {
+      table = spec.table; botName = spec.name || '(inline bot)';
+    } else if (spec.name) {
+      if (data.bots && data.bots[spec.name]) {
+        table = data.bots[spec.name]; botName = spec.name;
+      } else {
+        table = {};
+        table[spec.name === 'spam' && spec.move ? 'spam-' + spec.move : spec.name] = 1;
+        botName = spec.name;
+      }
+    } else {
+      throw new Error('makeBot: spec needs bot, table, or name');
+    }
+
+    var spamParams = data.strategies.spam.params;
+    var comps = Object.keys(table).map(function (ref) {
+      var entry = table[ref];
+      var weight = typeof entry === 'number' ? entry : entry.weight;
+      var within = typeof entry === 'object' && entry ? entry.within : undefined;
+      var beyond = typeof entry === 'object' && entry ? entry.beyond : undefined;
+      var moveKey = ref.indexOf('spam-') === 0 ? ref.slice(5) : null;
+      return {
+        weight: weight, within: within, beyond: beyond, moveKey: moveKey,
+        gated: within !== undefined || beyond !== undefined,
+        policy: makeStrategy(data, ref, spec)
+      };
+    });
+    if (!comps.length) throw new Error('bot "' + botName + '": empty table');
+
+    // a pure (single ungated entry) bot never rolls
+    if (comps.length === 1 && !comps[0].gated) return comps[0].policy;
+
+    var fallback = comps.filter(function (c) { return !c.gated; })
+      .sort(function (a, b) { return b.weight - a.weight; })[0];
+    if (!fallback) {
+      throw new Error('bot "' + botName + '" has no ungated entry to fall back to');
+    }
+    function reachOf(f, c) {
+      // same computation the spam strategy uses for its approach threshold
+      var mv = f.def.moves[c.moveKey];
+      if (!mv) {
+        throw new Error('bot "' + botName + '": ' + f.id + ' has no move "' + c.moveKey + '"');
+      }
+      if (mv.type === 'chain_yank' || mv.type === 'hazard_rats' ||
+        mv.type === 'hazard_coins' || mv.type === 'retreat') return spamParams.unranged_reach;
+      return (mv.hitbox.x + mv.hitbox.w - f.def.hurtbox.w / 2) + spamParams.reach_margin +
+        (mv.leap ? spamParams.leap_reach_bonus : 0);
+    }
+    function eligible(f, match, c) {
+      if (!c.gated) return true;
+      var foe = match.other(f);
+      var gap = Math.abs(foe.x - f.x) - (f.def.hurtbox.w + foe.def.hurtbox.w) / 2;
+      if (c.within !== undefined) {
+        var lim = c.within === 'reach' ? reachOf(f, c) : c.within;
+        if (gap > lim) return false;
+      }
+      if (c.beyond !== undefined && gap < c.beyond) return false;
+      return true;
+    }
+    var bot = function botPolicy(f, match) {
+      // a fresh decision point: pick the deciding strategy when the last
+      // choice's hold elapses or the fighter just became actionable again
+      if (!f._bot || f._bot.left <= 0 || f._bot.wasBusy !== f.busy()) {
+        var pool = comps.filter(function (c) { return eligible(f, match, c); });
+        var chosen;
+        if (!pool.length) chosen = fallback;
+        else {
+          var totalW = pool.reduce(function (a, c) { return a + c.weight; }, 0);
+          var r = match.rng() * totalW;
+          chosen = pool[pool.length - 1];
+          for (var i = 0; i < pool.length; i++) {
+            r -= pool[i].weight;
+            if (r <= 0) { chosen = pool[i]; break; }
+          }
+        }
+        f._bot = { comp: chosen, left: 10, wasBusy: f.busy() };
+      }
+      f._bot.left--;
+      return f._bot.comp.policy(f, match);
+    };
+    bot.perFrame = true; // strategies manage their own cadence
+    return bot;
+  }
+
+  // resolve one STRATEGY reference (e.g. 'default', 'spam-heavy', 'perfect')
+  function makeStrategy(data, ref, spec) {
+    var move = null, name = ref;
+    if (ref.indexOf('spam-') === 0) { name = 'spam'; move = ref.slice(5); }
+    var def = data.strategies[name];
     if (!def) {
-      throw new Error('strategies.yaml: no strategy named "' + spec.name + '"');
+      throw new Error('strategies.yaml: no strategy named "' + name + '"');
     }
     if (def.kind === 'default') return defaultPolicy;
     if (def.kind === 'spam') {
-      if (!spec.move) throw new Error('strategy "spam" needs a move to spam (spec.move)');
-      return makeSpamPolicy(spec.move, def.params);
+      move = move || spec.move;
+      if (!move) throw new Error('strategy "spam" needs a move to spam');
+      return makeSpamPolicy(move, def.params);
     }
+    if (def.kind === 'perfect') {
+      if (!spec.policy) {
+        throw new Error('strategy "perfect" needs a solved policy object (spec.policy); ' +
+          'generate with `node test/solver.js` or solver/solve.py');
+      }
+      return makePerfectPolicy(spec.policy);
+    }
+    if (def.kind === 'random') return makeRandomPolicy(def.params);
+    if (def.kind === 'passive') return makePassivePolicy(def.params);
     throw new Error('strategies.yaml: unhandled kind "' + def.kind + '"');
   }
+
+  var makePolicy = makeBot; // back-compat alias (specs resolve identically)
 
   // spam(move): walk in until the move can reach, then use only that move on
   // cooldown. Never blocks, never jumps. Pure degenerate pressure.
@@ -918,6 +1064,15 @@
       var reach = unranged ? params.unranged_reach
         : (mv.hitbox.x + mv.hitbox.w - f.def.hurtbox.w / 2) + params.reach_margin +
           (mv.leap ? params.leap_reach_bonus : 0);
+      // if the spammed move can cancel, press the first cancel target too so
+      // the cancel line actually fires during the window
+      if (f.state === 'attack' && f.moveKey === moveKey && mv.cancel && mv.cancel.into.length) {
+        var ck = mv.cancel.into[0];
+        var cmv = f.def.moves[ck];
+        if (ck === 'light' || ck === 'heavy' || ck === 'special' || ck === 'stakes_down') inp[ck] = true;
+        else if (cmv && cmv.input) inp[cmv.input] = true;
+        return inp;
+      }
       var ready = !f.cd[moveKey] || f.cd[moveKey] <= 0;
       if (ready && dist <= reach) {
         if (moveKey === 'light' || moveKey === 'heavy' || moveKey === 'special' ||
@@ -938,12 +1093,182 @@
 
   Match.prototype.aiThink = function (f) {
     if (!f.policy) return emptyInput();
+    if (f.policy.perFrame) return f.policy(f, this); // per-frame policies self-pace
     if (f.aiHold > 0) { f.aiHold--; var held = f.aiInput; f.aiInput = dropPresses(held); return held; }
     f.aiHold = this.tuning.ai.decision_interval_frames;
     var inp = f.policy(f, this);
     f.aiInput = dropPresses(inp);
     return inp;
   };
+
+  // passive play: never attacks. The offense-measurement dummy, and the
+  // "plays correctly but rarely" ingredient for easy-difficulty blends.
+  function makePassivePolicy(params) {
+    var policy = function passivePolicy(f, match) {
+      var inp = emptyInput();
+      if (f.busy()) return inp;
+      var foe = match.other(f);
+      var foeWinding = foe.state === 'attack' && foe.attackPhase() === 'wind';
+      if (foeWinding && match.rng() < params.block_chance) {
+        inp.block = true;
+        return inp;
+      }
+      if (params.maintain_distance > 0) {
+        var dist = Math.abs(foe.x - f.x) - (f.def.hurtbox.w + foe.def.hurtbox.w) / 2;
+        if (dist < params.maintain_distance - 6) inp[foe.x > f.x ? 'left' : 'right'] = true;
+        else if (dist > params.maintain_distance + 20) inp[foe.x > f.x ? 'right' : 'left'] = true;
+      }
+      return inp;
+    };
+    policy.perFrame = true;
+    return policy;
+  }
+
+  // uniform-random legal play: the chaos baseline and blend fodder
+  function makeRandomPolicy(params) {
+    var policy = function randomPolicy(f, match) {
+      var inp = emptyInput();
+      if (f.busy()) { f._rnd = null; return inp; }
+      if (f._rnd && f._rnd.left > 0) {
+        f._rnd.left--;
+        applyRandomPick(inp, f._rnd.pick, f, match);
+        return inp;
+      }
+      var rng = match.rng;
+      var pick;
+      if (rng() < params.move_weight) {
+        var ready = [];
+        for (var mk in f.def.moves) {
+          if ((mk === 'light' || mk === 'heavy' || mk === 'special' || mk === 'stakes_down' ||
+            f.def.moves[mk].input) && (!f.cd[mk] || f.cd[mk] <= 0)) ready.push('move:' + mk);
+        }
+        pick = ready.length ? ready[Math.floor(rng() * ready.length)] : 'wait';
+      } else {
+        var opts = ['walk_to', 'walk_away', 'jump', 'block', 'wait'];
+        pick = opts[Math.floor(rng() * opts.length)];
+      }
+      f._rnd = { pick: pick, left: params.decision_interval };
+      applyRandomPick(inp, pick, f, match);
+      return inp;
+    };
+    policy.perFrame = true;
+    return policy;
+  }
+
+  function applyRandomPick(inp, pick, f, match) {
+    var foe = match.other(f);
+    if (pick.indexOf('move:') === 0) {
+      var mk = pick.slice(5);
+      var mv = f.def.moves[mk];
+      if (mk === 'light' || mk === 'heavy' || mk === 'special' || mk === 'stakes_down') inp[mk] = true;
+      else if (mv && mv.input) inp[mv.input] = true;
+    } else if (pick === 'walk_to') inp[foe.x > f.x ? 'right' : 'left'] = true;
+    else if (pick === 'walk_away') inp[foe.x > f.x ? 'left' : 'right'] = true;
+    else if (pick === 'block') inp.block = true;
+    else if (pick === 'jump') inp.jump = true;
+  }
+
+  // perfect play: consumes a policy solved offline by test/solver.js. The
+  // policy object carries its own quantization meta; all index math here is
+  // derived from that meta so solver and runtime cannot drift apart.
+  function makePerfectPolicy(P) {
+    var meta = P.meta;
+    var selfMoveIdx = {}, foeMoveIdx = {};
+    meta.selfMoves.forEach(function (k, i) { selfMoveIdx[k] = i; });
+    meta.foeMoves.forEach(function (k, i) { foeMoveIdx[k] = i; });
+    var nA = meta.actions.length;
+    var c0 = 1 << meta.selfCdMoves.length;
+    var c1 = 1 << meta.foeCdMoves.length;
+
+    function sideState(idxMap, offsets, stunQ, st) {
+      // 0 = FREE; 1..stunQMax = stun; then committed move frames
+      if (st.kind === 'free') return 0;
+      if (st.kind === 'stun') return 1 + Math.min(meta.stunQMax - 1, Math.max(0, Math.ceil(st.k / meta.fq) - 1));
+      var mi = idxMap[st.move];
+      if (mi === undefined) return 0; // zone/unmodeled move: treated as free (documented)
+      return 1 + meta.stunQMax + offsets[mi] + Math.min(st.qfMax(mi), Math.floor(st.t / meta.fq));
+    }
+
+    function stateOf(f, match) {
+      var foe = match.other(f);
+      var gap = Math.abs(foe.x - f.x) - (f.def.hurtbox.w + foe.def.hurtbox.w) / 2;
+      var gq = Math.max(0, Math.min(meta.gapBuckets - 1, Math.round(gap / meta.gapStep)));
+      function enc(who, idxMap, offsets, qfs) {
+        var kind;
+        if (who.state === 'attack' && who.move) kind = { kind: 'mv', move: who.moveKey, t: who.t, qfMax: function (mi) { return qfs[mi] - 1; } };
+        else if (who.state === 'stun' || who.state === 'grabbed' || who.state === 'dazed') kind = { kind: 'stun', k: who.stunT || who.dazedT || 1 };
+        else kind = { kind: 'free' };
+        return sideState(idxMap, offsets, meta.stunQMax, kind);
+      }
+      var s0 = enc(f, selfMoveIdx, meta.selfMoveOffsets, meta.selfMoveQF);
+      var s1 = enc(foe, foeMoveIdx, meta.foeMoveOffsets, meta.foeMoveQF);
+      var cd0 = 0, cd1 = 0;
+      meta.selfCdMoves.forEach(function (k, i) { if (f.cd[k] > 0) cd0 |= (1 << i); });
+      meta.foeCdMoves.forEach(function (k, i) { if (foe.cd[k] > 0) cd1 |= (1 << i); });
+      return { gq: gq, s0: s0, s1: s1, cd0: cd0, cd1: cd1 };
+    }
+
+    function pickAction(st, match) {
+      var cdIdx = (st.gq * c0 + st.cd0) * c1 + st.cd1;
+      if (st.s1 === 0) {
+        // both free: sample the mixed equilibrium strategy
+        var row = cdIdx * nA;
+        var r = match.rng(), acc = 0;
+        for (var a = 0; a < nA; a++) {
+          acc += P.bothFree[row + a];
+          if (r <= acc) return a;
+        }
+        return nA - 1;
+      }
+      // foe committed/stunned: pure best response
+      var idx = cdIdx * (meta.foeStates - 1) + (st.s1 - 1);
+      return P.vsCommitted[idx];
+    }
+
+    var policy = function perfectPolicy(f, match) {
+      var inp = emptyInput();
+      // plan continues through the states the plan itself causes (walking,
+      // holding block, jumping); anything else (attack, stun, ko) clears it
+      if (f.state !== 'idle' && f.state !== 'walk' && f.state !== 'block' && f.state !== 'jump') {
+        f._pp = null;
+        return inp;
+      }
+      var foe = match.other(f);
+      if (f._pp && f._pp.left > 0) {
+        f._pp.left--;
+        applyAction(inp, f._pp.a, f, foe);
+        return inp;
+      }
+      var st = stateOf(f, match);
+      var a = pickAction(st, match);
+      var name = meta.actions[a];
+      // guard: quantized cooldown flags can disagree with the real timer near
+      // its end; a cd-locked move press would no-op and loop, so walk instead
+      if (name.indexOf('move:') === 0) {
+        var mk = name.slice(5);
+        if (f.cd[mk] > 0) { f._pp = { a: 'walk_to', left: 2 }; f._ppMisses = (f._ppMisses || 0) + 1; }
+        else f._pp = { a: name, left: 0 };
+      } else {
+        f._pp = { a: name, left: name === 'walk_to' || name === 'walk_away' ? 5 : name === 'block' ? 8 : name === 'wait' ? 2 : 0 };
+      }
+      applyAction(inp, f._pp.a, f, foe);
+      return inp;
+    };
+    function applyAction(inp, a, f, foe) {
+      if (a.indexOf('move:') === 0) {
+        var mk = a.slice(5);
+        var mv = f.def.moves[mk];
+        if (mk === 'light' || mk === 'heavy' || mk === 'special' || mk === 'stakes_down') inp[mk] = true;
+        else if (mv && mv.input) inp[mv.input] = true;
+      } else if (a === 'walk_to') inp[foe.x > f.x ? 'right' : 'left'] = true;
+      else if (a === 'walk_away') inp[foe.x > f.x ? 'left' : 'right'] = true;
+      else if (a === 'block') inp.block = true;
+      else if (a === 'jump') inp.jump = true;
+      // wait: no input
+    }
+    policy.perFrame = true;
+    return policy;
+  }
 
   // the tuned house AI — parameters come from the character's own ai: block
   function defaultPolicy(f, match) {
@@ -1053,6 +1378,6 @@
   }
 
   g.MB = g.MB || {};
-  g.MB.Logic = { Match: Match, emptyInput: emptyInput, poseOf: poseOf, makePolicy: makePolicy };
+  g.MB.Logic = { Match: Match, emptyInput: emptyInput, poseOf: poseOf, makeBot: makeBot, makePolicy: makePolicy };
   if (typeof module !== 'undefined' && module.exports) module.exports = g.MB.Logic;
 })(typeof window !== 'undefined' ? window : globalThis);
