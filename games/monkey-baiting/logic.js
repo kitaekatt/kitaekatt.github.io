@@ -130,7 +130,8 @@
     this.finisherDone = false;
     this.round = 0;
     this.frame = 0;
-    this.winner = null;
+    this.winner = null;          // null while running AND on a drawn match
+    this.drawn = false;          // true only once the match ends with no winner
 
     this.player = new Fighter(data.characters[this.campaignId], 0, this);
     this.opp = new Fighter(data.characters[this.fight.opponent], 1, this);
@@ -199,6 +200,8 @@
         if (pf.id === 'puss') pf.damageMult = pf.def.mechanics.cross_damage_mult;
       }
     }
+    // rounds past the third only happen when a round was drawn; they keep the
+    // decider's slate line (they are all deciders from there on)
     var key = this.round === 1 ? 'round1' : this.round === 2 ? 'round2' : 'round3';
     this.emit({ type: 'round_start', round: this.round, text: this.texts.announcer[key] });
   };
@@ -221,7 +224,14 @@
         if (this.player.roundsWon >= w || this.opp.roundsWon >= w) {
           this.phase = 'end';
           this.winner = this.player.roundsWon >= w ? this.player : this.opp;
-          this.emit({ type: 'match_end', winnerId: this.winner.id, finisher: this.finisherDone });
+          this.emit({ type: 'match_end', winnerId: this.winner.id, draw: false, finisher: this.finisherDone });
+        } else if (this.round >= this.st.rounds.max_rounds_per_match) {
+          // the cap: drawn rounds bought no falls, so nobody takes the match
+          this.phase = 'end';
+          this.winner = null;
+          this.drawn = true;
+          this.emit({ type: 'match_end', winnerId: null, draw: true, finisher: this.finisherDone });
+          this.emit({ type: 'announce', kind: 'match_draw', text: this.texts.announcer.match_draw });
         } else {
           this.startRound();
         }
@@ -236,7 +246,7 @@
         this.finisherDone = true;
         this.phase = 'roundend';
         this.phaseT = this.st.rounds.end_frames;
-        this.emit({ type: 'round_end', winnerId: this.player.id, perfect: !this.player.tookDamage });
+        this.emit({ type: 'round_end', winnerId: this.player.id, draw: false, perfect: !this.player.tookDamage });
       }
       return;
     }
@@ -260,17 +270,19 @@
     if (--this.timer <= 0) {
       var p = this.player.hp / this.player.def.max_health;
       var o = this.opp.hp / this.opp.def.max_health;
-      var winner;
-      if (p === o) winner = this.st.rounds.timeout_tie_winner === 'opponent' ? this.opp : this.player;
-      else winner = p > o ? this.player : this.opp;
       this.emit({ type: 'timeout' });
-      this.endRound(winner, false);
+      // dead even on the watch is a real tie; otherwise the healthier side
+      if (p === o) this.endRound(null, false, 'round_draw');
+      else this.endRound(p > o ? this.player : this.opp, false);
       return;
     }
 
-    // KO check
-    if (this.opp.hp <= 0 && this.opp.state !== 'ko') this.ko(this.opp);
-    else if (this.player.hp <= 0 && this.player.state !== 'ko') this.ko(this.player);
+    // KO check — both at zero on the same frame is a double KO, not a race
+    var oppOut = this.opp.hp <= 0 && this.opp.state !== 'ko';
+    var plyOut = this.player.hp <= 0 && this.player.state !== 'ko';
+    if (oppOut && plyOut) this.doubleKO();
+    else if (oppOut) this.ko(this.opp);
+    else if (plyOut) this.ko(this.player);
   };
 
   Match.prototype.stepPhysicsOnly = function () {
@@ -287,22 +299,45 @@
     }
   };
 
-  Match.prototype.ko = function (f) {
+  // the fall itself: state + the sprawl. Shared by single and double KO.
+  Match.prototype.koFall = function (f) {
     f.hp = 0;
     f.state = 'ko'; f.t = 0;
     f.vy = -3.2; f.vx = -f.facing * 2.2; f.y = Math.max(f.y, 0.01);
-    this.slowmo = this.tuning.combat.ko_slowmo_frames;
     this.emit({ type: 'ko', id: f.id, x: f.x });
+  };
+
+  Match.prototype.ko = function (f) {
+    this.koFall(f);
+    this.slowmo = this.tuning.combat.ko_slowmo_frames;
     this.endRound(this.other(f), true);
   };
 
-  Match.prototype.endRound = function (winner, wasKO) {
-    winner.roundsWon++;
+  // both at zero on the same frame: both go down, the round is drawn
+  Match.prototype.doubleKO = function () {
+    this.koFall(this.player);
+    this.koFall(this.opp);
+    this.slowmo = this.tuning.combat.ko_slowmo_frames;
+    this.endRound(null, true, 'double_ko');
+  };
+
+  // winner === null means a DRAWN round: no fall to either side. tieKind is
+  // the announcer key ('double_ko' or 'round_draw') and is required then.
+  Match.prototype.endRound = function (winner, wasKO, tieKind) {
+    if (winner) winner.roundsWon++;
     this.phase = 'roundend';
     this.phaseT = this.st.rounds.end_frames + (wasKO ? this.tuning.combat.ko_slowmo_frames : 0);
     this.finisherWindow = null;
+    if (!winner) {
+      if (tieKind !== 'double_ko' && tieKind !== 'round_draw') {
+        throw new Error('endRound: a drawn round needs tieKind double_ko|round_draw, got ' + tieKind);
+      }
+      this.emit({ type: 'round_end', winnerId: null, draw: true, kind: tieKind, perfect: false });
+      this.emit({ type: 'announce', kind: tieKind, text: this.texts.announcer[tieKind] });
+      return;
+    }
     var perfect = !winner.tookDamage;
-    this.emit({ type: 'round_end', winnerId: winner.id, perfect: perfect });
+    this.emit({ type: 'round_end', winnerId: winner.id, draw: false, perfect: perfect });
     if (perfect && winner === this.player) {
       this.emit({ type: 'announce', kind: 'perfect', text: this.texts.announcer.perfect });
     }
@@ -1171,14 +1206,26 @@
   // perfect play: consumes a policy solved offline by test/solver.js. The
   // policy object carries its own quantization meta; all index math here is
   // derived from that meta so solver and runtime cannot drift apart.
+  // The state encoding is versioned: encoding 3 = gap bucket + per-side
+  // retreat-room (ring wall) bucket + cooldown flags + committed-side ticks.
+  // Anything else is a stale policy file and is a hard error -- reading an
+  // older layout with this index math would silently return garbage actions.
+  var PERFECT_ENCODING = 3;
   function makePerfectPolicy(P) {
     var meta = P.meta;
+    if (meta.encoding !== PERFECT_ENCODING) {
+      throw new Error('perfect policy ' + (meta.self || '?') + '-vs-' + (meta.foe || '?') +
+        ' uses state encoding ' + (meta.encoding === undefined ? '<pre-v3>' : meta.encoding) +
+        ', this build reads encoding ' + PERFECT_ENCODING +
+        '; re-export and re-solve (node test/solver-export.js --out DIR, then solver/solve.py)');
+    }
     var selfMoveIdx = {}, foeMoveIdx = {};
     meta.selfMoves.forEach(function (k, i) { selfMoveIdx[k] = i; });
     meta.foeMoves.forEach(function (k, i) { foeMoveIdx[k] = i; });
     var nA = meta.actions.length;
     var c0 = 1 << meta.selfCdMoves.length;
     var c1 = 1 << meta.foeCdMoves.length;
+    var BB = meta.backBuckets, RB = BB * BB;
 
     function sideState(idxMap, offsets, stunQ, st) {
       // 0 = FREE; 1..stunQMax = stun; then committed move frames
@@ -1189,10 +1236,21 @@
       return 1 + meta.stunQMax + offsets[mi] + Math.min(st.qfMax(mi), Math.floor(st.t / meta.fq));
     }
 
+    // retreat room behind a fighter: the distance from his back edge to the
+    // wall he would back into, bucketed exactly as the solver buckets it
+    function backBucket(who, foe, ring) {
+      var half = who.def.hurtbox.w / 2;
+      var back = foe.x > who.x ? (who.x - half - ring.left) : (ring.right - who.x - half);
+      var b = Math.floor(Math.max(0, back) / meta.backStep);
+      return b >= BB ? BB - 1 : b;
+    }
+
     function stateOf(f, match) {
       var foe = match.other(f);
       var gap = Math.abs(foe.x - f.x) - (f.def.hurtbox.w + foe.def.hurtbox.w) / 2;
       var gq = Math.max(0, Math.min(meta.gapBuckets - 1, Math.round(gap / meta.gapStep)));
+      var ring = match.tuning.ring;
+      var rq = backBucket(f, foe, ring) * BB + backBucket(foe, f, ring);
       function enc(who, idxMap, offsets, qfs) {
         var kind;
         if (who.state === 'attack' && who.move) kind = { kind: 'mv', move: who.moveKey, t: who.t, qfMax: function (mi) { return qfs[mi] - 1; } };
@@ -1205,11 +1263,11 @@
       var cd0 = 0, cd1 = 0;
       meta.selfCdMoves.forEach(function (k, i) { if (f.cd[k] > 0) cd0 |= (1 << i); });
       meta.foeCdMoves.forEach(function (k, i) { if (foe.cd[k] > 0) cd1 |= (1 << i); });
-      return { gq: gq, s0: s0, s1: s1, cd0: cd0, cd1: cd1 };
+      return { gq: gq, rq: rq, s0: s0, s1: s1, cd0: cd0, cd1: cd1 };
     }
 
     function pickAction(st, match) {
-      var cdIdx = (st.gq * c0 + st.cd0) * c1 + st.cd1;
+      var cdIdx = ((st.gq * RB + st.rq) * c0 + st.cd0) * c1 + st.cd1;
       if (st.s1 === 0) {
         // both free: sample the mixed equilibrium strategy
         var row = cdIdx * nA;

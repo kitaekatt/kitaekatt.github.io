@@ -138,10 +138,18 @@
   function checkStructure(file, st, errors) {
     var ck = new Checker(file, errors);
     ['rounds.wins_to_take_match', 'rounds.time_seconds', 'rounds.intro_frames',
-      'rounds.end_frames', 'finisher.health_threshold', 'finisher.window_seconds',
+      'rounds.end_frames', 'rounds.max_rounds_per_match',
+      'finisher.health_threshold', 'finisher.window_seconds',
       'finisher.rearm_frames', 'finisher.cinematic_frames']
       .forEach(function (f) { ck.get(st, f, 'number'); });
-    ['rounds.timeout_tie_winner', 'finisher.condition', 'finisher.prompt_key',
+    if (st && st.rounds && typeof st.rounds.max_rounds_per_match === 'number' &&
+      typeof st.rounds.wins_to_take_match === 'number' &&
+      st.rounds.max_rounds_per_match < st.rounds.wins_to_take_match * 2 - 1) {
+      errors.push(file + ': rounds.max_rounds_per_match (' + st.rounds.max_rounds_per_match +
+        ') must be at least wins_to_take_match * 2 - 1 (' +
+        (st.rounds.wins_to_take_match * 2 - 1) + '), or no match could ever be decided');
+    }
+    ['finisher.condition', 'finisher.prompt_key',
       'finisher.prompt_key_final', 'continue_rules.retry', 'continue_rules.decline',
       'flow.start']
       .forEach(function (f) { ck.get(st, f, 'string'); });
@@ -194,7 +202,7 @@
             ' points to unknown node "' + v + '"');
         }
         if (kind === 'screen' || kind === 'select') ref('next');
-        else if (kind === 'fight') { c.get(n, 'index', 'number'); ref('win'); ref('lose'); }
+        else if (kind === 'fight') { c.get(n, 'index', 'number'); ref('win'); ref('lose'); ref('draw'); }
         else if (kind === 'continue') { /* uses continue_rules */ }
         else if (kind) errors.push(file + ': flow.nodes.' + name + ': unknown kind "' + kind + '"');
       });
@@ -366,8 +374,9 @@
     ck.get(s, 'shared.poster', 'list');
     ck.get(s, 'shared.barker', 'list');
     ['round1', 'round2', 'round3', 'finisher', 'finisher_final', 'perfect',
-      'low_health', 'victory', 'defeat']
+      'low_health', 'victory', 'defeat', 'double_ko', 'round_draw', 'match_draw']
       .forEach(function (f) { ck.get(s, 'shared.announcer.' + f, 'string'); });
+    ck.get(s, 'shared.draw_note', 'string');
     CHARACTERS.forEach(function (c) { ck.get(s, 'shared.names.' + c, 'string'); });
 
     var campaigns = ck.get(s, 'campaigns', 'map');

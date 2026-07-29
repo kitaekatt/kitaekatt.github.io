@@ -47,11 +47,16 @@ campaigns:
       - {opponent: jacco,   stage_wear: 3, chain: {to: opponent, from: player}}
 
 rounds:
-  wins_to_take_match: 2        # best of 3 — first to two falls
-  time_seconds: 60
+  wins_to_take_match: 2        # first to two FALLS takes the match
+  time_seconds: 120            # two minutes on the watch
   intro_frames: 170
   end_frames: 140
-  timeout_tie_winner: opponent # the house's fighter takes a dead-even round
+  # Ties are real. A round is drawn when both fighters go down on the same
+  # frame (double KO) or when the watch runs out on exactly equal health.
+  # A drawn round is a fall for NEITHER side and an extra round is played,
+  # so a match can run past best-of-3. max_rounds_per_match caps that: when
+  # the cap is reached with nobody at wins_to_take_match, the MATCH is a DRAW.
+  max_rounds_per_match: 5
 
 finisher:
   condition: deciding_round    # only offered when the player is at match point
@@ -71,6 +76,10 @@ continue_rules:
   retry: current_fight
   decline: ending_b            # give up: the house's version gets written down
 
+# `draw` is where a fight node goes when the MATCH itself is drawn (the round
+# cap reached with no side at wins_to_take_match). A draw is not a victory for
+# the player, and it is not a defeat either — no continue is spent — so each
+# fight points its draw edge back at itself: the match is fought again.
 flow:
   start: title
   nodes:
@@ -78,10 +87,10 @@ flow:
     select:       {kind: select, next: bill}
     bill:         {kind: screen, next: crawl}
     crawl:        {kind: screen, next: fight0}
-    fight0:       {kind: fight, index: 0, win: fight1,   lose: continue}
-    fight1:       {kind: fight, index: 1, win: fight2,   lose: continue}
-    fight2:       {kind: fight, index: 2, win: fight3,   lose: continue}
-    fight3:       {kind: fight, index: 3, win: ending_a, lose: continue}
+    fight0:       {kind: fight, index: 0, win: fight1,   lose: continue, draw: fight0}
+    fight1:       {kind: fight, index: 1, win: fight2,   lose: continue, draw: fight1}
+    fight2:       {kind: fight, index: 2, win: fight3,   lose: continue, draw: fight2}
+    fight3:       {kind: fight, index: 3, win: ending_a, lose: continue, draw: fight3}
     continue:     {kind: continue}
     ending_a:     {kind: screen, next: closing_note}
     ending_b:     {kind: screen, next: closing_note}

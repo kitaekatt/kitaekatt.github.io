@@ -42,6 +42,13 @@ shared:
     low_health: He's got bottom, gentlemen! He's game! HE'S GAME!
     victory: PAY UP OR WELSH -- JACCO MACACCO STANDS!
     defeat: And that's the blunt gone. Home in the dark, my lads.
+    double_ko: BOTH DOWN TOGETHER! NO FALL TO EITHER!
+    round_draw: TIME! AND DEAD EVEN -- NO FALL TO EITHER!
+    match_draw: NO DECISION. THE MATCH IS DECLARED A DRAW.
+
+  draw_note: >
+    Nobody is paid on a draw. The stakes go back in the pockets they came from,
+    the sawdust is raked over, and the same two are put down again.
 
   names:
     jacco: JACCO MACACCO

@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var VERSION = 'v7';
+  var VERSION = 'v9';
   var MB = window.MB;
 
   var game = {
@@ -21,6 +21,7 @@
     match: null,
     dialogue: null,
     card: null,
+    drawnMatch: false,
     continueDisplay: null,
     screenT: 0,
     fx: { roundText: '', announce: null, finisherPrompt: '', finisherName: '', gutter: 0 },
@@ -154,6 +155,8 @@
     game.selIndex = 0; // default highlight: Jacco
     game.retries = 0;
     game.fightIndex = 0;
+    game.drawnMatch = false;
+    game.defeated = false;
     game.fx = { roundText: '', announce: null, finisherPrompt: '', finisherName: '', gutter: 0 };
   }
 
@@ -216,7 +219,20 @@
   function endMatch() {
     var match = game.match;
     var fightScript = campScript().fights[game.fightIndex];
-    if (match.winner === match.player) {
+    if (match.drawn) {
+      // no decision: not a victory, but not a defeat either — no continue is
+      // spent. The fight node's `draw` edge (structure.yaml) says where next.
+      game.mode = 'card';
+      game.drawnMatch = true;
+      game.card = {
+        heading: ann('match_draw'),
+        headingColor: '#b8ae96',
+        body: game.data.script.shared.draw_note,
+        small: true,
+        italic: true
+      };
+      MB.Audio.play('slate');
+    } else if (match.winner === match.player) {
       advanceSequence(); // -> victory card
     } else {
       game.mode = 'card';
@@ -273,7 +289,8 @@
           break;
         case 'round_end':
           game.fx.finisherPrompt = '';
-          if (ev.winnerId === 'jacco') MB.Audio.play('coins');
+          if (ev.draw) MB.Audio.play('slate');
+          else if (ev.winnerId === 'jacco') MB.Audio.play('coins');
           break;
         case 'timeout': MB.Audio.play('slate'); break;
         case 'announce':
@@ -548,7 +565,11 @@
 
       case 'card':
         if (game.screenT > 30 && takeConfirm()) {
-          if (game.defeated) {
+          if (game.drawnMatch) {
+            game.drawnMatch = false;
+            // straight back to the match, no prefight dialogue a second time
+            enterNode(game.node.draw, { retry: true });
+          } else if (game.defeated) {
             game.defeated = false;
             enterNode(game.node.lose); // -> continue node (per structure.yaml)
           } else if (game.node.kind === 'fight') {
