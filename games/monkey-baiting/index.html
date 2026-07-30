@@ -3,14 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>MONKEY BAITING — no quarrel but the chain</title>
+<title>MONKEY BAITING &mdash; no quarrel but the chain</title>
+<!--
+  MONKEY BAITING v10 - the shipped game on the C/Flecs core (stage S7).
+
+  This page is a PRESENTATION SHELL. It owns pixels, keys and screen flow, and
+  nothing else: every gameplay number comes out of the WASM build of
+  sandboxes/monkey-baiting/systems/native, which is the same code the
+  tournament simulator runs. There is no game logic in JavaScript here
+  (architecture ruling 1.4(b)). The retired v9 game at web/monkey-baiting/ is
+  the reference for what this must PRESENT, never for what it must compute.
+
+  CACHE BUSTING (root CLAUDE.md decision 22): every script tag carries ?v=10.
+  Bump BOTH the stamp below and every ?v= together when publishing, or GitHub
+  Pages will serve a mix of old and new files and the failure will look like a
+  code bug.
+-->
 <style>
   html, body {
     margin: 0; padding: 0; background: #0b0908; overflow: hidden;
     height: 100%; touch-action: none; user-select: none; -webkit-user-select: none;
   }
   canvas#game {
-    position: fixed; top: 0; left: 0; display: block;
+    position: fixed; display: block;
+    image-rendering: pixelated; image-rendering: crisp-edges;
   }
   .chrome {
     position: fixed; z-index: 10; font: 11px "Courier New", monospace;
@@ -18,11 +34,16 @@
     padding: 6px 10px; cursor: pointer; letter-spacing: 1px;
   }
   .chrome:active { color: #e8ddc0; }
-  #mute { top: 8px; right: 8px; }
-  #padToggle { top: 8px; right: 110px; }
-  #stamp {
+  #padToggle { top: 8px; right: 8px; }
+  #version {
     position: fixed; bottom: 4px; right: 6px; z-index: 10;
     font: 10px "Courier New", monospace; color: #57524a; pointer-events: none;
+  }
+  #status {
+    position: fixed; inset: 0; z-index: 20; display: flex;
+    align-items: center; justify-content: center;
+    font: 12px "Courier New", monospace; color: #7a7264;
+    background: #0b0908; text-align: center; padding: 0 24px;
   }
   /* on-screen controller: thumbs-first sizing (>=48px targets) */
   #pad { position: fixed; inset: 0; z-index: 5; pointer-events: none; display: none; }
@@ -35,11 +56,9 @@
     touch-action: none;
   }
   #pad .btn.on { background: rgba(201,162,39,0.35); border-color: #c9a227; color: #e8ddc0; }
-  /* D-pad, bottom-left */
   #pad .b-left  { left: 14px;  bottom: 24px; }
   #pad .b-right { left: 140px; bottom: 24px; }
   #pad .b-jump  { left: 77px;  bottom: 88px; }
-  /* actions, bottom-right */
   #pad .b-light   { right: 140px; bottom: 24px; background: rgba(60,40,30,0.55); }
   #pad .b-heavy   { right: 76px;  bottom: 56px; background: rgba(60,40,30,0.55); }
   #pad .b-special { right: 12px;  bottom: 88px; background: rgba(88,30,22,0.55); }
@@ -47,11 +66,17 @@
 </style>
 </head>
 <body>
-<canvas id="game" width="800" height="450"></canvas>
+<canvas id="game" width="400" height="225"></canvas>
 
 <button id="padToggle" class="chrome" type="button">PAD</button>
-<button id="mute" class="chrome" type="button">SOUND: ON</button>
-<div id="stamp">MONKEY BAITING v9</div>
+<!-- tools/publish.py and tools/build-wasm.sh both rewrite the CONTENT of this
+     exact div (id="version") to stamp the version and the source commit; the
+     commit is also what publish.py reads back to refuse republishing an
+     unchanged tree. shell.js appends the core's sim_version, it does not
+     replace the stamp. -->
+<div id="version">v (fe4a8ad)</div>
+
+<div id="status">lighting the booth&hellip;</div>
 
 <div id="pad">
   <div class="btn b-left"  data-act="left">&#9668;</div>
@@ -63,12 +88,49 @@
   <div class="btn b-block"   data-act="block">B</div>
 </div>
 
-<script src="yaml.js?v=9"></script>
-<script src="data.js?v=9"></script>
-<script src="chars.js?v=9"></script>
-<script src="logic.js?v=9"></script>
-<script src="audio.js?v=9"></script>
-<script src="render.js?v=9"></script>
-<script src="game.js?v=9"></script>
+<script src="chars.js?v=10"></script>
+<script src="shell.js?v=10"></script>
+<script src="flecs-ecs.js?v=10"></script>
+<script>
+(function () {
+  var status = document.getElementById('status');
+
+  function fail(msg) {
+    /* No silent fallback (root CLAUDE.md decision 12): the page says what went
+     * wrong rather than showing an empty booth. */
+    status.style.display = 'flex';
+    status.style.color = '#d24a33';
+    status.textContent = msg;
+    console.error(msg);
+  }
+
+  var padOn = false;
+  document.getElementById('padToggle').addEventListener('click', function () {
+    padOn = !padOn;
+    document.getElementById('pad').style.display = padOn ? 'block' : 'none';
+    this.textContent = padOn ? 'PAD: ON' : 'PAD';
+  });
+  /* Touch devices get the pad up front. */
+  if (('ontouchstart' in window) || navigator.maxTouchPoints > 0) {
+    document.getElementById('padToggle').click();
+  }
+
+  if (typeof FlecsECS !== 'function') {
+    fail('flecs-ecs.js did not load - build with tools/build-wasm.sh monkey-baiting');
+    return;
+  }
+
+  FlecsECS().then(function (Module) {
+    try {
+      window.MB.boot(Module);
+      status.style.display = 'none';
+    } catch (e) {
+      fail(String(e && e.message || e));
+    }
+  }).catch(function (e) {
+    fail('the WASM core failed to load: ' + (e && e.message || e));
+  });
+})();
+</script>
 </body>
 </html>
