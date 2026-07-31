@@ -14,7 +14,7 @@
   (architecture ruling 1.4(b)). The retired v9 game at web/monkey-baiting/ is
   the reference for what this must PRESENT, never for what it must compute.
 
-  CACHE BUSTING (root CLAUDE.md decision 22): every script tag carries ?v=719dac3
+  CACHE BUSTING (root CLAUDE.md decision 22): every script tag carries ?v=9889223
   Bump BOTH the stamp below and every ?v= together when publishing, or GitHub
   Pages will serve a mix of old and new files and the failure will look like a
   code bug.
@@ -74,7 +74,7 @@
      commit is also what publish.py reads back to refuse republishing an
      unchanged tree. shell.js appends the core's sim_version, it does not
      replace the stamp. -->
-<div id="version">v (719dac3)</div>
+<div id="version">v (9889223)</div>
 
 <div id="status">lighting the booth&hellip;</div>
 
@@ -88,9 +88,9 @@
   <div class="btn b-block"   data-act="block">B</div>
 </div>
 
-<script src="chars.js?v=719dac3"></script>
-<script src="shell.js?v=719dac3"></script>
-<script src="flecs-ecs.js?v=719dac3"></script>
+<script src="chars.js?v=9889223"></script>
+<script src="shell.js?v=9889223"></script>
+<script src="flecs-ecs.js?v=9889223"></script>
 <script>
 (function () {
   var status = document.getElementById('status');
@@ -120,7 +120,19 @@
     return;
   }
 
-  FlecsECS().then(function (Module) {
+  /* Propagate this page's flecs-ecs.js ?v= stamp to the .wasm/.data fetches.
+   * The js manifest addresses the .data bundle by byte offset, so a cached
+   * .data paired with a newer .js reads garbage YAML (seen live as
+   * "MbSpawnRequest is not registered"). publish.py rewrites every ?v= per
+   * publish; without a stamp (local serve) nothing is appended. */
+  var vMatch = null;
+  document.querySelectorAll('script[src]').forEach(function (s) {
+    var m = s.getAttribute('src').match(/flecs-ecs\.js\?v=([A-Za-z0-9._-]+)/);
+    if (m) { vMatch = m[1]; }
+  });
+  FlecsECS(vMatch ? {
+    locateFile: function (path, prefix) { return prefix + path + '?v=' + vMatch; }
+  } : {}).then(function (Module) {
     try {
       window.MB.boot(Module);
       status.style.display = 'none';
